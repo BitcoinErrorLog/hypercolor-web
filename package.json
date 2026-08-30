@@ -18,6 +18,7 @@
     "check:wire": "bash scripts/check-wire-drift.sh"
   },
   "dependencies": {
+    "@noble/ciphers": "2.4.0",
     "@radix-ui/react-slot": "^1.3.3",
     "@scure/base": "^2.4.0",
     "@sqlite.org/sqlite-wasm": "^3.53.0-build1",

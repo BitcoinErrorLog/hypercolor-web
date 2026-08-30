@@ -28,6 +28,8 @@ import { StorageService } from '../StorageService';
  * Without `channel_id`: persist a DM link_messages row.
  *
  * Returns the DM row when one was created; otherwise null.
+ *
+ * Web KeyStore is async and wraps attachment secrets after `setPubky`.
  */
 export async function applyAttachmentInbound(input: {
   ownerPubky: PubkyKey;

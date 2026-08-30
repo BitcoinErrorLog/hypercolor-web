@@ -13,6 +13,8 @@ import {
  * Rebuilds the real `chat.attachment.v0` wire JSON from a persisted
  * redacted copy plus KeyStore material. Retry/send paths must call this
  * immediately before native send — they must never persist the result.
+ *
+ * Web KeyStore is async; wrap/unwrap requires `setPubky` first.
  */
 export async function reconstructAttachmentWireJson(
   redactedRawJson: string,
