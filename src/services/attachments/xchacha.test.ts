@@ -1,5 +1,5 @@
 import { base64urlnopad } from "@scure/base";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ATTACHMENT_ALGORITHM,
   ATTACHMENT_KEY_B64URL_LENGTH,
@@ -9,6 +9,7 @@ import {
   isCanonicalAttachmentKey,
   isCanonicalAttachmentNonce,
 } from "../../types/attachment";
+import kat from "./__fixtures__/xchacha-kat.json";
 import {
   attachmentDecrypt,
   attachmentEncrypt,
@@ -23,7 +24,22 @@ function location(): string {
   return buildAttachmentLocation(OWNER, ATTACHMENT_ID);
 }
 
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0) {
+    throw new Error("hex length must be even");
+  }
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.byteLength; i += 1) {
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return out;
+}
+
 describe("attachment xchacha (mobile wire)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("generateAttachmentKey returns 32 CSPRNG bytes as unpadded base64url", () => {
     const key = generateAttachmentKey();
     expect(isCanonicalAttachmentKey(key)).toBe(true);
@@ -80,5 +96,53 @@ describe("attachment xchacha (mobile wire)", () => {
       expect(err).toBeInstanceOf(AttachmentError);
       expect((err as AttachmentError).code).toBe("decrypt-failed");
     }
+  });
+
+  it("matches the paykit-lib XChaCha20-Poly1305 known-answer vector", () => {
+    expect(kat.algorithm).toBe(ATTACHMENT_ALGORITHM);
+    expect(kat.aad).toBe(buildAttachmentLocation(kat.owner, kat.attachmentId));
+    expect(kat.aad).toBe(location());
+    expect(isCanonicalAttachmentKey(kat.keyB64)).toBe(true);
+    expect(isCanonicalAttachmentNonce(kat.nonceB64)).toBe(true);
+    expect(base64urlnopad.encode(hexToBytes(kat.keyHex))).toBe(kat.keyB64);
+    expect(base64urlnopad.encode(hexToBytes(kat.nonceHex))).toBe(kat.nonceB64);
+    expect(base64urlnopad.encode(hexToBytes(kat.plaintextHex))).toBe(
+      kat.plaintextB64,
+    );
+    expect(base64urlnopad.encode(hexToBytes(kat.ciphertextHex))).toBe(
+      kat.ciphertextB64,
+    );
+    expect(hexToBytes(kat.ciphertextHex).byteLength).toBe(
+      hexToBytes(kat.plaintextHex).byteLength + 16,
+    );
+
+    const opened = attachmentDecrypt(
+      kat.ciphertextB64,
+      kat.keyB64,
+      kat.nonceB64,
+      kat.aad,
+    );
+    expect(opened).toBe(kat.plaintextB64);
+
+    const nonce = hexToBytes(kat.nonceHex);
+    const originalGetRandomValues = globalThis.crypto.getRandomValues.bind(
+      globalThis.crypto,
+    );
+    vi.spyOn(globalThis.crypto, "getRandomValues").mockImplementation(
+      ((array: ArrayBufferView) => {
+        if (array.byteLength === 24) {
+          new Uint8Array(array.buffer, array.byteOffset, array.byteLength).set(
+            nonce,
+          );
+          return array;
+        }
+        return originalGetRandomValues(array);
+      }) as typeof crypto.getRandomValues,
+    );
+
+    const sealed = attachmentEncrypt(kat.plaintextB64, kat.keyB64, kat.aad);
+    expect(sealed.algorithm).toBe(ATTACHMENT_ALGORITHM);
+    expect(sealed.nonceB64).toBe(kat.nonceB64);
+    expect(sealed.ciphertextB64).toBe(kat.ciphertextB64);
   });
 });
