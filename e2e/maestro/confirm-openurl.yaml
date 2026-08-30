@@ -1,0 +1,10 @@
+# iOS simctl openurl shows a system "Open in 'hypercolor'?" sheet.
+# Maestro can tap this (it is not a Main-tab RN button).
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: false
+    stopApp: false
+- tapOn:
+    text: Open
+    optional: true

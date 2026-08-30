@@ -1,0 +1,55 @@
+# Paste the web peer pubky, open the thread, send chat.message.v0 via LinkService.sendDm.
+# sendDm calls ensureLinkWith, so this also completes the Encrypted Link handshake.
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: false
+    stopApp: false
+- runFlow:
+    when:
+      visible: "Open debugger to view warnings."
+    commands:
+      - tapOn:
+          point: "415,893"
+          optional: true
+- tapOn:
+    id: tabChats
+- tapOn:
+    id: chatsEmptyAdd
+    optional: true
+- tapOn:
+    id: chatsNew
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: contactSearchInput
+    timeout: 30000
+- tapOn:
+    id: contactSearchInput
+- eraseText
+- inputText: ${PEER_PUBKY}
+- hideKeyboard
+- assertVisible: ${PEER_PUBKY}
+- tapOn:
+    id: contactSearchAdd
+- extendedWaitUntil:
+    visible: Chat
+    timeout: 90000
+- tapOn: Chat
+- extendedWaitUntil:
+    visible:
+      id: threadScreen
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      id: threadComposer
+    timeout: 15000
+- tapOn:
+    id: threadComposer
+- inputText: ${DM_BODY}
+- hideKeyboard
+- tapOn:
+    id: threadSend
+- extendedWaitUntil:
+    visible: ${DM_BODY}
+    timeout: 180000

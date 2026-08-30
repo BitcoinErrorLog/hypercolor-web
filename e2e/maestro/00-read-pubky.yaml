@@ -1,0 +1,37 @@
+# Read the already-signed-in mobile pubky. Prefer the debug-signup
+# Continue screen (copyTextFrom puts it on the sim pasteboard). Else Profile.
+# Do not use runScript — GraalJS has no Java.type here.
+appId: ${APP_ID}
+---
+- launchApp:
+    clearState: false
+    stopApp: false
+- runFlow:
+    when:
+      visible:
+        id: debugSignupContinue
+    commands:
+      - copyTextFrom:
+          id: debugSignupPubky
+      - tapOn:
+          id: debugSignupContinue
+      - extendedWaitUntil:
+          visible:
+            id: chatsScreen
+          timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: chatsScreen
+    commands:
+      - tapOn:
+          id: tabProfile
+      - extendedWaitUntil:
+          visible:
+            id: profilePubky
+          timeout: 20000
+      - copyTextFrom:
+          id: profilePubky
+      - tapOn:
+          id: tabChats
+          optional: true
