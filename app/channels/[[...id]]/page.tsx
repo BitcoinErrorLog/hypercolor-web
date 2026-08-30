@@ -1,9 +1,9 @@
-import { PathSegmentPage } from "@/components/path-segment-page";
+import { ChannelsPage } from "@/components/channels-page";
 
 export function generateStaticParams() {
   return [{ id: [] }];
 }
 
-export default function ChannelsPage() {
-  return <PathSegmentPage title="Channels" segment="channels" />;
+export default function ChannelsRoute() {
+  return <ChannelsPage />;
 }

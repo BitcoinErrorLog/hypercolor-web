@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { PwaRegister } from "@/components/pwa-register";
 import { SessionBanner } from "@/components/session-banner";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { SiteNav } from "@/components/site-nav";
@@ -22,6 +23,24 @@ export const metadata: Metadata = {
   title: APP_NAME,
   description:
     "Web client for Hypercolor Encrypted Links. Same protocol as the mobile app; homeserver is the backend.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: APP_NAME,
+    statusBarStyle: "black-translucent",
+  },
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png" }],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
@@ -32,6 +51,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <SessionBootstrap />
+        <PwaRegister />
         <TabLockBanner />
         <SessionBanner />
         <header className="border-b border-border">

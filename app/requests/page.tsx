@@ -1,5 +1,5 @@
-import { PlaceholderRoute } from "@/components/placeholder-route";
+import { RequestsPage } from "@/components/requests-page";
 
-export default function RequestsPage() {
-  return <PlaceholderRoute title="Requests" />;
+export default function RequestsRoute() {
+  return <RequestsPage />;
 }

@@ -1,5 +1,5 @@
-import { PlaceholderRoute } from "@/components/placeholder-route";
+import { SettingsPage } from "@/components/settings-page";
 
-export default function SettingsPage() {
-  return <PlaceholderRoute title="Settings" />;
+export default function SettingsRoute() {
+  return <SettingsPage />;
 }

@@ -1,5 +1,5 @@
-import { PlaceholderRoute } from "@/components/placeholder-route";
+import { ProfilePage } from "@/components/profile-page";
 
-export default function ProfilePage() {
-  return <PlaceholderRoute title="Profile" />;
+export default function ProfileRoute() {
+  return <ProfilePage />;
 }

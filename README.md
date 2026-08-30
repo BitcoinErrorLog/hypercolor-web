@@ -103,14 +103,18 @@ are pre-rendered.
 
 The client page then reads any extra path segment from
 `window.location.pathname`. On Vercel, `vercel.json` rewrites
-`/chats/:conversationId` → `/chats` and `/channels/:id` → `/channels` so a
-deep link serves that same static page. Other hosts need the same rewrite (or
-users stay on `/chats` until in-app navigation exists).
+`/chats/:conversationId` → `/chats`, `/channels/:id` → `/channels`, and
+`/contacts/:pubky` → `/contacts` so a deep link serves that same static page.
+Other hosts need the same rewrite (or users stay on the list route until
+in-app navigation exists).
 
-Product routes shipped as titled pages (not fake inbox data):
+Product routes are wired to StorageService, LinkService, GroupService,
+AttachmentService, BackupService, and the payments adapter:
 
-`/`, `/chats`, `/contacts`, `/requests`, `/channels`, `/enable`, `/profile`,
-`/settings`, `/ring-callback`.
+`/`, `/chats`, `/chats/:conversationId`, `/contacts`, `/contacts/:pubky`,
+`/requests`, `/channels`, `/channels/:id`, `/enable`, `/profile`, `/settings`,
+`/ring-callback`. The PWA (`manifest.webmanifest` + `sw.js`) caches the
+offline shell only — no push.
 
 ## COOP / COEP and SQLite (P1)
 
