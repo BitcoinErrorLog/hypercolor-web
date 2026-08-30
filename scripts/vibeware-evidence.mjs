@@ -104,7 +104,7 @@ export const EVIDENCE_FIELD_VALUES = {
   },
 };
 
-const BANNED_KEY_RE =
+export const BANNED_KEY_RE =
   /(body|rawjson|raw_json|recovery|token|pubky|secret|payment|attachment|seed|credential|password|url)/i;
 
 function isPlainObject(value) {
@@ -173,9 +173,6 @@ export function validateEvidencePayload(eventType, payload) {
 }
 
 function utf8ByteLength(text) {
-  if (typeof Buffer !== "undefined" && typeof Buffer.byteLength === "function") {
-    return Buffer.byteLength(text, "utf8");
-  }
   return new TextEncoder().encode(text).byteLength;
 }
 

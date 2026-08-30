@@ -28,7 +28,7 @@ export function SiteNav() {
     if (!route) return;
     const previous = fromRoute.current;
     fromRoute.current = route;
-    void emit("app.route.viewed", { route, from_route: previous });
+    void emit("app.route.viewed", { route, from_route: previous ?? "none" });
   }, [pathname]);
 
   if (pathname.startsWith("/e2e")) return null;

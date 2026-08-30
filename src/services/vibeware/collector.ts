@@ -8,6 +8,8 @@ export type EvidenceEvent = {
   payload: Record<string, unknown>;
 };
 
+export const MEMORY_SINK_MAX = 256;
+
 const memorySink: EvidenceEvent[] = [];
 let listening = false;
 
@@ -15,10 +17,6 @@ declare global {
   interface Window {
     __vibewareSink?: EvidenceEvent[];
   }
-}
-
-function isE2eHarness(): boolean {
-  return process.env.NEXT_PUBLIC_E2E_HARNESS === "1";
 }
 
 function ingestUrl(): string | undefined {
@@ -33,8 +31,15 @@ function ingestToken(): string | undefined {
 
 function attachHarnessSink(): void {
   if (typeof window === "undefined") return;
-  if (!isE2eHarness()) return;
+  if (process.env.NEXT_PUBLIC_E2E_HARNESS !== "1") return;
   window.__vibewareSink = memorySink;
+}
+
+function pushMemorySink(event: EvidenceEvent): void {
+  memorySink.push(event);
+  if (memorySink.length > MEMORY_SINK_MAX) {
+    memorySink.splice(0, memorySink.length - MEMORY_SINK_MAX);
+  }
 }
 
 export function getMemorySink(): readonly EvidenceEvent[] {
@@ -83,7 +88,7 @@ export async function emit(type: unknown, payload: unknown): Promise<void> {
       }
       return;
     }
-    memorySink.push(event);
+    pushMemorySink(event);
     attachHarnessSink();
   } catch {
     return;

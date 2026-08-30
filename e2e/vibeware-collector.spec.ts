@@ -12,6 +12,47 @@ async function readSink(page: Page): Promise<SinkEvent[]> {
 }
 
 test.describe("vibeware collector sink", () => {
+  test("forged CustomEvent with a pubky in route does not land", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Hypercolor" })).toBeVisible();
+    await expect
+      .poll(async () => (await readSink(page)).some((event) => event.type === "app.route.viewed"), {
+        timeout: 15_000,
+      })
+      .toBe(true);
+
+    const forgedPubky = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+    await page.evaluate((route) => {
+      window.dispatchEvent(
+        new CustomEvent("hypercolor-vibeware", {
+          detail: {
+            type: "app.route.viewed",
+            payload: { route, from_route: "none" },
+          },
+        }),
+      );
+    }, forgedPubky);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent("hypercolor-vibeware", {
+          detail: {
+            type: "app.pwa.installed",
+            payload: { outcome: "accepted" },
+          },
+        }),
+      );
+    });
+
+    await expect
+      .poll(async () => (await readSink(page)).some((event) => event.type === "app.pwa.installed"))
+      .toBe(true);
+
+    const live = JSON.stringify(await readSink(page));
+    expect(live).not.toContain(forgedPubky);
+    expect(live).not.toMatch(/"pubky"/);
+  });
+
   test("allowlisted events appear and forged bodies do not persist", async ({ page }) => {
     const collected: SinkEvent[] = [];
 
@@ -82,6 +123,18 @@ test.describe("vibeware collector sink", () => {
       );
     });
 
+    const forgedPubky = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+    await page.evaluate((route) => {
+      window.dispatchEvent(
+        new CustomEvent("hypercolor-vibeware", {
+          detail: {
+            type: "app.route.viewed",
+            payload: { route, from_route: "none" },
+          },
+        }),
+      );
+    }, forgedPubky);
+
     await page.evaluate(() => {
       window.dispatchEvent(
         new CustomEvent("hypercolor-vibeware", {
@@ -98,8 +151,11 @@ test.describe("vibeware collector sink", () => {
       .toBe(true);
     await harvest();
 
+    const live = JSON.stringify(await readSink(page));
     const serialized = JSON.stringify(collected);
     expect(serialized).not.toContain("forged-message-body");
+    expect(serialized).not.toContain(forgedPubky);
+    expect(live).not.toContain(forgedPubky);
     expect(serialized).not.toMatch(/"pubky"/);
     expect(serialized).not.toMatch(/(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/);
     expect(collected.every((event) => event.privacy.contains_user_content === false)).toBe(true);

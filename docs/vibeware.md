@@ -27,15 +27,34 @@ Actor on every evidence event is a **cohort key** (`experimental` |
 ## Phase 1 collector
 
 `src/services/vibeware/**` is shared-forbidden. `emit` calls
-`validateEvidencePayload` from `scripts/vibeware-evidence.mjs` and drops
-unknown types, extra keys, and banned field names. Writable surfaces must
-not import this directory; they pass a callback or dispatch
-`hypercolor-vibeware` with an already-shaped payload. Ingest is
-`NEXT_PUBLIC_VIBEWARE_INGEST_URL` (optional Bearer
-`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`). If the URL is unset, events stay in
-an in-memory sink, also exposed as `window.__vibewareSink` when
+`validateEvidencePayload` from `scripts/vibeware-evidence.mjs` (re-exported
+by `src/services/vibeware/schema.ts` so the browser cannot keep a weaker
+copy) and drops unknown types, extra keys, banned field names, nested
+values, non-string values, and values outside `EVIDENCE_FIELD_VALUES`.
+Writable surfaces must not import this directory; they pass a callback or
+dispatch `hypercolor-vibeware` with an already-shaped payload.
+
+Ingest is `NEXT_PUBLIC_VIBEWARE_INGEST_URL` (optional Bearer
+`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`). The collector omits `Authorization`
+unless that token is non-empty. If the URL is unset, events stay in a
+256-event ring buffer. `window.__vibewareSink` is attached only when
 `NEXT_PUBLIC_E2E_HARNESS=1`. Payloads are never logged and never sent to
 Sentry.
+
+### Ingest token posture (static export)
+
+This app is `output: "export"`. Next.js inlines every `NEXT_PUBLIC_*`
+value into the shipped client bundle, so a static export cannot hide
+`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`. The token is a **public write-only**
+credential: anyone who downloads the site can read it and POST to the
+ingest URL.
+
+The ingest store MUST re-validate every event with the P0
+`validateEvidencePayload` in `scripts/vibeware-evidence.mjs` (already true
+on the store). Client-side validation is not a trust boundary. Rate-limit
+and fail closed on the store. Do not put a real secret in `.env` or the
+build. A same-origin proxy that could hold a private token is out of
+scope for static export.
 
 ## Candidate PRs
 
