@@ -13,7 +13,9 @@ const eslintConfig = defineConfig([
     "vendor/**",
     "**/._*",
     // Verbatim Hypercolor wire copies — drift-gated, not style-gated.
-    "src/db/**",
+    "src/db/sql.ts",
+    "src/db/schema.ts",
+    "src/db/migrations.ts",
     "src/types/**",
     "src/flags/**",
     "src/stores/**",

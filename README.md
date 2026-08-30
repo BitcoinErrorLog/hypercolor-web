@@ -40,10 +40,35 @@ Product routes shipped as titled pages (not fake inbox data):
 ## COOP / COEP and SQLite (P1)
 
 paykit-wasm does **not** need SharedArrayBuffer. This app does **not** set
-COOP/COEP on the page — COEP breaks many CDNs.
+COOP/COEP on the page — COEP breaks many CDNs. Do not enable the default
+sqlite `"opfs"` VFS (that one needs COOP/COEP + SAB).
 
-P1 will persist SQLite with **`opfs-sahpool` + Web Locks**, not the default
-sqlite OPFS VFS.
+`getDb()` opens official sqlite3 wasm (`@sqlite.org/sqlite-wasm`) and
+chooses a VFS in this order:
+
+1. **`opfs-sahpool`** when OPFS `createSyncAccessHandle` is available.
+   Exclusive; only the writer tab installs it.
+2. **IDB snapshot** — official sqlite3 memory db, serialized to IndexedDB
+   after autocommit writes. This is the `executeSync`-compatible stand-in
+   for wa-sqlite `IDBBatchAtomicVFS` (that VFS is async-only; the mobile
+   `SqlExecutor` seam is synchronous and we will not add a second SQL API).
+3. **kvvfs** (`localStorage`) last. Tiny (~5MB). Used only if IndexedDB is
+   missing.
+
+Node / vitest never opens wasm. Tests inject better-sqlite3 via
+`setDbExecutor` / `setDbForTests`.
+
+## Web Locks
+
+`src/services/tabLock.ts` exposes `{ mode: 'writer' | 'readonly', requestTakeover() }`.
+The first tab takes an exclusive `navigator.locks` lock named
+`hypercolor-writer`. Later tabs stay readonly and `TabLockBanner` asks
+"Hypercolor is open in another tab — take over?". Takeover uses
+`{ steal: true }`; the loser becomes readonly and `getDb()` closes so
+sahpool can move.
+
+If `navigator.locks` is missing, this tab is the writer (single-tab
+fallback). A second tab in that browser cannot coordinate.
 
 ## Wire-contract pin
 
