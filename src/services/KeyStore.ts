@@ -33,8 +33,20 @@ const PURPOSE_INBOX = "inbox";
 const PURPOSE_TRANSPORT = "transport";
 const PURPOSE_APP_CERT = "app-cert";
 const PURPOSE_PENDING_RING_HANDOFF = "pending-ring-handoff";
+const PURPOSE_RECEIVER_NOISE = "receiver-noise";
+const PURPOSE_NOISE_SEED = "noise-seed";
 const PURPOSE_ATTACHMENT = "attachment";
 const PURPOSE_SESSION_SECRET = "session-secret";
+
+/**
+ * Pending paykit-connect SK is wrapped before any identity exists. AAD
+ * always binds this purpose to this sentinel, never the later owner pubky,
+ * so Welcome can persist the SK and `/ring-callback` can unwrap it after
+ * `setPubky` runs.
+ */
+export const PENDING_HANDOFF_AAD_OWNER = "pending";
+
+const KEY_PENDING_RING_PK = "pending-ring-handoff-pk";
 
 const WRAP_VERSION = 1;
 
@@ -221,17 +233,16 @@ function secretKey(purpose: string, alias: string): string {
   return `${purpose}:${alias}`;
 }
 
-async function getOwnerPubkyOrThrow(): Promise<string> {
-  const owner = await getMetadata(KEY_PUBKY);
-  if (!owner) {
-    throw new Error("KeyStore: owner pubky not set; cannot bind secret AAD.");
-  }
-  return owner;
-}
-
 function buildAad(ownerPubky: string, purpose: string, alias: string): Uint8Array {
   const binding: AadBinding = { ownerPubky, purpose, alias };
   return new TextEncoder().encode(JSON.stringify(binding));
+}
+
+function aadOwnerForPurpose(purpose: string, currentOwner: string | null): string | null {
+  if (purpose === PURPOSE_PENDING_RING_HANDOFF) {
+    return PENDING_HANDOFF_AAD_OWNER;
+  }
+  return currentOwner;
 }
 
 async function wrapSecret(
@@ -243,7 +254,10 @@ async function wrapSecret(
     throw new Error("KeyStore: not initialized. Call initKeyStore() first.");
   }
   const db = ensureInitialized();
-  const owner = await getOwnerPubkyOrThrow();
+  const owner = aadOwnerForPurpose(purpose, await getMetadata(KEY_PUBKY));
+  if (!owner) {
+    throw new Error("KeyStore: owner pubky not set; cannot bind secret AAD.");
+  }
   const iv = new Uint8Array(12);
   globalThis.crypto.getRandomValues(iv);
   const aad = buildAad(owner, purpose, alias);
@@ -278,7 +292,7 @@ async function unwrapSecret(
     throw new Error("KeyStore: not initialized. Call initKeyStore() first.");
   }
   const db = ensureInitialized();
-  const owner = await getMetadata(KEY_PUBKY);
+  const owner = aadOwnerForPurpose(purpose, await getMetadata(KEY_PUBKY));
   if (!owner) return null;
   const key = secretKey(purpose, alias);
   const record = await new Promise<WrappedSecretRecord | undefined>(
@@ -483,9 +497,13 @@ export async function deleteLinkSession(): Promise<void> {
 
 export async function setPendingRingHandoff(
   ephemeralSkHex: string,
+  ephemeralPkHex?: string,
 ): Promise<void> {
   const plaintext = new TextEncoder().encode(ephemeralSkHex);
   await wrapSecret(PURPOSE_PENDING_RING_HANDOFF, "pending", plaintext);
+  if (typeof ephemeralPkHex === "string" && ephemeralPkHex.length > 0) {
+    await setMetadata(KEY_PENDING_RING_PK, ephemeralPkHex);
+  }
 }
 
 export async function getPendingRingHandoff(): Promise<string | null> {
@@ -495,8 +513,42 @@ export async function getPendingRingHandoff(): Promise<string | null> {
   return hex.length > 0 ? hex : null;
 }
 
+export async function getPendingRingHandoffPublicKey(): Promise<string | null> {
+  return getMetadata(KEY_PENDING_RING_PK);
+}
+
 export async function clearPendingRingHandoff(): Promise<void> {
   await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, "pending");
+  await deleteMetadata(KEY_PENDING_RING_PK);
+}
+
+export async function setReceiverNoiseSecret(
+  alias: string,
+  secret: Uint8Array,
+): Promise<void> {
+  await wrapSecret(PURPOSE_RECEIVER_NOISE, alias, secret);
+}
+
+export async function getReceiverNoiseSecret(
+  alias: string,
+): Promise<Uint8Array | null> {
+  return unwrapSecret(PURPOSE_RECEIVER_NOISE, alias);
+}
+
+export async function deleteReceiverNoiseSecret(alias: string): Promise<void> {
+  await deleteSecret(PURPOSE_RECEIVER_NOISE, alias);
+}
+
+export async function setNoiseSeed(seedHex: string): Promise<void> {
+  const plaintext = new TextEncoder().encode(seedHex);
+  await wrapSecret(PURPOSE_NOISE_SEED, PURPOSE_NOISE_SEED, plaintext);
+}
+
+export async function getNoiseSeed(): Promise<string | null> {
+  const plaintext = await unwrapSecret(PURPOSE_NOISE_SEED, PURPOSE_NOISE_SEED);
+  if (!plaintext) return null;
+  const value = new TextDecoder().decode(plaintext);
+  return value.length > 0 ? value : null;
 }
 
 // ─── Attachment AEAD material (wrapped, keyed by owner + sender + event) ──────
@@ -708,7 +760,13 @@ export const KeyStore = {
   deleteLinkSession,
   setPendingRingHandoff,
   getPendingRingHandoff,
+  getPendingRingHandoffPublicKey,
   clearPendingRingHandoff,
+  setReceiverNoiseSecret,
+  getReceiverNoiseSecret,
+  deleteReceiverNoiseSecret,
+  setNoiseSeed,
+  getNoiseSeed,
   setAttachmentSecret,
   getAttachmentSecret,
   deleteAttachmentSecret,

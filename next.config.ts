@@ -2,15 +2,21 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   output: "export",
+  allowedDevOrigins: ["127.0.0.1"],
   images: {
     unoptimized: true,
   },
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, webpack }) => {
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,
     };
     if (!isServer) {
+      config.plugins.push(
+        new webpack.NormalModuleReplacementPlugin(/^node:/, (resource: { request: string }) => {
+          resource.request = resource.request.replace(/^node:/, "");
+        }),
+      );
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,

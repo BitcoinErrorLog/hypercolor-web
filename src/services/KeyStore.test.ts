@@ -137,6 +137,28 @@ describe("KeyStore", () => {
     expect(await KeyStore.getPendingRingHandoff()).toBeNull();
   });
 
+  it("wraps pending ring handoff before an owner pubky exists", async () => {
+    await KeyStore.setPendingRingHandoff("cafebabe", "aa".repeat(32));
+    expect(await KeyStore.getPendingRingHandoff()).toBe("cafebabe");
+    expect(await KeyStore.getPendingRingHandoffPublicKey()).toBe("aa".repeat(32));
+    await KeyStore.setPubky(owner);
+    expect(await KeyStore.getPendingRingHandoff()).toBe("cafebabe");
+    await KeyStore.clearPendingRingHandoff();
+    expect(await KeyStore.getPendingRingHandoff()).toBeNull();
+    expect(await KeyStore.getPendingRingHandoffPublicKey()).toBeNull();
+  });
+
+  it("wraps the receiver Noise secret under purpose receiver-noise", async () => {
+    await KeyStore.setPubky(owner);
+    const secret = new Uint8Array([1, 2, 3, 4]);
+    await KeyStore.setReceiverNoiseSecret("hypercolor/wallet", secret);
+    expect(await KeyStore.getReceiverNoiseSecret("hypercolor/wallet")).toEqual(
+      secret,
+    );
+    await KeyStore.deleteReceiverNoiseSecret("hypercolor/wallet");
+    expect(await KeyStore.getReceiverNoiseSecret("hypercolor/wallet")).toBeNull();
+  });
+
   it("wraps and unwraps attachment secrets", async () => {
     await KeyStore.setPubky(owner);
     const material: AttachmentSecretMaterial = {

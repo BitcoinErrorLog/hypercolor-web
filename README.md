@@ -14,9 +14,32 @@ server.
   homeserver. The identity secret stays in the signer.
 - **AppCert is UKD-only.** It is not a homeserver credential and is not used
   to authenticate writes here.
+- Welcome is **paykit-connect** (QR + copy). Enable Messaging is **pubkyauth**
+  (QR + copy + open in Ring). `/ring-callback` completes same-device or
+  POSTs public params to `httprelay.pubky.app/link/hc-<ch>`.
+- `SessionHandle.exportSession()` is secret-free metadata. It is never sent
+  as a Cookie header. The write credential is the homeserver HttpOnly cookie.
+- Default public origin for `callback=` is `https://hypercolor.app`
+  (`/ring-callback`). Override with `NEXT_PUBLIC_APP_ORIGIN`. Relay base
+  override: `NEXT_PUBLIC_HTTP_RELAY`.
 
-Session wiring is a later wave. `/ring-callback` is a real client page that
-reads `window.location.search`.
+### Staging owner-document proof
+
+```bash
+bash /Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh
+STAGING_SIGNUP_TOKEN=<token> npm run test:e2e -- e2e/owner-roundtrip.spec.ts
+```
+
+Do not commit or print the token. `RUN_STAGING_OWNER_ROUNDTRIP=1` mints a
+token at test start. A skipped test is not a green live proof.
+
+A live attempt on 2026-08-30 minted a token and then failed inside wasm
+`signupWithSecret`: Pkarr for the staging homeserver
+`8um71us3fyw6h8wbcxb5ar3rwusy1a6u49ba7eabxpqi8gnetewy` returned no HTTPS
+endpoints via the binding's mainnet client. That is not a green proof.
+
+P3 exit still needs: a working staging signup from this wasm client, plus
+one live Ring phone run against staging (https callback).
 
 ## Static routes and unknown IDs
 

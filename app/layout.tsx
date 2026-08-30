@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SessionBootstrap } from "@/components/session-bootstrap";
 import { SiteNav } from "@/components/site-nav";
 import { TabLockBanner } from "@/components/tab-lock-banner";
 import { APP_NAME } from "@/lib/app-meta";
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
+        <SessionBootstrap />
         <TabLockBanner />
         <header className="border-b border-border">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-6 py-6">
