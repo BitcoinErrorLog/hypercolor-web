@@ -20,11 +20,6 @@ export function AttachmentRoundtripPage() {
     window.runAttachmentSignupUpload = runAttachmentSignupUpload;
     window.runAttachmentPublicDecrypt = runAttachmentPublicDecrypt;
     window.runAttachmentDelete = runAttachmentDelete;
-    return () => {
-      delete window.runAttachmentSignupUpload;
-      delete window.runAttachmentPublicDecrypt;
-      delete window.runAttachmentDelete;
-    };
   }, []);
 
   return (

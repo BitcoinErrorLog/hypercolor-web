@@ -19,6 +19,8 @@ export function SiteNav() {
   const status = useSessionStatusStore((s) => s.status);
   const showEnable = hasIdentity(status) && status.kind !== "enabled";
 
+  if (pathname.startsWith("/e2e")) return null;
+
   return (
     <nav className="flex flex-wrap gap-x-4 gap-y-2 text-sm">
       {LINKS.map((link) => {
@@ -27,6 +29,7 @@ export function SiteNav() {
           <Link
             key={link.href}
             href={link.href}
+            prefetch={false}
             className={
               active
                 ? "text-foreground underline underline-offset-4"
@@ -40,6 +43,7 @@ export function SiteNav() {
       {showEnable ? (
         <Link
           href="/enable"
+          prefetch={false}
           className={
             pathname === "/enable"
               ? "text-brand underline underline-offset-4"
@@ -52,6 +56,7 @@ export function SiteNav() {
       {!hasIdentity(status) ? (
         <Link
           href="/"
+          prefetch={false}
           className="text-brand underline-offset-4 hover:underline"
         >
           Connect

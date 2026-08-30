@@ -32,15 +32,6 @@ export function PaymentsHarnessPage() {
     window.runPaymentsReadPublic = runPaymentsReadPublic;
     window.runPaymentsSendPrivateList = runPaymentsSendPrivateList;
     window.runPaymentsReceivePrivateList = runPaymentsReceivePrivateList;
-    return () => {
-      delete window.runDmSignup;
-      delete window.runDmEnsure;
-      delete window.runPaymentsSetEndpoint;
-      delete window.runPaymentsRemoveEndpoint;
-      delete window.runPaymentsReadPublic;
-      delete window.runPaymentsSendPrivateList;
-      delete window.runPaymentsReceivePrivateList;
-    };
   }, []);
 
   return (

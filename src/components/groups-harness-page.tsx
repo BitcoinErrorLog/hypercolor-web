@@ -29,14 +29,6 @@ export function GroupsHarnessPage() {
     window.runGroupSend = runGroupSend;
     window.runGroupSync = runGroupSync;
     window.runGroupGet = runGroupGet;
-    return () => {
-      delete window.runDmSignup;
-      delete window.runDmEnsure;
-      delete window.runGroupCreate;
-      delete window.runGroupSend;
-      delete window.runGroupSync;
-      delete window.runGroupGet;
-    };
   }, []);
 
   return (
