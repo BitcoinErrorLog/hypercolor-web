@@ -83,7 +83,7 @@ export function ChatsPage({
           <div className="mt-8 space-y-2" data-testid="chatsEmpty">
             <p className="text-muted-foreground">No conversations yet.</p>
             <p className="text-sm text-muted-foreground">
-              Search for a contact to start chatting.
+              Start a new chat from the field above.
             </p>
           </div>
         ) : (
