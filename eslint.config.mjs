@@ -20,6 +20,7 @@ const eslintConfig = defineConfig([
     "src/flags/**",
     "src/stores/**",
     "src/services/NexusClient.ts",
+    "src/services/StorageService.ts",
     "src/services/backup/snapshot.ts",
     "src/services/group/groupEvents.ts",
     "src/services/link/inboundEnvelope.ts",

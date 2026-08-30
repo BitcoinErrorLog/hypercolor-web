@@ -3,8 +3,8 @@
  * better-sqlite3. Official sqlite3 wasm cannot run under vitest; this
  * adapter runs the identical SQL strings (see betterSqliteAdapter.ts).
  *
- * StorageService statement cases stay on mobile until StorageService is
- * copied (it imports KeyStore). Schema/migration cases below are the P1 proof.
+ * StorageService statement cases live in src/services/StorageService.test.ts
+ * (real KeyStore + fake-indexeddb). Schema/migration cases stay here.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { setDbForTests } from "../index";
