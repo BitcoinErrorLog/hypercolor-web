@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { usePaykitConnect } from "@/hooks/usePaykitConnect";
 import { APP_NAME } from "@/lib/app-meta";
 import {
-  completeHandoffAfterConfirmation,
+  adoptHandoff,
+  decryptPendingHandoff,
+  type HandoffPayload,
   type HandoffPublicParams,
 } from "@/services/RingConnect";
 import { useAuthStore } from "@/stores/authStore";
@@ -18,13 +20,19 @@ export function WelcomePage() {
   const pubky = useAuthStore((s) => s.pubky);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [error, setError] = useState<string | null>(null);
-  const [pendingParams, setPendingParams] = useState<HandoffPublicParams | null>(
-    null,
-  );
+  const [pending, setPending] = useState<{
+    params: HandoffPublicParams;
+    payload: HandoffPayload;
+  } | null>(null);
   const [adopting, setAdopting] = useState(false);
 
-  const onParams = useCallback((params: HandoffPublicParams) => {
-    setPendingParams(params);
+  const onParams = useCallback(async (params: HandoffPublicParams) => {
+    try {
+      const payload = await decryptPendingHandoff(params);
+      setPending({ params, payload });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Handoff failed");
+    }
   }, []);
 
   const connect = usePaykitConnect({
@@ -35,17 +43,14 @@ export function WelcomePage() {
   });
 
   async function confirmAdoption(accepted: boolean) {
-    if (!pendingParams) return;
+    if (!pending) return;
     if (!accepted) {
-      setPendingParams(null);
+      setPending(null);
       return;
     }
     setAdopting(true);
     try {
-      const result = await completeHandoffAfterConfirmation(
-        pendingParams,
-        async () => true,
-      );
+      const result = await adoptHandoff(pending.params, pending.payload);
       if (result) {
         router.push("/enable");
       }
@@ -99,14 +104,14 @@ export function WelcomePage() {
         />
       )}
 
-      {pendingParams ? (
+      {pending ? (
         <div
           className="space-y-3 rounded-md border border-border bg-card p-4"
           data-testid="welcomeAdopt"
         >
           <p className="text-sm leading-6">
             Continue as{" "}
-            <code className="break-all font-mono">{pendingParams.pubky}</code>?
+            <code className="break-all font-mono">{pending.params.pubky}</code>?
           </p>
           <div className="flex gap-2">
             <Button

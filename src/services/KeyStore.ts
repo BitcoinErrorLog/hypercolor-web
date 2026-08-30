@@ -36,7 +36,6 @@ const PURPOSE_PENDING_RING_HANDOFF = "pending-ring-handoff";
 const PURPOSE_RECEIVER_NOISE = "receiver-noise";
 const PURPOSE_NOISE_SEED = "noise-seed";
 const PURPOSE_ATTACHMENT = "attachment";
-const PURPOSE_SESSION_SECRET = "session-secret";
 
 /**
  * Pending paykit-connect SK is wrapped before any identity exists. AAD
@@ -454,31 +453,6 @@ export async function getHomeserver(): Promise<string | null> {
   return getMetadata(KEY_HOMESERVER);
 }
 
-// ─── Session secret ───────────────────────────────────────────────────────────
-
-/**
- * Web divergence: the homeserver write credential on web is the HTTP-only
- * session cookie, which JS cannot read or persist. The paykit-connect handoff
- * `session_secret` is therefore discarded by the caller and never stored.
- *
- * If a caller still invokes this API, the value is wrapped rather than stored
- * in plaintext, so a bearer token never lives in recoverable browser storage.
- */
-export async function setSessionSecret(sessionSecret: string): Promise<void> {
-  const plaintext = new TextEncoder().encode(sessionSecret);
-  await wrapSecret(PURPOSE_SESSION_SECRET, PURPOSE_SESSION_SECRET, plaintext);
-}
-
-export async function getSessionSecret(): Promise<string | null> {
-  const plaintext = await unwrapSecret(
-    PURPOSE_SESSION_SECRET,
-    PURPOSE_SESSION_SECRET,
-  );
-  if (!plaintext) return null;
-  const value = new TextDecoder().decode(plaintext);
-  return value.length > 0 ? value : null;
-}
-
 // ─── Link session alias (Paykit Encrypted Links — plaintext metadata) ─────────
 
 export async function setLinkSession(sessionAlias: string): Promise<void> {
@@ -783,8 +757,6 @@ export const KeyStore = {
   getPubky,
   setHomeserver,
   getHomeserver,
-  setSessionSecret,
-  getSessionSecret,
   // Session
   hasPersistedSession,
   clear,

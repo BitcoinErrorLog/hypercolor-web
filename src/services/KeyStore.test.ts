@@ -172,10 +172,9 @@ describe("KeyStore", () => {
     ).toEqual(material);
   });
 
-  it("defensively wraps session secret even though web does not use it", async () => {
-    await KeyStore.setPubky(owner);
-    await KeyStore.setSessionSecret("bearer-token");
-    expect(await KeyStore.getSessionSecret()).toBe("bearer-token");
+  it("does not persist a homeserver bearer or expose session-secret APIs", () => {
+    expect(KeyStore).not.toHaveProperty("setSessionSecret");
+    expect(KeyStore).not.toHaveProperty("getSessionSecret");
   });
 
   it("stores non-secret metadata in plaintext", async () => {

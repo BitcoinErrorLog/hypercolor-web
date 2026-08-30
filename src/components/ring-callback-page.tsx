@@ -2,10 +2,13 @@
 
 import { useEffect, useState } from "react";
 import {
-  completeHandoffAfterConfirmation,
+  adoptHandoff,
+  decryptPendingHandoff,
   pendingChannelMatches,
   publishHandoffParamsToRelay,
   validateHandoffPublicParams,
+  type HandoffPayload,
+  type HandoffPublicParams,
 } from "@/services/RingConnect";
 import { KeyStore } from "@/services/KeyStore";
 import { Button } from "@/components/ui/button";
@@ -14,7 +17,12 @@ type Phase =
   | { kind: "reading" }
   | { kind: "invalid"; reason: string }
   | { kind: "relay-forwarded" }
-  | { kind: "confirm"; pubky: string }
+  | {
+      kind: "confirm";
+      pubky: string;
+      params: HandoffPublicParams;
+      payload: HandoffPayload;
+    }
   | { kind: "done"; pubky: string }
   | { kind: "error"; reason: string };
 
@@ -73,7 +81,25 @@ export function RingCallbackPage() {
       const sameDevice = await pendingChannelMatches(ch);
       if (cancelled) return;
       if (sameDevice) {
-        setPhase({ kind: "confirm", pubky: params.pubky });
+        try {
+          const payload = await decryptPendingHandoff(params);
+          if (!cancelled) {
+            setPhase({
+              kind: "confirm",
+              pubky: params.pubky,
+              params,
+              payload,
+            });
+          }
+        } catch (error) {
+          if (!cancelled) {
+            setPhase({
+              kind: "error",
+              reason:
+                error instanceof Error ? error.message : "Handoff failed",
+            });
+          }
+        }
         return;
       }
 
@@ -98,10 +124,9 @@ export function RingCallbackPage() {
   }, []);
 
   async function adopt() {
-    const { params } = readParamsFromLocation();
-    if (!params) return;
+    if (phase.kind !== "confirm") return;
     try {
-      const result = await completeHandoffAfterConfirmation(params, async () => true);
+      const result = await adoptHandoff(phase.params, phase.payload);
       if (result) {
         setPhase({ kind: "done", pubky: result.pubky });
       }

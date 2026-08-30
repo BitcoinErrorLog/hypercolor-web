@@ -29,7 +29,6 @@ export type HandoffPublicParams = {
 export type HandoffPayload = {
   version: number;
   pubky: string;
-  session_secret?: string;
   capabilities?: string[];
   device_id?: string;
   noise_keypairs: Array<{
@@ -50,7 +49,7 @@ export type HandoffPayload = {
     cert_sig: string;
   };
   created_at?: number;
-  expires_at?: number;
+  expires_at: number;
 };
 
 export function buildPaykitConnectUrl(input: {
@@ -164,6 +163,68 @@ export function certFromHandoffAppKey(
   };
 }
 
+function assertFiniteExpiresAt(expiresAt: unknown): number {
+  if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
+    throw new Error("Handoff payload is missing a valid expires_at");
+  }
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const maxExpires = nowSeconds + HANDOFF_TTL_MS / 1000;
+  if (expiresAt <= nowSeconds) {
+    throw new Error("Handoff payload has expired");
+  }
+  if (expiresAt > maxExpires) {
+    throw new Error("Handoff payload expires_at is outside the allowed window");
+  }
+  return expiresAt;
+}
+
+function assertHandoffPubky(
+  payloadPubky: unknown,
+  params: HandoffPublicParams,
+): string {
+  if (payloadPubky !== undefined && payloadPubky !== params.pubky) {
+    throw new Error("Handoff payload pubky does not match public params");
+  }
+  return params.pubky;
+}
+
+/**
+ * Parse decrypted handoff JSON: drop `session_secret`, require a finite
+ * `expires_at` inside `[now+ε, now+HANDOFF_TTL]`, and reject a payload
+ * `pubky` that disagrees with the public params. Zeroizes `plaintext`.
+ */
+export function parseHandoffPlaintext(
+  plaintext: Uint8Array,
+  params: HandoffPublicParams,
+): HandoffPayload {
+  let decoded: unknown;
+  try {
+    decoded = JSON.parse(new TextDecoder().decode(plaintext)) as unknown;
+  } finally {
+    zeroizeBytes(plaintext);
+  }
+  if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    throw new Error("Handoff payload is not an object");
+  }
+  const record = decoded as Record<string, unknown>;
+  delete record.session_secret;
+
+  const expiresAt = assertFiniteExpiresAt(record.expires_at);
+  const pubky = assertHandoffPubky(record.pubky, params);
+
+  if (!record.app_key) {
+    throw new Error(
+      "pubky-ring handoff does not include an app_key. Ensure pubky-ring supports AppKey delegation (v3 handoff).",
+    );
+  }
+
+  return {
+    ...(record as unknown as HandoffPayload),
+    pubky,
+    expires_at: expiresAt,
+  };
+}
+
 export async function pendingChannelMatches(ch: string): Promise<boolean> {
   const pkHex = await KeyStore.getPendingRingHandoffPublicKey();
   if (!pkHex) return false;
@@ -211,19 +272,7 @@ async function fetchAndDecryptHandoff(
   } finally {
     zeroizeBytes(sk);
   }
-  const payload = JSON.parse(new TextDecoder().decode(plaintext)) as HandoffPayload;
-  if (typeof payload.expires_at === "number") {
-    const nowSeconds = Math.floor(Date.now() / 1000);
-    if (nowSeconds >= payload.expires_at) {
-      throw new Error("Handoff payload has expired");
-    }
-  }
-  if (!payload.app_key) {
-    throw new Error(
-      "pubky-ring handoff does not include an app_key. Ensure pubky-ring supports AppKey delegation (v3 handoff).",
-    );
-  }
-  return payload;
+  return parseHandoffPlaintext(plaintext, params);
 }
 
 /**
@@ -249,7 +298,7 @@ export async function adoptHandoff(
   params: HandoffPublicParams,
   payload: HandoffPayload,
 ): Promise<{ pubky: string; homeserver: string }> {
-  const pubky = payload.pubky || params.pubky;
+  const pubky = assertHandoffPubky(payload.pubky, params);
   const homeserver = params.homeserver;
   if (!payload.app_key) {
     throw new Error("Handoff is missing app_key");
@@ -285,7 +334,7 @@ export async function completeHandoffAfterConfirmation(
   confirm: (pubky: string) => Promise<boolean>,
 ): Promise<{ pubky: string; homeserver: string } | null> {
   const payload = await decryptPendingHandoff(params);
-  const pubky = payload.pubky || params.pubky;
+  const pubky = assertHandoffPubky(payload.pubky, params);
   const accepted = await confirm(pubky);
   if (!accepted) return null;
   return adoptHandoff(params, payload);
