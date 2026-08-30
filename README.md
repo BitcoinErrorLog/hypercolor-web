@@ -209,9 +209,12 @@ is tabulated in [docs/vibeware.md](docs/vibeware.md).
 `scripts/check-vibeware-path-policy` rejects a change set if any file is
 outside that surface's `writable_paths` or matches `forbidden_paths`. A path
 that matches both is forbidden. On `pull_request`, CI extracts the **base**
-tree into `$RUNNER_TEMP/vibeware-base` and runs those copies against the
-candidate workspace. `npm run check:vibeware:pr` is local/dev only — it is
-not the PR gate.
+tree into `$RUNNER_TEMP/vibeware-base-<run_id>-<run_attempt>` and runs those
+copies against the candidate workspace **before** `npm ci`.
+`npm run check:vibeware:pr` is local/dev only — it is not the PR gate.
+The required status check `CI / check` plus CODEOWNERS on `.github/` is
+the out-of-tree control if a candidate deletes that job; that setting is
+unverifiable from this tree. Do not use `pull_request_target`.
 
 ```bash
 ./scripts/check-vibeware-path-policy --manifest vibeware.yaml --surface hc-chats-ui --changed-files <file>
@@ -220,9 +223,10 @@ npm run check:vibeware
 npm run check:vibeware:pr -- --base <sha> --head <sha> --head-ref <branch>
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, the in-tree vibeware
-self-test on push to main, the base-tree vibeware PR gates on pull_request,
-vitest, the wasm smoke, and the wire-drift check. Checking out the private
+CI (`.github/workflows/ci.yml`) runs the base-tree vibeware PR gates on
+`pull_request` before `npm ci`, then typecheck, lint, tests, wasm, and
+wire. Push to main runs the in-tree vibeware self-test after `npm ci`.
+Checking out the private
 Hypercolor pin in Actions needs a token that can read
 `BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN` if the default
 `GITHUB_TOKEN` cannot).

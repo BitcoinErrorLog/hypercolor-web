@@ -5,12 +5,13 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
+  assertCiPrGateOrder,
   evaluateChangedFiles,
   loadManifest,
   loadManifestFile,
 } from "./check-vibeware-path-policy.mjs";
 import { validateEvidencePayload } from "./vibeware-evidence.mjs";
-import { checkWritableImports } from "./check-vibeware-writable-imports.mjs";
+import { checkWritableImports, scanWritableFile } from "./check-vibeware-writable-imports.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const POLICY = path.join(ROOT, "scripts/check-vibeware-path-policy");
@@ -125,6 +126,20 @@ const cases = [
     files: ["src/hooks/useInbox.ts"],
     expectStatus: 1,
     expectRejected: [{ path: "src/hooks/useInbox.ts", reason: "forbidden" }],
+  },
+  {
+    name: "rejects copy-sqlite-wasm.mjs as forbidden",
+    surface: "hc-chats-ui",
+    files: ["scripts/copy-sqlite-wasm.mjs"],
+    expectStatus: 1,
+    expectRejected: [{ path: "scripts/copy-sqlite-wasm.mjs", reason: "forbidden" }],
+  },
+  {
+    name: "rejects addManualContact.ts as forbidden",
+    surface: "hc-chats-ui",
+    files: ["src/services/contacts/addManualContact.ts"],
+    expectStatus: 1,
+    expectRejected: [{ path: "src/services/contacts/addManualContact.ts", reason: "forbidden" }],
   },
 ];
 
@@ -255,6 +270,56 @@ try {
   failed += 1;
   console.error(
     `FAIL writable-import check: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const ci = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  assertCiPrGateOrder(ci);
+  const gateAt = ci.indexOf("check-vibeware-pr.mjs");
+  const npmCiAt = ci.search(/run:\s*npm ci\b/);
+  assert(gateAt >= 0 && npmCiAt >= 0 && gateAt < npmCiAt, "PR gate step must appear before npm ci");
+  console.log("ok CI PR gate appears before npm ci");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL CI PR gate order: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const requireInbox = scanWritableFile(
+    `const { useInbox } = require("@/hooks/useInbox");\n`,
+    "src/components/chats-page.tsx",
+    ["src/hooks/useInbox.ts"],
+  );
+  assert(
+    requireInbox.some((item) => item.reason === "forbidden_import"),
+    "require() of useInbox must be forbidden_import",
+  );
+  const commentedDynamic = scanWritableFile(
+    `await import(/* comment */ "@/hooks/useInbox");\n`,
+    "src/components/chats-page.tsx",
+    ["src/hooks/useInbox.ts"],
+  );
+  assert(
+    commentedDynamic.some((item) => item.reason === "forbidden_import"),
+    "commented dynamic import of useInbox must be forbidden_import",
+  );
+  const manualContact = scanWritableFile(
+    `import { addManualContact } from "@/services/contacts/addManualContact";\n`,
+    "src/components/chats-page.tsx",
+    ["src/services/contacts/addManualContact.ts"],
+  );
+  assert(
+    manualContact.some((item) => item.reason === "forbidden_import"),
+    "writable import of addManualContact must be forbidden_import",
+  );
+  console.log("ok require/commented-dynamic/addManualContact import bans");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL specifier import bans: ${error instanceof Error ? error.message : error}`,
   );
 }
 

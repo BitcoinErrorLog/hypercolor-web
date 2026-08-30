@@ -5,8 +5,10 @@
  * - import src/services/vibeware/** (collector)
  * - mention fetch / navigator.sendBeacon / XMLHttpRequest / WebSocket
  *
- * Mechanical: specifier scan + banned identifiers. `src/types/**` imports
- * are waived (see docs/vibeware.md).
+ * Mechanical: specifier scan + banned identifiers. Matches static
+ * import/export, `require("...")` / `require('...')`, and `import(...)`
+ * with comments or whitespace inside the parentheses. `src/types/**`
+ * imports are waived (see docs/vibeware.md).
  *
  * Manifest and scanner code come from this script's tree (base, when CI
  * invokes the extracted copy). `--repo` selects which workspace to walk.
@@ -23,8 +25,9 @@ import {
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = path.join(SCRIPT_ROOT, "vibeware.yaml");
 const BANNED_IDENTIFIERS = /\b(fetch|sendBeacon|XMLHttpRequest|WebSocket)\b/;
-const IMPORT_RE =
-  /(?:import\s+(?:type\s+)?[\s\S]*?from\s*|import\s+|export\s+[\s\S]*?from\s*|import\s*\(\s*)["']([^"']+)["']/g;
+const STATIC_IMPORT_RE =
+  /(?:import\s+(?:type\s+)?[\s\S]*?from\s*|export\s+[\s\S]*?from\s*|import\s+)["']([^"']+)["']/g;
+const CALL_IMPORT_RE = /\b(?:require|import)\s*\(/g;
 
 function walkFiles(repoRoot, relDir, acc = []) {
   const abs = path.join(repoRoot, relDir);
@@ -74,6 +77,66 @@ function tryResolve(repoRoot, rel) {
   return unified;
 }
 
+export function skipWsAndComments(source, start) {
+  let i = start;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === "\f") {
+      i += 1;
+      continue;
+    }
+    if (source.startsWith("//", i)) {
+      const nl = source.indexOf("\n", i);
+      i = nl === -1 ? source.length : nl + 1;
+      continue;
+    }
+    if (source.startsWith("/*", i)) {
+      const end = source.indexOf("*/", i + 2);
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    break;
+  }
+  return i;
+}
+
+function readQuotedSpecifier(source, start) {
+  const quote = source[start];
+  if (quote !== '"' && quote !== "'") return null;
+  let i = start + 1;
+  let value = "";
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === "\\") {
+      value += source[i + 1] ?? "";
+      i += 2;
+      continue;
+    }
+    if (ch === quote) {
+      return { specifier: value, next: i + 1 };
+    }
+    value += ch;
+    i += 1;
+  }
+  return null;
+}
+
+export function collectImportSpecifiers(source) {
+  const specifiers = [];
+  STATIC_IMPORT_RE.lastIndex = 0;
+  let match;
+  while ((match = STATIC_IMPORT_RE.exec(source))) {
+    specifiers.push(match[1]);
+  }
+  CALL_IMPORT_RE.lastIndex = 0;
+  while ((match = CALL_IMPORT_RE.exec(source))) {
+    const afterOpen = skipWsAndComments(source, match.index + match[0].length);
+    const quoted = readQuotedSpecifier(source, afterOpen);
+    if (quoted) specifiers.push(quoted.specifier);
+  }
+  return specifiers;
+}
+
 export function resolveSpecifier(fromFile, specifier, repoRoot = SCRIPT_ROOT) {
   if (specifier.startsWith("@/")) {
     return tryResolve(repoRoot, `src/${specifier.slice(2)}`);
@@ -102,10 +165,7 @@ export function scanWritableFile(source, fromFile, forbiddenPatterns, repoRoot =
       detail: "fetch/sendBeacon/XMLHttpRequest/WebSocket",
     });
   }
-  IMPORT_RE.lastIndex = 0;
-  let match;
-  while ((match = IMPORT_RE.exec(source))) {
-    const specifier = match[1];
+  for (const specifier of collectImportSpecifiers(source)) {
     if (specifier.includes("services/vibeware/") || specifier.includes("src/services/vibeware/")) {
       findings.push({ path: fromFile, reason: "collector_import", detail: specifier });
       continue;

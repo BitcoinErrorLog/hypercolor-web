@@ -28,6 +28,7 @@ export const REQUIRED_SHARED_FORBIDDEN = [
   "vibeware.yaml",
   ".github/**",
   "scripts/check-vibeware*",
+  "scripts/copy-sqlite-wasm.mjs",
   "package.json",
   "package-lock.json",
   "src/hooks/useInbox.ts",
@@ -36,6 +37,29 @@ export const REQUIRED_SHARED_FORBIDDEN = [
 ];
 
 export const MIN_SHARED_FORBIDDEN_PATHS = 40;
+
+const CI_UNIQUE_BASE = "vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}";
+
+export function assertCiPrGateOrder(ciText) {
+  if (/\bpull_request_target\b/.test(ciText)) {
+    throw new Error("ci.yml must not use pull_request_target");
+  }
+  const setup = ciText.indexOf("name: Setup Node");
+  const extract = ciText.indexOf("name: Extract base vibeware gate outside workspace");
+  const gates = ciText.indexOf("name: Vibeware PR gates from base tree");
+  const scriptGate = ciText.indexOf("check-vibeware-pr.mjs");
+  const npmCi = ciText.search(/run:\s*npm ci\b/);
+  if (setup < 0 || extract < 0 || gates < 0 || scriptGate < 0 || npmCi < 0) {
+    throw new Error("ci.yml is missing Setup Node, extract, PR gates, or npm ci");
+  }
+  if (!(setup < extract && extract < gates && gates < npmCi && scriptGate < npmCi)) {
+    throw new Error("ci.yml PR gate step must appear before npm ci");
+  }
+  if (!ciText.includes(CI_UNIQUE_BASE)) {
+    throw new Error("ci.yml must extract to a run-id-scoped vibeware-base directory");
+  }
+  return true;
+}
 
 const ALLOWED_COHORTS = new Set(["experimental", "internal", "opted_in"]);
 

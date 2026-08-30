@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateChangedFiles,
   globToRegExp,
+  assertCiPrGateOrder,
   loadManifest,
   loadManifestFile,
   MIN_SHARED_FORBIDDEN_PATHS,
@@ -119,6 +120,11 @@ describe("vibeware path policy", () => {
     expect(manifest.forbidden_paths).toContain("src/hooks/useInbox.ts");
     expect(manifest.forbidden_paths).toContain("src/hooks/useChannel.ts");
     expect(manifest.forbidden_paths).toContain("src/hooks/useSignOut.ts");
+    expect(manifest.forbidden_paths).toContain("scripts/copy-sqlite-wasm.mjs");
+    expect(manifest.forbidden_paths).toContain("src/services/contacts/addManualContact.ts");
+    expect(manifest.forbidden_paths).toContain("src/services/group/GroupService.ts");
+    expect(manifest.forbidden_paths).toContain("src/services/StorageService.ts");
+    expect(manifest.forbidden_paths).toContain("src/stores/inboxStore.ts");
     expect(manifest.surfaces[0]?.writable_paths).toEqual(["src/components/chats-page.tsx"]);
     expect(manifest.surfaces[0]?.forbidden_paths).toContain("src/stores/inboxStore.ts");
     expect(manifest.surfaces[1]?.writable_paths).toEqual([
@@ -343,6 +349,27 @@ describe("candidate detection", () => {
   });
 });
 
+describe("CI PR gate order", () => {
+  it("places the PR gate step before npm ci", () => {
+    const ci = readFileSync(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+    expect(assertCiPrGateOrder(ci)).toBe(true);
+    expect(ci.indexOf("check-vibeware-pr.mjs")).toBeLessThan(ci.search(/run:\s*npm ci\b/));
+    expect(ci).not.toMatch(/\bpull_request_target\b/);
+  });
+
+  it("rejects a workflow that runs npm ci before the PR gates", () => {
+    const reversed = [
+      "name: Setup Node",
+      "run: npm ci",
+      "name: Extract base vibeware gate outside workspace",
+      "name: Vibeware PR gates from base tree",
+      "check-vibeware-pr.mjs",
+      "vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}",
+    ].join("\n");
+    expect(() => assertCiPrGateOrder(reversed)).toThrow(/before npm ci/);
+  });
+});
+
 describe("writable import scan", () => {
   it("flags a forbidden import and planted telemetry identifiers", () => {
     const findings = scanWritableFile(
@@ -365,6 +392,33 @@ describe("writable import scan", () => {
       `import { useInbox } from "@/hooks/useInbox";\n`,
       "src/components/chats-page.tsx",
       ["src/hooks/useInbox.ts"],
+    );
+    expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
+  });
+
+  it("flags require() of useInbox as forbidden_import", () => {
+    const findings = scanWritableFile(
+      `const { useInbox } = require("@/hooks/useInbox");\n`,
+      "src/components/chats-page.tsx",
+      ["src/hooks/useInbox.ts"],
+    );
+    expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
+  });
+
+  it("flags a commented dynamic import of useInbox as forbidden_import", () => {
+    const findings = scanWritableFile(
+      `await import(/* comment */ "@/hooks/useInbox");\n`,
+      "src/components/chats-page.tsx",
+      ["src/hooks/useInbox.ts"],
+    );
+    expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
+  });
+
+  it("flags a writable import of addManualContact as forbidden_import", () => {
+    const findings = scanWritableFile(
+      `import { addManualContact } from "@/services/contacts/addManualContact";\n`,
+      "src/components/chats-page.tsx",
+      ["src/services/contacts/addManualContact.ts"],
     );
     expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
   });

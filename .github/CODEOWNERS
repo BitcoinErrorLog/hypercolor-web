@@ -1,6 +1,7 @@
 vibeware.yaml @BitcoinErrorLog
 scripts/check-vibeware* @BitcoinErrorLog
 scripts/vibeware-evidence.mjs @BitcoinErrorLog
+scripts/copy-sqlite-wasm.mjs @BitcoinErrorLog
 .github/ @BitcoinErrorLog
 package.json @BitcoinErrorLog
 package-lock.json @BitcoinErrorLog

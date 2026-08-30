@@ -108,6 +108,11 @@ forbidden_paths:
   - src/hooks/useSignOut.ts
   - package.json
   - package-lock.json
+  - scripts/copy-sqlite-wasm.mjs
+  - src/services/contacts/addManualContact.ts
+  - src/services/group/GroupService.ts
+  - src/services/StorageService.ts
+  - src/stores/inboxStore.ts
 
 surfaces:
   - surface:

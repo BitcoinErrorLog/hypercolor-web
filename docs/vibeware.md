@@ -2,16 +2,24 @@
 
 `vibeware.yaml` is the authority file for the three risk-1 UI surfaces
 (`hc-chats-ui`, `hc-thread-ui`, `hc-onboarding-ui`). On `pull_request`, CI
-extracts the **base** tree into `$RUNNER_TEMP/vibeware-base` (outside the
-candidate workspace) and invokes those copies:
+checks out the candidate, fetches the PR shas, and sets up Node **without**
+`npm ci`. It then extracts the **base** tree into
+`$RUNNER_TEMP/vibeware-base-<run_id>-<run_attempt>` (outside the candidate
+workspace, not a predictable `vibeware-base` name) and **immediately**
+invokes those copies:
 
 - `node $BASE/scripts/check-vibeware-pr.mjs --repo $GITHUB_WORKSPACE …`
 - `node $BASE/scripts/check-vibeware-selftest.mjs`
 - `node $BASE/scripts/check-vibeware-writable-imports.mjs --repo $GITHUB_WORKSPACE`
 
+Only after those gates do wire-pin checkout, `npm ci`, typecheck, lint,
+tests, wasm, and wire run. Candidate `postinstall` therefore cannot
+overwrite the extracted evaluator before it grades the diff.
+
 CI does **not** treat `npm run check:vibeware:pr` from the candidate
-`package.json` as the PR gate. Local/dev npm scripts remain. A candidate
-cannot rewrite the evaluator and then grade itself.
+`package.json` as the PR gate. Push-to-main keeps in-tree
+`npm run check:vibeware` after `npm ci`. Local/dev npm scripts remain.
+A candidate cannot rewrite the evaluator and then grade itself.
 
 Actor on every evidence event is a **cohort key** (`experimental` |
 `internal` | `opted_in`). A `pubky` field is never allowed.
@@ -41,10 +49,10 @@ denies writable-path violations on marked candidate branches.
 ## Code owners (load-bearing, unverifiable here)
 
 `.github/CODEOWNERS` lists `vibeware.yaml`, `scripts/check-vibeware*`,
-`scripts/vibeware-evidence.mjs`, `.github/`, `package.json`,
-`package-lock.json`, `docs/vibeware.md`, and `README.md`. Requiring review
-from Code Owners on those paths is load-bearing. This tree cannot prove
-the GitHub branch-protection setting is enabled.
+`scripts/vibeware-evidence.mjs`, `scripts/copy-sqlite-wasm.mjs`, `.github/`,
+`package.json`, `package-lock.json`, `docs/vibeware.md`, and `README.md`.
+Requiring review from Code Owners on those paths is load-bearing. This
+tree cannot prove the GitHub branch-protection setting is enabled.
 
 ## Enforced vs informational keys
 
@@ -54,7 +62,7 @@ the GitHub branch-protection setting is enabled.
 | `evidence_payloads` | Yes — exact per-event field lists |
 | `max_payload_bytes` | Yes — must be `256` |
 | `privacy.contains_user_content` | Yes — must be `false` |
-| `forbidden_paths` | Yes — min length + required entries (`session.ts`, `vibeware.yaml`, `.github/**`, `scripts/check-vibeware*`, `package.json`, `package-lock.json`, `useInbox.ts`, `useChannel.ts`, `useSignOut.ts`) |
+| `forbidden_paths` | Yes — min length + required entries (`session.ts`, `vibeware.yaml`, `.github/**`, `scripts/check-vibeware*`, `scripts/copy-sqlite-wasm.mjs`, `package.json`, `package-lock.json`, `useInbox.ts`, `useChannel.ts`, `useSignOut.ts`) |
 | `scope.writable_paths` | Yes — non-empty; candidate diffs must stay inside |
 | `evidence.allowed` | Yes — subset of the allowlist |
 | `kill_switch.flag` | Yes — non-empty string |
@@ -70,6 +78,16 @@ the GitHub branch-protection setting is enabled.
 | YAML comments | Informational |
 
 ## Waivers
+
+### Workflow-from-PR (F17)
+
+GitHub runs the workflow file from the merge commit. In-tree policy
+cannot stop a candidate from deleting the extract/gate job. Binding
+control is the required status check named exactly `CI / check` plus
+CODEOWNERS on `.github/`. If the candidate deletes the gate, that
+required check never reports and merge is blocked **once that GitHub
+setting exists**. This is load-bearing and unverifiable from the tree.
+Do not use `pull_request_target`.
 
 ### Message body and draft display (F4)
 
@@ -99,7 +117,10 @@ collector (P1, other branch) must not emit them.
 ### Type imports (F4 import check)
 
 Writable files may import `src/types/**` for prop typing and kind
-constants.
+constants. `src/components/thread-view.tsx` may import the
+`SessionUiStatus` type from `src/stores/sessionStatusStore.ts`. Shared
+`forbidden_paths` therefore lists `src/stores/inboxStore.ts` rather than
+`src/stores/**`.
 
 Reason: those modules are compile-time shapes and constants. They do not
 perform IO, session, or send.
