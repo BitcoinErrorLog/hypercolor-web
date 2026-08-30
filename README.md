@@ -33,10 +33,26 @@ STAGING_SIGNUP_TOKEN=<token> npm run test:e2e -- e2e/owner-roundtrip.spec.ts
 Do not commit or print the token. `RUN_STAGING_OWNER_ROUNDTRIP=1` mints a
 token at test start. A skipped test is not a green live proof.
 
+### Staging Encrypted Link DM proof (P4)
+
+```bash
+npm run proof:staging
+```
+
+Two Playwright browser contexts sign up on staging, handshake, and exchange
+`chat.message.v0` both ways. Tokens are minted by the staging-invite script
+and never printed.
+
 A live attempt on 2026-08-30 minted a token and then failed inside wasm
 `signupWithSecret`: Pkarr for the staging homeserver
 `8um71us3fyw6h8wbcxb5ar3rwusy1a6u49ba7eabxpqi8gnetewy` returned no HTTPS
-endpoints via the binding's mainnet client. That is not a green proof.
+endpoints via the binding's mainnet client. That is not a green proof. The
+`/e2e/dm-harness` page and `e2e/dm-staging.spec.ts` are the real harness;
+do not treat a skip as live-proof green.
+
+P4 `npm run proof:staging` (2026-08-30) minted two tokens, opened two
+browser contexts, and failed at the same `signupWithSecret` Pkarr/HTTPS
+gap. Tokens were redacted in the thrown error. Not a green live proof.
 
 P3 exit still needs: a working staging signup from this wasm client, plus
 one live Ring phone run against staging (https callback).

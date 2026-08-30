@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { KeyStore } from "@/services/KeyStore";
+import { startLinkRetryDrainOnVisibility } from "@/services/link/LinkService";
 import { getEnableStatus, restoreSessionOnLoad } from "@/services/link/session";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
@@ -11,6 +12,7 @@ export function SessionBootstrap() {
 
   useEffect(() => {
     let cancelled = false;
+    let stopDrain: (() => void) | undefined;
     void (async () => {
       await KeyStore.initKeyStore();
       const restore = await restoreSessionOnLoad();
@@ -27,9 +29,13 @@ export function SessionBootstrap() {
       }
       if (cancelled) return;
       setFromRestore(restore, enable);
+      if (enable === "enabled") {
+        stopDrain = startLinkRetryDrainOnVisibility();
+      }
     })();
     return () => {
       cancelled = true;
+      stopDrain?.();
     };
   }, [setFromRestore]);
 

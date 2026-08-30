@@ -148,6 +148,23 @@ describe("KeyStore", () => {
     expect(await KeyStore.getPendingRingHandoffPublicKey()).toBeNull();
   });
 
+  it("wraps Encrypted Link snapshots under purpose link-snapshot", async () => {
+    await KeyStore.setPubky(owner);
+    const bytes = new Uint8Array([9, 8, 7, 6, 5]);
+    const wrapped = await KeyStore.wrapLinkSnapshot(`${owner}:peer`, bytes);
+    expect(wrapped.startsWith("HC1.")).toBe(true);
+    expect(KeyStore.isWrappedLinkSnapshot(wrapped)).toBe(true);
+    expect(await KeyStore.unwrapLinkSnapshot(wrapped)).toEqual(bytes);
+    const db = await openKeyStoreDb();
+    const record = await readSecretRecord(db, `link-snapshot:${owner}:peer`);
+    expect(record).toBeDefined();
+    expect(record?.ciphertext.length).toBeGreaterThan(0);
+    const tampered = `${wrapped.slice(0, -2)}aa`;
+    await expect(KeyStore.unwrapLinkSnapshot(tampered)).rejects.toThrow(
+      /link-snapshot/,
+    );
+  });
+
   it("wraps the receiver Noise secret under purpose receiver-noise", async () => {
     await KeyStore.setPubky(owner);
     const secret = new Uint8Array([1, 2, 3, 4]);

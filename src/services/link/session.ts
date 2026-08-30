@@ -123,6 +123,20 @@ export function getLiveSession(): LiveSession | null {
   return live;
 }
 
+/**
+ * Harness / secret-signin: adopt a live SessionHandle without the
+ * hypercolor-capability gate used by {@link adoptApprovedSession}.
+ */
+export async function adoptLiveHandle(handle: SessionHandle): Promise<LiveSession> {
+  const pubky = handle.pubky();
+  if (live && live.handle !== handle) {
+    closeHandleQuietly(live.handle);
+  }
+  live = { pubky, handle };
+  await KeyStore.setPubky(pubky);
+  return live;
+}
+
 export function classifyResumeError(error: unknown): "auth-revoked" | "session-offline" {
   return AUTH_REVOKED_NAMES.has(errorName(error))
     ? "auth-revoked"

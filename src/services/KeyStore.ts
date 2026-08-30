@@ -1,3 +1,5 @@
+import { base64urlnopad } from "@scure/base";
+
 /**
  * WebKeyStore for Hypercolor web.
  *
@@ -36,6 +38,9 @@ const PURPOSE_PENDING_RING_HANDOFF = "pending-ring-handoff";
 const PURPOSE_RECEIVER_NOISE = "receiver-noise";
 const PURPOSE_NOISE_SEED = "noise-seed";
 const PURPOSE_ATTACHMENT = "attachment";
+const PURPOSE_LINK_SNAPSHOT = "link-snapshot";
+
+const LINK_SNAPSHOT_PREFIX = "HC1.";
 
 /**
  * Pending paykit-connect SK is wrapped before any identity exists. AAD
@@ -513,6 +518,117 @@ export async function deleteReceiverNoiseSecret(alias: string): Promise<void> {
   await deleteSecret(PURPOSE_RECEIVER_NOISE, alias);
 }
 
+function encodeLinkSnapshotEnvelope(
+  alias: string,
+  record: WrappedSecretRecord,
+): string {
+  const payload = new Uint8Array(1 + record.iv.length + record.ciphertext.length);
+  payload[0] = record.version;
+  payload.set(record.iv, 1);
+  payload.set(record.ciphertext, 1 + record.iv.length);
+  return `${LINK_SNAPSHOT_PREFIX}${base64urlnopad.encode(new TextEncoder().encode(alias))}.${base64urlnopad.encode(payload)}`;
+}
+
+function decodeLinkSnapshotEnvelope(
+  wrapped: string,
+): { alias: string; iv: Uint8Array; ciphertext: Uint8Array } | null {
+  if (!wrapped.startsWith(LINK_SNAPSHOT_PREFIX)) return null;
+  const rest = wrapped.slice(LINK_SNAPSHOT_PREFIX.length);
+  const dot = rest.indexOf(".");
+  if (dot <= 0) return null;
+  try {
+    const alias = new TextDecoder().decode(
+      base64urlnopad.decode(rest.slice(0, dot)),
+    );
+    const payload = base64urlnopad.decode(rest.slice(dot + 1));
+    if (payload.length < 13) return null;
+    const version = payload[0];
+    if (version !== WRAP_VERSION) return null;
+    return {
+      alias,
+      iv: payload.slice(1, 13),
+      ciphertext: payload.slice(13),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function readSecretRecord(
+  purpose: string,
+  alias: string,
+): Promise<WrappedSecretRecord | undefined> {
+  const db = ensureInitialized();
+  const key = secretKey(purpose, alias);
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SECRETS, "readonly");
+    const store = tx.objectStore(STORE_SECRETS);
+    const req = store.get(key);
+    req.onsuccess = () => resolve(req.result as WrappedSecretRecord | undefined);
+    req.onerror = () =>
+      reject(req.error ?? new Error(`KeyStore: failed to read secret ${key}`));
+  });
+}
+
+/**
+ * Wrap Encrypted Link snapshot bytes (purpose `link-snapshot`) and return an
+ * opaque string for SQLite. The inner wasm bytes are never inspected.
+ */
+export async function wrapLinkSnapshot(
+  alias: string,
+  plaintext: Uint8Array,
+): Promise<string> {
+  await wrapSecret(PURPOSE_LINK_SNAPSHOT, alias, plaintext);
+  const record = await readSecretRecord(PURPOSE_LINK_SNAPSHOT, alias);
+  if (!record) {
+    throw new Error("KeyStore: link-snapshot wrap failed to persist");
+  }
+  return encodeLinkSnapshotEnvelope(alias, record);
+}
+
+/**
+ * Unwrap an opaque snapshot string produced by {@link wrapLinkSnapshot}.
+ * Decrypts the envelope; does not parse the recovered wasm bytes.
+ */
+export async function unwrapLinkSnapshot(wrapped: string): Promise<Uint8Array> {
+  const parsed = decodeLinkSnapshotEnvelope(wrapped);
+  if (!parsed) {
+    throw new Error("KeyStore: malformed link-snapshot envelope");
+  }
+  if (!_wrappingKey) {
+    throw new Error("KeyStore: not initialized. Call initKeyStore() first.");
+  }
+  const owner = await getMetadata(KEY_PUBKY);
+  if (!owner) {
+    throw new Error("KeyStore: owner pubky not set; cannot unwrap link snapshot.");
+  }
+  const aad = buildAad(owner, PURPOSE_LINK_SNAPSHOT, parsed.alias);
+  try {
+    const plaintext = await globalThis.crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: parsed.iv as BufferSource,
+        additionalData: aad as BufferSource,
+      },
+      _wrappingKey,
+      parsed.ciphertext as BufferSource,
+    );
+    return new Uint8Array(plaintext);
+  } catch {
+    throw new Error("KeyStore: link-snapshot unwrap failed");
+  }
+}
+
+export async function deleteLinkSnapshot(wrapped: string): Promise<void> {
+  const parsed = decodeLinkSnapshotEnvelope(wrapped);
+  if (!parsed) return;
+  await deleteSecret(PURPOSE_LINK_SNAPSHOT, parsed.alias);
+}
+
+export function isWrappedLinkSnapshot(value: string): boolean {
+  return value.startsWith(LINK_SNAPSHOT_PREFIX);
+}
+
 export async function setNoiseSeed(seedHex: string): Promise<void> {
   const plaintext = new TextEncoder().encode(seedHex);
   await wrapSecret(PURPOSE_NOISE_SEED, PURPOSE_NOISE_SEED, plaintext);
@@ -739,6 +855,10 @@ export const KeyStore = {
   setReceiverNoiseSecret,
   getReceiverNoiseSecret,
   deleteReceiverNoiseSecret,
+  wrapLinkSnapshot,
+  unwrapLinkSnapshot,
+  deleteLinkSnapshot,
+  isWrappedLinkSnapshot,
   setNoiseSeed,
   getNoiseSeed,
   setAttachmentSecret,

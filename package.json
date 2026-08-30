@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "proof:staging": "RUN_STAGING_DM=1 playwright test e2e/dm-staging.spec.ts",
     "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
     "check:wire": "bash scripts/check-wire-drift.sh"
   },
