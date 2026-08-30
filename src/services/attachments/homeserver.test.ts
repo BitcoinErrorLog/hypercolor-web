@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ATTACHMENT_MAX_BYTES } from "../../flags/config";
 import {
   ATTACHMENT_ALGORITHM,
   AttachmentError,
@@ -168,6 +169,42 @@ describe("attachment homeserver transport", () => {
       uploaded.nonce,
     );
     expect(opened).toEqual(copy);
+  });
+
+  it("encryptAndPut zeroizes plaintext when validation throws", async () => {
+    const noSession = new TextEncoder().encode("wipe-no-session");
+    live = null;
+    await expect(encryptAndPutAttachment(noSession)).rejects.toMatchObject({
+      name: "AttachmentError",
+      code: "unavailable",
+    });
+    expect(noSession).toEqual(new Uint8Array(noSession.length));
+    expect(putPublic).not.toHaveBeenCalled();
+
+    live = { pubky: OWNER, handle: { putPublic } };
+    const empty = new Uint8Array(0);
+    await expect(encryptAndPutAttachment(empty)).rejects.toMatchObject({
+      name: "AttachmentError",
+      code: "validation",
+    });
+    expect(empty).toEqual(new Uint8Array(0));
+
+    const tooLargeBacking = new Uint8Array([7, 7, 7, 7]);
+    const tooLarge = new Proxy(tooLargeBacking, {
+      get(target, prop, receiver) {
+        if (prop === "byteLength") return ATTACHMENT_MAX_BYTES + 1;
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === "function"
+          ? (value as (...args: unknown[]) => unknown).bind(target)
+          : value;
+      },
+    });
+    await expect(encryptAndPutAttachment(tooLarge)).rejects.toMatchObject({
+      name: "AttachmentError",
+      code: "too-large",
+    });
+    expect(tooLargeBacking).toEqual(new Uint8Array(4));
+    expect(putPublic).not.toHaveBeenCalled();
   });
 
   it("getAndDecrypt rejects a missing blob", async () => {

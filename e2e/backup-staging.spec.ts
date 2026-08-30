@@ -4,8 +4,12 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const GENERATE =
+  process.env.STAGING_INVITE_SCRIPT ??
   "/Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh";
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+
+// Secrets travel as evaluate args; never write them into Playwright traces.
+test.use({ trace: "off", video: "off" });
 
 async function mintToken(): Promise<string> {
   const { stdout } = await execFileAsync("bash", [GENERATE], {

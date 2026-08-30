@@ -25,6 +25,15 @@ export function parseBackupHomeserverUrl(url: string): BackupHomeserverTarget {
   return { ownerPubky: match[1], path: BACKUP_PATH };
 }
 
+function isAbsentBackupError(err: unknown, mappedMessage: string): boolean {
+  const raw = err instanceof Error ? err.message : mappedMessage;
+  const name =
+    typeof err === "object" && err !== null && "name" in err
+      ? String((err as { name?: unknown }).name ?? "")
+      : "";
+  return /\b404\b|not[- ]found/i.test(`${name} ${raw} ${mappedMessage}`);
+}
+
 function mapPutError(err: unknown): Error {
   if (err instanceof Error && err.message.startsWith("BackupService:")) {
     return err;
@@ -83,7 +92,10 @@ export function createHomeserverBackupTransport(): BackupTransport {
         if (mapped.code === "network") {
           throw new Error("BackupService: network error");
         }
-        return null;
+        if (isAbsentBackupError(err, mapped.message)) {
+          return null;
+        }
+        throw new Error(`BackupService: ${mapped.message}`);
       }
       if (raw === undefined) return null;
       const text = new TextDecoder().decode(raw);

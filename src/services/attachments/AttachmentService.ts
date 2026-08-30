@@ -28,32 +28,32 @@ export type AttachmentUploadResult = {
 
 /**
  * Encrypt plaintext and PUT only the ciphertext to the owner homeserver.
- * `plaintext` is treated as consumed and is zeroized in `finally`.
+ * `plaintext` is treated as consumed and is zeroized on every exit path.
  */
 export async function encryptAndPutAttachment(
   plaintext: Uint8Array,
 ): Promise<AttachmentUploadResult> {
-  const live = getLiveSession();
-  if (!live) {
-    throw new AttachmentError(
-      "unavailable",
-      "Enable encrypted messaging to write to your homeserver.",
-    );
-  }
-  if (plaintext.byteLength === 0) {
-    throw new AttachmentError("validation", "Attachment plaintext is empty");
-  }
-  if (plaintext.byteLength > ATTACHMENT_MAX_BYTES) {
-    throw new AttachmentError(
-      "too-large",
-      `Attachment is ${plaintext.byteLength} bytes; v1 limit is ${ATTACHMENT_MAX_BYTES} bytes (8 MiB).`,
-    );
-  }
-
-  const attachmentId = crypto.randomUUID();
-  const location = buildAttachmentLocation(live.pubky, attachmentId);
-  const key = generateAttachmentKey();
   try {
+    const live = getLiveSession();
+    if (!live) {
+      throw new AttachmentError(
+        "unavailable",
+        "Enable encrypted messaging to write to your homeserver.",
+      );
+    }
+    if (plaintext.byteLength === 0) {
+      throw new AttachmentError("validation", "Attachment plaintext is empty");
+    }
+    if (plaintext.byteLength > ATTACHMENT_MAX_BYTES) {
+      throw new AttachmentError(
+        "too-large",
+        `Attachment is ${plaintext.byteLength} bytes; v1 limit is ${ATTACHMENT_MAX_BYTES} bytes (8 MiB).`,
+      );
+    }
+
+    const attachmentId = crypto.randomUUID();
+    const location = buildAttachmentLocation(live.pubky, attachmentId);
+    const key = generateAttachmentKey();
     const plaintextB64 = base64urlnopad.encode(plaintext);
     const sealed = attachmentEncrypt(plaintextB64, key, location);
     await putAttachmentCiphertext(location, sealed.ciphertextB64);

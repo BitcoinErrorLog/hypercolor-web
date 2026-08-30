@@ -105,6 +105,28 @@ describe("backup homeserver transport", () => {
     publicGet.mockResolvedValueOnce(new TextEncoder().encode(BLOB));
     await expect(transport.getPublic(backupLatestUrl(OWNER))).resolves.toBe(BLOB);
   });
+
+  it("GET maps a thrown 404 to null and rethrows other errors", async () => {
+    publicGet.mockRejectedValueOnce(Object.assign(new Error("404 Not Found"), { name: "NotFound" }));
+    await expect(transport.getPublic(backupLatestUrl(OWNER))).resolves.toBeNull();
+
+    publicGet.mockRejectedValueOnce(
+      Object.assign(new Error("failed to fetch"), { name: "NetworkError" }),
+    );
+    await expect(transport.getPublic(backupLatestUrl(OWNER))).rejects.toThrow(
+      "BackupService: network error",
+    );
+
+    publicGet.mockRejectedValueOnce(new Error("invalid path"));
+    await expect(transport.getPublic(backupLatestUrl(OWNER))).rejects.toThrow(
+      "BackupService: validation failed",
+    );
+
+    publicGet.mockRejectedValueOnce(new Error("homeserver protocol broke"));
+    await expect(transport.getPublic(backupLatestUrl(OWNER))).rejects.toThrow(
+      "BackupService: protocol error",
+    );
+  });
 });
 
 describe("BackupService session fallback", () => {
