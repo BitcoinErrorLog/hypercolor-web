@@ -89,6 +89,8 @@ export const SANDBOX_ENV_ALLOWLIST = [
 const SANDBOX_STRIP_SUFFIX_RE = /_TOKEN$|_SECRET$|_KEY$|_PASSWORD$/i;
 const NPM_CONFIG_AUTH_TOKEN_RE = /^npm_config_.*authToken/i;
 
+// Tripwire only. Computed-member aliases (window["eval"], setAttribute("onclick"),
+// constructor.constructor) are an accepted gap — see docs/vibeware.md F9.
 export const DIFF_DANGER_PATTERNS = [
   ["dangerouslySetInnerHTML", /dangerouslySetInnerHTML/],
   ["eval(", /\beval\s*\(/],

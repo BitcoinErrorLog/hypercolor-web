@@ -191,6 +191,10 @@ Sandbox worktrees symlink the main `node_modules` and `.cache`; validation write
 
 `--keep` is opt-in and not product; kept dirs are named `vibeware-sandbox-KEEP-…` and must not be treated as the main tree.
 
+### Sandbox danger-scan tripwire (F9)
+
+`scanDiffForDanger` is a tripwire on added diff lines, not a complete XSS/eval detector. Computed-member aliases (`window["eval"]`, `document["write"]`, `el.setAttribute("onclick", …)`, `constructor.constructor("…")`) are an accepted gap. A passing candidate still requires exactly one writable file, forbidden-wins path policy graded from repo-root `vibeware.yaml`, and the four validation classes. Do not treat a clean danger scan as proof that injected script is impossible.
+
 ## Path safety
 
 `normalizePath` rejects `..` / `.` segments, a leading `/`, and backslash
