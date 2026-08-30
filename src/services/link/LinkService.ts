@@ -1172,16 +1172,11 @@ async function routeHeldGroupInbound(ownerPubky: PubkyKey, peerPubky: PubkyKey):
     const peeked = peekEnvelopeKind(item.rawJson);
     if (peeked === null || !isGroupWireKind(peeked)) continue;
     const groupEnvelope = decodeGroupEnvelope(item.rawJson);
-    if (groupEnvelope) {
-      await applyGroupInbound({
-        ownerPubky,
-        senderPubky: peerPubky,
-        envelope: groupEnvelope,
-        rawJson: item.rawJson,
-        receivedAt: item.receivedAt,
-      });
+    if (!groupEnvelope) {
+      await StorageService.markLinkStreamItemProcessed(item.id);
     }
-    await StorageService.markLinkStreamItemProcessed(item.id);
+    // Leave valid group envelopes unprocessed. Applying here would
+    // materialize attacker-chosen names and bodies before WoT accept.
   }
 }
 

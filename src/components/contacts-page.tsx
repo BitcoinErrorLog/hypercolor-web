@@ -12,6 +12,7 @@ import { shortPubky } from "@/lib/format";
 import { addManualContact } from "@/services/contacts/addManualContact";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { useContactStore } from "@/stores/contactStore";
 import type { Contact } from "@/types";
 
@@ -116,7 +117,9 @@ export function ContactsPage() {
                   className="block py-3 hover:bg-accent/40"
                 >
                   <span className="font-medium">
-                    {contact.displayName ?? shortPubky(contact.pubky)}
+                    {contact.displayName
+                      ? sanitizeDisplayName(contact.displayName)
+                      : shortPubky(contact.pubky)}
                   </span>
                   <span className="mt-1 block truncate font-mono text-xs text-muted-foreground">
                     {contact.pubky}

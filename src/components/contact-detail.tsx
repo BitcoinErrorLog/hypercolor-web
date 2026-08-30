@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { shortPubky } from "@/lib/format";
 import { relationshipBadges } from "@/lib/contacts-sort";
 import { formatTipIdentifierDisplay, payloadPreview } from "@/utils/displaySanitize";
@@ -73,7 +74,9 @@ export function ContactDetail({
     <article className="space-y-6" data-testid="contactDetail">
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-        <h2 className="text-xl font-semibold">{contact?.displayName ?? shortPubky(pubky)}</h2>
+        <h2 className="text-xl font-semibold">
+          {contact?.displayName ? sanitizeDisplayName(contact.displayName) : shortPubky(pubky)}
+        </h2>
         <p className="mt-1 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
       </div>
 

@@ -7,6 +7,7 @@ import { GroupMessageBubble } from "@/components/message-bubble";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChannel } from "@/hooks/useChannel";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { shortPubky } from "@/lib/format";
 import { CHAT_ATTACHMENT_KIND } from "@/types/attachment";
 
@@ -50,7 +51,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
         <div>
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Private group</p>
           <h2 className="text-lg font-semibold" data-testid="channelName">
-            {channel.channel.name}
+            {sanitizeDisplayName(channel.channel.name)}
           </h2>
         </div>
         <Button
@@ -69,12 +70,15 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
       {showMembers ? (
         <section className="mb-4 space-y-3 rounded-md border border-border bg-card p-4 text-sm">
           <ul className="space-y-2">
-            {channel.members.map((member) => (
+            {channel.members.map((member) => {
+              const display = channel.contacts.find(
+                (contact) => contact.pubky === member.memberPubky,
+              )?.displayName;
+              return (
               <li key={member.memberPubky} className="flex items-center justify-between gap-2">
                 <span className="min-w-0">
                   <span className="font-mono break-all">
-                    {channel.contacts.find((contact) => contact.pubky === member.memberPubky)
-                      ?.displayName ?? shortPubky(member.memberPubky)}
+                    {display ? sanitizeDisplayName(display) : shortPubky(member.memberPubky)}
                   </span>
                   <span className="ml-2 text-muted-foreground">
                     {member.role}
@@ -94,7 +98,8 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
                   </Button>
                 ) : null}
               </li>
-            ))}
+              );
+            })}
           </ul>
           {channel.isAdmin ? (
             <form

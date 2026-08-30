@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { shortPubky } from "@/lib/format";
+import { collectGroupInvitations, type HeldGroupInvitation } from "@/lib/group-invites";
 import { LinkService } from "@/services/link/LinkService";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
@@ -13,6 +15,7 @@ import type { Contact, MessageRequest } from "@/types";
 type RequestRow = {
   request: MessageRequest;
   contact: Contact | null;
+  invitations: HeldGroupInvitation[];
 };
 
 export function RequestsPage() {
@@ -30,8 +33,15 @@ export function RequestsPage() {
     const pending = await StorageService.listMessageRequests(ownerPubky, "pending");
     const next: RequestRow[] = [];
     for (const request of pending) {
-      const contact = await StorageService.getContact(request.peerPubky, ownerPubky);
-      next.push({ request, contact });
+      const [contact, streamItems] = await Promise.all([
+        StorageService.getContact(request.peerPubky, ownerPubky),
+        StorageService.getUnprocessedLinkStreamItems(ownerPubky, request.peerPubky),
+      ]);
+      next.push({
+        request,
+        contact,
+        invitations: collectGroupInvitations(streamItems, request.peerPubky),
+      });
     }
     setRows(next);
   }, [ownerPubky]);
@@ -45,7 +55,8 @@ export function RequestsPage() {
       <h1 className="text-2xl font-semibold tracking-tight">Message requests</h1>
       <p className="text-sm text-muted-foreground">
         Inbound links from people you do not follow wait here. Accepting opens the
-        conversation; declining drops held stream items and remembers the decline.
+        conversation and any held group invitations; declining drops held stream
+        items and remembers the decline. Group invitations show a name only.
       </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
       {rows.length === 0 ? (
@@ -59,13 +70,25 @@ export function RequestsPage() {
         <ul className="divide-y divide-border">
           {rows.map((row) => {
             const peer = row.request.peerPubky;
-            const name = row.contact?.displayName ?? shortPubky(peer);
+            const name = row.contact?.displayName
+              ? sanitizeDisplayName(row.contact.displayName)
+              : shortPubky(peer);
             const busy = busyPeer === peer;
             return (
               <li key={peer} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-medium">{name}</p>
                   <p className="break-all font-mono text-xs text-muted-foreground">{peer}</p>
+                  {row.invitations.length > 0 ? (
+                    <ul className="mt-2 space-y-1" data-testid="groupInvitation">
+                      {row.invitations.map((invite) => (
+                        <li key={invite.channelId} className="text-sm text-muted-foreground">
+                          Group invitation
+                          {invite.name ? ` · ${sanitizeDisplayName(invite.name)}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
                 <div className="flex gap-2">
                   <Button

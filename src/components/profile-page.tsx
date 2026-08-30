@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { useSignOut } from "@/hooks/useSignOut";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { sessionStatusLabel } from "@/lib/session-ui";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
@@ -23,9 +24,14 @@ export function ProfilePage() {
       </div>
       <div className="flex flex-col items-center gap-3 py-8">
         <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl text-brand">
-          {(profile?.displayName ?? pubky ?? "?").charAt(0).toUpperCase()}
+          {(profile?.displayName
+            ? sanitizeDisplayName(profile.displayName)
+            : pubky ?? "?"
+          ).charAt(0).toUpperCase()}
         </div>
-        <p className="text-lg font-medium">{profile?.displayName ?? "Unnamed"}</p>
+        <p className="text-lg font-medium">
+          {profile?.displayName ? sanitizeDisplayName(profile.displayName) : "Unnamed"}
+        </p>
         {pubky ? (
           <p className="break-all font-mono text-sm text-muted-foreground" data-testid="profilePubky">
             {pubky}

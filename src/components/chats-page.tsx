@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useInbox } from "@/hooks/useInbox";
 import { usePathSegment } from "@/hooks/usePathSegment";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
 import { addManualContact } from "@/services/contacts/addManualContact";
 import { buildDmConversationId } from "@/types/link";
@@ -110,7 +111,7 @@ export function ChatsPage() {
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center justify-between gap-2">
                       <span className="truncate font-medium">
-                        {row.kind === "group" ? row.title : shortPubky(row.title)}
+                        {row.kind === "group" ? sanitizeDisplayName(row.title) : shortPubky(row.title)}
                       </span>
                       {row.lastMessageAt ? (
                         <span className="text-xs text-muted-foreground">

@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { excludeHeldFounderChannels, heldGroupFounderSet } from "@/lib/group-invites";
 import { groupConversationId, mergeInboxRows, messagePreview, type InboxRow } from "@/lib/inbox";
 import { StorageService } from "@/services/StorageService";
 import { isGroupTimelineVisible } from "@/types/group";
@@ -29,14 +30,16 @@ export async function loadInboxRows(ownerPubky: string): Promise<{
   rows: InboxRow[];
   pendingRequests: number;
 }> {
-  const [dms, channels, pendingRequests] = await Promise.all([
+  const [dms, channels, pendingRequests, requests] = await Promise.all([
     StorageService.listLinkConversations(ownerPubky),
     StorageService.listGroupChannels(ownerPubky),
     StorageService.countPendingMessageRequests(ownerPubky),
+    StorageService.listMessageRequests(ownerPubky),
   ]);
+  const visibleChannels = excludeHeldFounderChannels(channels, heldGroupFounderSet(requests));
 
   const groups = await Promise.all(
-    channels.map(async (channel) => {
+    visibleChannels.map(async (channel) => {
       const [messages, cursor] = await Promise.all([
         StorageService.listGroupMessages(ownerPubky, channel.channelId, 20),
         StorageService.getLinkReadCursor(ownerPubky, groupConversationId(channel.channelId)),

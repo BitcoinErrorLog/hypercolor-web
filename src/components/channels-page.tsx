@@ -15,6 +15,8 @@ import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { contactsWithEstablishedLinks } from "@/lib/group-members";
+import { excludeHeldFounderChannels, heldGroupFounderSet } from "@/lib/group-invites";
+import { sanitizeDisplayName } from "@/lib/display-name";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import type { Contact } from "@/types";
 import type { GroupChannel } from "@/types/group";
@@ -38,12 +40,13 @@ export function ChannelsPage() {
       setEligible([]);
       return;
     }
-    const [rows, people, links] = await Promise.all([
+    const [rows, people, links, requests] = await Promise.all([
       GroupService.listChannels(),
       StorageService.getAllContacts(ownerPubky),
       StorageService.getAllLinks(ownerPubky),
+      StorageService.listMessageRequests(ownerPubky),
     ]);
-    setChannels(rows);
+    setChannels(excludeHeldFounderChannels(rows, heldGroupFounderSet(requests)));
     setEligible(contactsWithEstablishedLinks(people, links));
   }, [ownerPubky]);
 
@@ -135,7 +138,11 @@ export function ChannelsPage() {
                         }))
                       }
                     />
-                    <span className="truncate">{contact.displayName ?? contact.pubky}</span>
+                    <span className="truncate">
+                      {contact.displayName
+                        ? sanitizeDisplayName(contact.displayName)
+                        : contact.pubky}
+                    </span>
                   </label>
                 </li>
               ))}
@@ -165,7 +172,7 @@ export function ChannelsPage() {
                   data-testid="channelRow"
                   className="block py-3 hover:bg-accent/40"
                 >
-                  <span className="font-medium">{row.name}</span>
+                  <span className="font-medium">{sanitizeDisplayName(row.name)}</span>
                   <span className="mt-1 block text-xs text-muted-foreground">
                     {row.lastMessageAt ? formatRelativeTime(row.lastMessageAt) : "No messages yet"}
                   </span>

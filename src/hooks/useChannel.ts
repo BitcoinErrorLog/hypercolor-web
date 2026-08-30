@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { groupConversationId } from "@/lib/inbox";
+import { isHeldFounderChannel, heldGroupFounderSet } from "@/lib/group-invites";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
 import { GroupService, subscribeGroupEvents } from "@/services/group/GroupService";
@@ -36,6 +37,17 @@ export function useChannel(channelId: string | null) {
       setMessages([]);
       setMembers([]);
       setAttachments([]);
+      setLoading(false);
+      return;
+    }
+    const requests = await StorageService.listMessageRequests(localPubky);
+    if (isHeldFounderChannel(channelId, heldGroupFounderSet(requests))) {
+      setChannel(null);
+      setMessages([]);
+      setMembers([]);
+      setAttachments([]);
+      setContacts([]);
+      setEstablishedPeers([]);
       setLoading(false);
       return;
     }
