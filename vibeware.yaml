@@ -1,0 +1,183 @@
+# Authority contract for Hypercolor web (Vibeware playbook §3).
+# The loop may watch how the product is used. It may not watch what
+# people say, hold, or spend. Forbidden paths are outside every surface.
+
+app: hypercolor-web
+owner: hypercolor
+
+# v1 collector allowlist — one source of truth for CI and the later collector.
+# Unknown event types are dropped. Payloads stay coarse (plan Phase 1).
+evidence_allowlist:
+  - app.route.viewed
+  - app.onboarding.state
+  - app.onboarding.abandoned
+  - app.chat.empty_state
+  - app.thread.send_settled
+  - app.request.decision
+  - app.backup.export_outcome
+  - app.error.coarse
+  - app.pwa.installed
+
+# Shared Gate B + Gate C. A file matching both writable and forbidden is forbidden.
+forbidden_paths:
+  - src/services/link/session.ts
+  - src/services/RingConnect.ts
+  - src/services/ringChannelId.ts
+  - src/lib/app-origin.ts
+  - src/lib/capabilities.ts
+  - src/services/link/PaykitLinkWeb.ts
+  - src/services/link/LinkService.ts
+  - src/services/link/provisionReceiver.ts
+  - src/services/link/wotGate.ts
+  - src/services/link/inboundEnvelope.ts
+  - src/services/KeyStore.ts
+  - src/services/attachments/xchacha.ts
+  - src/services/backup/crypto.ts
+  - vendor/paykit-wasm/**
+  - src/types/**
+  - src/services/group/applyGroupInbound.ts
+  - src/services/attachments/applyAttachmentInbound.ts
+  - src/lib/group-invites.ts
+  - src/services/payments/**
+  - vibeware.yaml
+  - scripts/check-vibeware-path-policy*
+  - scripts/check-vibeware-selftest.mjs
+  - .github/**
+
+surfaces:
+  - surface:
+      id: hc-chats-ui
+      owner: hypercolor
+      risk: 1
+    scope:
+      repositories:
+        - BitcoinErrorLog/hypercolor-web
+      # Inbox chrome only. inboxStore.ts applies excludeHeldFounderChannels
+      # and inbox.ts can preview group bodies — both stay unwritable.
+      writable_paths:
+        - src/components/chats-page.tsx
+      forbidden_paths:
+        - src/stores/inboxStore.ts
+        - src/lib/inbox.ts
+    evidence:
+      allowed:
+        - app.route.viewed
+        - app.chat.empty_state
+        - app.error.coarse
+      forbidden:
+        - private_message_body
+        - raw_auth_token
+        - seed_material
+        - payment_details
+        - recovery_code
+        - attachment_bytes
+    exposure:
+      allowed_cohorts:
+        - experimental
+        - internal
+        - opted_in
+      max_initial_percent: 10
+      requires_human_for_percent_over: 25
+    selection:
+      primary_metric: empty_state_escape_rate
+      guardrails:
+        - app.error.coarse
+        - send_settle_failed_rate
+      minimum_exposure_hours: 48
+    autonomy:
+      max_level: expose
+      auto_merge: false
+      auto_promote: false
+    kill_switch:
+      flag: hc-chats-ui-vibeware-enabled
+
+  - surface:
+      id: hc-thread-ui
+      owner: hypercolor
+      risk: 1
+    scope:
+      repositories:
+        - BitcoinErrorLog/hypercolor-web
+      writable_paths:
+        - src/components/thread-view.tsx
+        - src/components/composer.tsx
+        - src/components/message-bubble.tsx
+      forbidden_paths:
+        - src/components/attachment-bubble.tsx
+    evidence:
+      allowed:
+        - app.thread.send_settled
+        - app.error.coarse
+      forbidden:
+        - private_message_body
+        - raw_auth_token
+        - seed_material
+        - payment_details
+        - recovery_code
+        - attachment_bytes
+    exposure:
+      allowed_cohorts:
+        - experimental
+        - internal
+        - opted_in
+      max_initial_percent: 10
+      requires_human_for_percent_over: 25
+    selection:
+      primary_metric: send_settle_success
+      guardrails:
+        - app.error.coarse
+        - send_settle_failed_rate
+      minimum_exposure_hours: 48
+    autonomy:
+      max_level: expose
+      auto_merge: false
+      auto_promote: false
+    kill_switch:
+      flag: hc-thread-ui-vibeware-enabled
+
+  - surface:
+      id: hc-onboarding-ui
+      owner: hypercolor
+      risk: 1
+    scope:
+      repositories:
+        - BitcoinErrorLog/hypercolor-web
+      writable_paths:
+        - src/components/welcome-page.tsx
+        - src/components/enable-page.tsx
+        - src/components/auth-qr.tsx
+        - src/components/auth-url-panel.tsx
+      forbidden_paths:
+        - src/services/RingConnect.ts
+        - src/services/link/session.ts
+    evidence:
+      allowed:
+        - app.onboarding.state
+        - app.onboarding.abandoned
+        - app.pwa.installed
+      forbidden:
+        - private_message_body
+        - raw_auth_token
+        - seed_material
+        - payment_details
+        - recovery_code
+        - attachment_bytes
+    exposure:
+      allowed_cohorts:
+        - experimental
+        - internal
+        - opted_in
+      max_initial_percent: 10
+      requires_human_for_percent_over: 25
+    selection:
+      primary_metric: onboarding_completion_rate
+      guardrails:
+        - app.error.coarse
+        - onboarding_abandoned_rate
+      minimum_exposure_hours: 48
+    autonomy:
+      max_level: expose
+      auto_merge: false
+      auto_promote: false
+    kill_switch:
+      flag: hc-onboarding-ui-vibeware-enabled

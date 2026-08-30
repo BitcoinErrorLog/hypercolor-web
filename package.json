@@ -20,6 +20,7 @@
     "proof:staging:payments": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_PAYMENTS=1 playwright test e2e/payments-staging.spec.ts",
     "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
     "check:wire": "bash scripts/check-wire-drift.sh",
+    "check:vibeware": "node scripts/check-vibeware-selftest.mjs",
     "backup:vector": "node scripts/backup-cross-restore-vector.mjs"
   },
   "dependencies": {

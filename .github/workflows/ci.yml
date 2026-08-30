@@ -37,6 +37,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Vibeware path-policy self-test
+        run: npm run check:vibeware
+
       - name: Unit tests
         run: npm test
 
