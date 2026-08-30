@@ -91,15 +91,18 @@ const NPM_CONFIG_AUTH_TOKEN_RE = /^npm_config_.*authToken/i;
 
 export const DIFF_DANGER_PATTERNS = [
   ["dangerouslySetInnerHTML", /dangerouslySetInnerHTML/],
-  ["eval(", /(^|[^\w.$])eval\s*\(/],
+  ["eval(", /\beval\s*\(/],
   ["<script", /<script/i],
   ["javascript:", /javascript:/i],
-  ["on*=", /\bon[A-Z]\w*=/],
+  // HTML onclick=/onerror=/ONCLICK=; camelCase onClick= only with a string, not JSX onClick={
+  ["on*=", /\bon[a-z]+\s*=|\bon[A-Za-z]+\s*=\s*["'`]|\bON[A-Z]+\s*=/],
   ["new Function", /new\s+Function\b/],
+  ["Function(", /\bFunction\s*\(/],
   ["innerHTML", /\binnerHTML\b/],
   ["outerHTML", /\bouterHTML\b/],
   ["document.write", /document\.write/],
   ["srcDoc", /srcDoc/],
+  ["setTimeout(", /set(?:Timeout|Interval)\s*\(\s*["'`]/],
 ];
 
 const ARTIFACT_CREDENTIAL_URL_RE = /:\/\/[^/\s:]+:[^/\s@]+@/;

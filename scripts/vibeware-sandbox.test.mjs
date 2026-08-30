@@ -270,7 +270,7 @@ describe("vibeware sandbox safety scans", () => {
   });
 
   it("flags injected onError= and <script on added diff lines", () => {
-    expect(scanDiffForDanger("+ <img src=x onError={evil}\n")).toContain("on*=");
+    expect(scanDiffForDanger('+ <img src=x onError="evil"\n')).toContain("on*=");
     expect(scanDiffForDanger("+ const x = <script>alert(1)</script>\n")).toContain("<script");
     expect(scanDiffForDanger("+ href={javascript:alert(1)}\n")).toContain("javascript:");
     expect(scanDiffForDanger("+ const f = new Function('x')\n")).toContain("new Function");
@@ -279,6 +279,17 @@ describe("vibeware sandbox safety scans", () => {
     expect(scanDiffForDanger("+ document.write(html)\n")).toContain("document.write");
     expect(scanDiffForDanger("+ <iframe srcDoc={html}\n")).toContain("srcDoc");
     expect(scanDiffForDanger("- <script>old</script>\n- onError=old\n+ const ok = 1\n")).toEqual([]);
+  });
+
+  it("flags lowercase handlers, window.eval, Function(, and string-arg timers", () => {
+    expect(scanDiffForDanger('+ <button onclick="evil()">Go</button>\n')).toContain("on*=");
+    expect(scanDiffForDanger("+ window.eval(payload)\n")).toContain("eval(");
+    expect(scanDiffForDanger("+ const f = Function('return 1')\n")).toContain("Function(");
+    expect(scanDiffForDanger('+ setTimeout("evil()", 0)\n')).toContain("setTimeout(");
+    expect(scanDiffForDanger("+ setInterval('evil()', 1000)\n")).toContain("setTimeout(");
+    expect(
+      scanDiffForDanger("+ <Button type=\"button\" size=\"sm\" onClick={() => onStartChat()}>New chat</Button>\n"),
+    ).toEqual([]);
   });
 
   it("treats telemetry allowlist, vibeware.yaml, and CI as boundary files", () => {
@@ -481,7 +492,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       const problem = writeTmpProblem(
         EMPTY_STATE_FILE,
         EMPTY_STATE_FIND,
-        'Start a chat <script>x</script> onError={evil}',
+        'Start a chat <script>x</script> onclick=evil',
       );
       const result = spawnSync(
         process.execPath,
