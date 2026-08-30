@@ -394,6 +394,141 @@ describe("GroupService", () => {
     expect(addCall?.[0]!.rawJson).toContain('"op":"add"');
   });
 
+  it("rejects inbound group message from a removed or never-member sender", async () => {
+    const channelId = await createPrivateGroup();
+    await GroupService.removeMember(channelId, PEER_B);
+
+    const fromRemoved = buildGroupMessageEnvelope({
+      channelId,
+      eventId: EVENT,
+      sentAt: NOW + 10,
+      body: "after-remove",
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_B,
+      envelope: fromRemoved.envelope,
+      rawJson: fromRemoved.json,
+      receivedAt: NOW + 10,
+    });
+    expect(await StorageService.getGroupMessage(OWNER, channelId, PEER_B, EVENT)).toBeNull();
+    expect(await StorageService.hasGroupMessage(OWNER, channelId, PEER_B, EVENT)).toBe(false);
+    expect(await StorageService.hasGroupEventSeen(OWNER, channelId, PEER_B, EVENT)).toBe(true);
+
+    const fromStranger = buildGroupMessageEnvelope({
+      channelId,
+      eventId: EVENT2,
+      sentAt: NOW + 11,
+      body: "never-a-member",
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: STRANGER,
+      envelope: fromStranger.envelope,
+      rawJson: fromStranger.json,
+      receivedAt: NOW + 11,
+    });
+    expect(await StorageService.getGroupMessage(OWNER, channelId, STRANGER, EVENT2)).toBeNull();
+    expect(await StorageService.hasGroupEventSeen(OWNER, channelId, STRANGER, EVENT2)).toBe(true);
+
+    const history = (await StorageService.listGroupMessages(OWNER, channelId)).filter(
+      (m) => m.kind === GROUP_MESSAGE_KIND,
+    );
+    expect(history.some((m) => m.body === "after-remove" || m.body === "never-a-member")).toBe(
+      false,
+    );
+  });
+
+  it("rejects a forged create whose channel_id founder is not the authenticated sender", async () => {
+    const forgedChannelId = `${OWNER}:00000000-0000-4000-8000-00000000ffff`;
+    const built = buildGroupMembershipEnvelope({
+      channelId: forgedChannelId,
+      eventId: EVENT,
+      sentAt: NOW,
+      op: "create",
+      name: "forged",
+      members: [OWNER, PEER_C],
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_C,
+      envelope: built.envelope,
+      rawJson: built.json,
+      receivedAt: NOW,
+    });
+    expect(await StorageService.getGroupChannel(OWNER, forgedChannelId)).toBeNull();
+    expect(await StorageService.hasGroupMessage(OWNER, forgedChannelId, PEER_C, EVENT)).toBe(
+      false,
+    );
+    expect(await StorageService.hasGroupEventSeen(OWNER, forgedChannelId, PEER_C, EVENT)).toBe(
+      true,
+    );
+
+    const knownId = await createPrivateGroup();
+    const knownBefore = await StorageService.getGroupChannel(OWNER, knownId);
+    const reuse = buildGroupMembershipEnvelope({
+      channelId: knownId,
+      eventId: EVENT2,
+      sentAt: NOW + 1,
+      op: "create",
+      name: "hijack-name",
+      members: [OWNER, PEER_C],
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_C,
+      envelope: reuse.envelope,
+      rawJson: reuse.json,
+      receivedAt: NOW + 1,
+    });
+    const knownAfter = await StorageService.getGroupChannel(OWNER, knownId);
+    expect(knownAfter?.createdBy).toBe(OWNER);
+    expect(knownAfter?.name).toBe(knownBefore?.name);
+    expect(await StorageService.hasGroupEventSeen(OWNER, knownId, PEER_C, EVENT2)).toBe(true);
+    expect(await StorageService.getGroupMember(OWNER, knownId, PEER_C)).toBeNull();
+  });
+
+  it("stores the same event_id from two senders as two separate rows", async () => {
+    const channelId = await createPrivateGroup();
+    const fromA = buildGroupMessageEnvelope({
+      channelId,
+      eventId: EVENT,
+      sentAt: NOW,
+      body: "from-a",
+    });
+    const fromB = buildGroupMessageEnvelope({
+      channelId,
+      eventId: EVENT,
+      sentAt: NOW + 1,
+      body: "from-b",
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_A,
+      envelope: fromA.envelope,
+      rawJson: fromA.json,
+      receivedAt: NOW,
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_B,
+      envelope: fromB.envelope,
+      rawJson: fromB.json,
+      receivedAt: NOW + 1,
+    });
+
+    const rowA = await StorageService.getGroupMessage(OWNER, channelId, PEER_A, EVENT);
+    const rowB = await StorageService.getGroupMessage(OWNER, channelId, PEER_B, EVENT);
+    expect(rowA?.body).toBe("from-a");
+    expect(rowB?.body).toBe("from-b");
+    expect(rowA?.senderPubky).toBe(PEER_A);
+    expect(rowB?.senderPubky).toBe(PEER_B);
+    const rows = (await StorageService.listGroupMessages(OWNER, channelId)).filter(
+      (m) => m.kind === GROUP_MESSAGE_KIND && m.eventId === EVENT,
+    );
+    expect(rows).toHaveLength(2);
+  });
+
   it("enforces the 50-member cap on create and add", async () => {
     const extras = Array.from({ length: PRIVATE_GROUP_MEMBER_CAP }, (_, i) => fakePubky(i + 20));
     await expect(GroupService.createChannel("Too big", extras)).rejects.toThrow(/50/);
