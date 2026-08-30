@@ -1,0 +1,4 @@
+vibeware.yaml @BitcoinErrorLog
+scripts/check-vibeware* @BitcoinErrorLog
+scripts/vibeware-evidence.mjs @BitcoinErrorLog
+.github/ @BitcoinErrorLog

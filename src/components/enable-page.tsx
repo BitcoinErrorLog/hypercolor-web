@@ -1,41 +1,34 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState } from "react";
-import { AuthUrlPanel } from "@/components/auth-url-panel";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { useAuthUrl } from "@/hooks/useAuthUrl";
-import { provisionReceiver } from "@/services/link/provisionReceiver";
-import { getEnableStatus, signOut } from "@/services/link/session";
-import { useSessionStatusStore } from "@/stores/sessionStatusStore";
-import type { SessionHandle } from "@/services/link/PaykitLinkWeb";
 
-export function EnablePage() {
-  const status = useSessionStatusStore((s) => s.status);
-  const setEnabled = useSessionStatusStore((s) => s.setEnabled);
-  const reset = useSessionStatusStore((s) => s.reset);
-  const [error, setError] = useState<string | null>(null);
-  const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
-
-  const onApproved = useCallback(
-    async (session: SessionHandle) => {
-      const result = await provisionReceiver(session, session.pubky());
-      setProvisionedPath(result.receiverPath);
-      setEnabled(result.pubky);
-    },
-    [setEnabled],
-  );
-
-  const auth = useAuthUrl({
-    autoFetch: status.kind === "needs-enable" || status.kind === "live",
-    onApproved,
-    onError: (err) =>
-      setError(err instanceof Error ? err.message : "Authorization failed"),
-  });
-
-  const enabled = status.kind === "enabled";
-  const offline = status.kind === "session-offline";
-
+export function EnablePage({
+  enabled,
+  offline,
+  isLoading,
+  isExpired,
+  error,
+  identityLabel,
+  provisionedPath,
+  authPanel,
+  onRegenerate,
+  onRetry,
+  onSignOut,
+}: {
+  enabled: boolean;
+  offline: boolean;
+  isLoading: boolean;
+  isExpired: boolean;
+  error: string | null;
+  identityLabel: string | null;
+  provisionedPath: string | null;
+  authPanel: ReactNode;
+  onRegenerate: () => void;
+  onRetry: () => void;
+  onSignOut: () => void;
+}) {
   return (
     <article className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">
@@ -58,15 +51,15 @@ export function EnablePage() {
             ? "Encrypted messaging enabled"
             : offline
               ? "Session offline"
-              : auth.isLoading
+              : isLoading
                 ? "Checking messaging status…"
-                : auth.isExpired
+                : isExpired
                   ? "Authorization expired"
                   : "Waiting for Pubky Ring…"}
         </p>
-        {status.kind === "enabled" || status.kind === "live" || status.kind === "session-offline" ? (
+        {identityLabel ? (
           <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-            {status.pubky}
+            {identityLabel}
           </p>
         ) : null}
         {provisionedPath ? (
@@ -85,46 +78,22 @@ export function EnablePage() {
         </p>
       ) : null}
 
-      {auth.isExpired ? (
-        <Button type="button" onClick={() => void auth.fetchUrl()}>
+      {isExpired ? (
+        <Button type="button" onClick={onRegenerate}>
           Generate new authorization
         </Button>
       ) : null}
 
-      {!enabled && !auth.isExpired ? (
-        <AuthUrlPanel
-          url={auth.url}
-          title="Authorization URL"
-          hint="Scan with Pubky Ring on this or another device."
-          copyLabel="Copy authorization URL"
-          openLabel="Open Pubky Ring"
-          testIdPrefix="enableMessaging"
-        />
-      ) : null}
+      {authPanel}
 
       {offline ? (
-        <Button
-          type="button"
-          onClick={() => {
-            void getEnableStatus();
-            void auth.fetchUrl();
-          }}
-        >
+        <Button type="button" onClick={onRetry}>
           Try again
         </Button>
       ) : null}
 
       {enabled ? (
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            void signOut().then(() => {
-              reset();
-              void auth.fetchUrl();
-            });
-          }}
-        >
+        <Button type="button" variant="outline" onClick={onSignOut}>
           Sign out
         </Button>
       ) : null}

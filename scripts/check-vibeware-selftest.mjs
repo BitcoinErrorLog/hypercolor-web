@@ -1,9 +1,16 @@
 #!/usr/bin/env node
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import {
+  evaluateChangedFiles,
+  loadManifest,
+  loadManifestFile,
+} from "./check-vibeware-path-policy.mjs";
+import { validateEvidencePayload } from "./vibeware-evidence.mjs";
+import { checkWritableImports } from "./check-vibeware-writable-imports.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const POLICY = path.join(ROOT, "scripts/check-vibeware-path-policy");
@@ -30,13 +37,15 @@ function assert(condition, message) {
   }
 }
 
-function rejectSet(result) {
-  return new Set(
-    (result.stderr || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean),
-  );
+function rejectMap(result) {
+  const out = new Map();
+  for (const line of (result.stderr || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const [filePath, reason] = trimmed.split("\t");
+    out.set(filePath, reason || "");
+  }
+  return out;
 }
 
 const cases = [
@@ -48,32 +57,53 @@ const cases = [
     expectRejected: [],
   },
   {
-    name: "rejects session.ts for hc-chats-ui",
+    name: "rejects session.ts for hc-chats-ui as forbidden",
     surface: "hc-chats-ui",
     files: ["src/services/link/session.ts"],
     expectStatus: 1,
-    expectRejected: ["src/services/link/session.ts"],
+    expectRejected: [{ path: "src/services/link/session.ts", reason: "forbidden" }],
   },
   {
     name: "rejects chats-page.tsx plus session.ts",
     surface: "hc-chats-ui",
     files: ["src/components/chats-page.tsx", "src/services/link/session.ts"],
     expectStatus: 1,
-    expectRejected: ["src/services/link/session.ts"],
+    expectRejected: [{ path: "src/services/link/session.ts", reason: "forbidden" }],
   },
   {
-    name: "rejects a change to vibeware.yaml",
+    name: "rejects a change to vibeware.yaml as forbidden",
     surface: "hc-chats-ui",
     files: ["vibeware.yaml"],
     expectStatus: 1,
-    expectRejected: ["vibeware.yaml"],
+    expectRejected: [{ path: "vibeware.yaml", reason: "forbidden" }],
   },
   {
-    name: "rejects attachment-bubble.tsx for hc-thread-ui",
+    name: "rejects a candidate rewrite of the evaluator as forbidden",
+    surface: "hc-chats-ui",
+    files: ["scripts/check-vibeware-path-policy.mjs"],
+    expectStatus: 1,
+    expectRejected: [{ path: "scripts/check-vibeware-path-policy.mjs", reason: "forbidden" }],
+  },
+  {
+    name: "rejects .github/workflows/ci.yml as forbidden",
+    surface: "hc-chats-ui",
+    files: [".github/workflows/ci.yml"],
+    expectStatus: 1,
+    expectRejected: [{ path: ".github/workflows/ci.yml", reason: "forbidden" }],
+  },
+  {
+    name: "rejects README.md as outside_writable",
+    surface: "hc-chats-ui",
+    files: ["README.md"],
+    expectStatus: 1,
+    expectRejected: [{ path: "README.md", reason: "outside_writable" }],
+  },
+  {
+    name: "rejects attachment-bubble.tsx for hc-thread-ui as forbidden",
     surface: "hc-thread-ui",
     files: ["src/components/attachment-bubble.tsx"],
     expectStatus: 1,
-    expectRejected: ["src/components/attachment-bubble.tsx"],
+    expectRejected: [{ path: "src/components/attachment-bubble.tsx", reason: "forbidden" }],
   },
   {
     name: "empty change set exits 0",
@@ -87,10 +117,14 @@ const cases = [
 let failed = 0;
 for (const testCase of cases) {
   const result = run(testCase.surface, testCase.files);
-  const rejected = rejectSet(result);
+  const rejected = rejectMap(result);
   const statusOk = result.status === testCase.expectStatus;
-  const rejectedOk = testCase.expectRejected.every((filePath) => rejected.has(filePath));
-  const extra = [...rejected].filter((filePath) => !testCase.expectRejected.includes(filePath));
+  const rejectedOk = testCase.expectRejected.every(
+    (item) => rejected.get(item.path) === item.reason,
+  );
+  const extra = [...rejected.keys()].filter(
+    (filePath) => !testCase.expectRejected.some((item) => item.path === filePath),
+  );
   if (!statusOk || !rejectedOk || extra.length > 0) {
     failed += 1;
     console.error(`FAIL ${testCase.name}`);
@@ -114,6 +148,71 @@ try {
 } catch (error) {
   failed += 1;
   console.error(`FAIL empty list file exits 0: ${error instanceof Error ? error.message : error}`);
+}
+
+try {
+  const emptied = readFileSync(MANIFEST, "utf8").replace(
+    /^forbidden_paths:\n(?: {2}- .+\n)+/m,
+    "forbidden_paths: []\n",
+  );
+  let threw = false;
+  try {
+    loadManifest(emptied);
+  } catch (error) {
+    threw = /forbidden_paths/.test(error instanceof Error ? error.message : "");
+  }
+  assert(threw, "emptied forbidden_paths must fail load");
+  console.log("ok emptied forbidden_paths fails load");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL emptied forbidden_paths fails load: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const manifest = loadManifestFile(MANIFEST);
+  const chats = manifest.surfaces.find((surface) => surface.id === "hc-chats-ui");
+  const widened = {
+    ...manifest,
+    surfaces: [{ ...chats, writable_paths: ["src/**"] }],
+  };
+  const result = evaluateChangedFiles(widened, "hc-chats-ui", ["src/services/KeyStore.ts"]);
+  assert(result.ok === false, "widened src/** must still reject KeyStore.ts");
+  assert(result.rejected[0]?.reason === "forbidden", "KeyStore.ts must reject as forbidden");
+  console.log("ok writable glob src/** + KeyStore.ts rejects as forbidden");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL writable glob KeyStore: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const planted = validateEvidencePayload("app.thread.send_settled", {
+    channel: "dm",
+    outcome: "ok",
+    kind: "text",
+    body: "hi",
+  });
+  assert(planted.ok === false, "planted body payload must fail");
+  console.log("ok planted body payload fails validator");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL planted body payload: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const imports = checkWritableImports();
+  assert(imports.ok, `writable-import check failed: ${JSON.stringify(imports.findings)}`);
+  console.log("ok writable-import check");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL writable-import check: ${error instanceof Error ? error.message : error}`,
+  );
 }
 
 if (failed > 0) {

@@ -1,72 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useState } from "react";
-import { AuthUrlPanel } from "@/components/auth-url-panel";
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { usePaykitConnect } from "@/hooks/usePaykitConnect";
-import { APP_NAME } from "@/lib/app-meta";
-import {
-  adoptHandoff,
-  decryptPendingHandoff,
-  type HandoffPayload,
-  type HandoffPublicParams,
-} from "@/services/RingConnect";
-import { useAuthStore } from "@/stores/authStore";
-import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-export function WelcomePage() {
-  const router = useRouter();
-  const pubky = useAuthStore((s) => s.pubky);
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const setNeedsEnable = useSessionStatusStore((s) => s.setNeedsEnable);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState<{
-    params: HandoffPublicParams;
-    payload: HandoffPayload;
-  } | null>(null);
-  const [adopting, setAdopting] = useState(false);
-
-  const onParams = useCallback(async (params: HandoffPublicParams) => {
-    try {
-      const payload = await decryptPendingHandoff(params);
-      setPending({ params, payload });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Handoff failed");
-    }
-  }, []);
-
-  const connect = usePaykitConnect({
-    autoStart: !isAuthenticated,
-    onParams,
-    onError: (err) =>
-      setError(err instanceof Error ? err.message : "paykit-connect failed"),
-  });
-
-  async function confirmAdoption(accepted: boolean) {
-    if (!pending) return;
-    if (!accepted) {
-      setPending(null);
-      return;
-    }
-    setAdopting(true);
-    try {
-      const result = await adoptHandoff(pending.params, pending.payload);
-      if (result) {
-        setNeedsEnable();
-        router.push("/enable");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Handoff failed");
-    } finally {
-      setAdopting(false);
-    }
-  }
-
+export function WelcomePage({
+  appName,
+  isAuthenticated,
+  pubky,
+  isLoading,
+  isExpired,
+  error,
+  pendingPubky,
+  adopting,
+  authPanel,
+  onGenerateLink,
+  onConfirmAdoption,
+  onCancelAdoption,
+}: {
+  appName: string;
+  isAuthenticated: boolean;
+  pubky: string | null;
+  isLoading: boolean;
+  isExpired: boolean;
+  error: string | null;
+  pendingPubky: string | null;
+  adopting: boolean;
+  authPanel: ReactNode;
+  onGenerateLink: () => void;
+  onConfirmAdoption: () => void;
+  onCancelAdoption: () => void;
+}) {
   return (
     <article className="space-y-6">
-      <h1 className="text-3xl font-semibold tracking-tight">{APP_NAME}</h1>
+      <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
       <p className="text-muted-foreground leading-7">
         Your identity is managed by <strong>Pubky Ring</strong>. Hypercolor
         never holds your private key. Scan or copy the paykit-connect URL,
@@ -83,52 +50,41 @@ export function WelcomePage() {
         </p>
       ) : null}
 
-      {connect.isLoading ? (
+      {isLoading ? (
         <p className="text-sm text-muted-foreground">Preparing paykit-connect…</p>
       ) : null}
 
-      {connect.isExpired ? (
+      {isExpired ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             This paykit-connect link expired. Generate a new one.
           </p>
-          <Button type="button" onClick={() => void connect.start()}>
+          <Button type="button" onClick={onGenerateLink}>
             Generate new link
           </Button>
         </div>
       ) : (
-        <AuthUrlPanel
-          url={connect.url}
-          title="Paykit-connect link"
-          hint="Scan with Pubky Ring on this or another device."
-          copyLabel="Copy URL"
-          openLabel="Open Pubky Ring"
-          testIdPrefix="welcome"
-        />
+        authPanel
       )}
 
-      {pending ? (
+      {pendingPubky ? (
         <div
           className="space-y-3 rounded-md border border-border bg-card p-4"
           data-testid="welcomeAdopt"
         >
           <p className="text-sm leading-6">
             Continue as{" "}
-            <code className="break-all font-mono">{pending.params.pubky}</code>?
+            <code className="break-all font-mono">{pendingPubky}</code>?
           </p>
           <div className="flex gap-2">
-            <Button
-              type="button"
-              disabled={adopting}
-              onClick={() => void confirmAdoption(true)}
-            >
+            <Button type="button" disabled={adopting} onClick={onConfirmAdoption}>
               Continue
             </Button>
             <Button
               type="button"
               variant="outline"
               disabled={adopting}
-              onClick={() => void confirmAdoption(false)}
+              onClick={onCancelAdoption}
             >
               Cancel
             </Button>

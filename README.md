@@ -202,21 +202,25 @@ npm run test:e2e       # Playwright; point PLAYWRIGHT_BASE_URL at dev or out/
 
 `vibeware.yaml` is the authority contract for the three risk-1 UI surfaces
 (`hc-chats-ui`, `hc-thread-ui`, `hc-onboarding-ui`). It lists writable paths,
-shared forbidden paths, the v1 evidence allowlist, exposure caps, and kill
-switches.
+shared forbidden paths, the v1 evidence allowlist and payload schema,
+exposure caps, and kill switches. Which keys are enforced vs informational
+is tabulated in [docs/vibeware.md](docs/vibeware.md).
 
 `scripts/check-vibeware-path-policy` rejects a change set if any file is
 outside that surface's `writable_paths` or matches `forbidden_paths`. A path
-that matches both is forbidden.
+that matches both is forbidden. Candidate PRs are graded against the **base**
+manifest (`npm run check:vibeware:pr`).
 
 ```bash
 ./scripts/check-vibeware-path-policy --manifest vibeware.yaml --surface hc-chats-ui --changed-files <file>
 ./scripts/check-vibeware-path-policy --manifest vibeware.yaml --surface hc-chats-ui --base <sha>
 npm run check:vibeware
+npm run check:vibeware:pr -- --base <sha> --head <sha> --head-ref <branch>
 ```
 
 CI (`.github/workflows/ci.yml`) runs typecheck, lint, the vibeware self-test,
-vitest, the wasm smoke, and the wire-drift check. Checking out the private Hypercolor pin in Actions
+the vibeware PR gate (always passed base/head shas), vitest, the wasm smoke,
+and the wire-drift check. Checking out the private Hypercolor pin in Actions
 needs a token that can read `BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN`
 if the default `GITHUB_TOKEN` cannot).
 

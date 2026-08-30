@@ -2,13 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { EnableMessagingCta } from "@/components/enable-messaging-cta";
-import { ThreadView } from "@/components/thread-view";
+import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useInbox } from "@/hooks/useInbox";
-import { usePathSegment } from "@/hooks/usePathSegment";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
 import { addManualContact } from "@/services/contacts/addManualContact";
@@ -16,9 +13,16 @@ import { buildDmConversationId } from "@/types/link";
 import { parsePubky } from "@/utils/pubkyId";
 import { useContactStore } from "@/stores/contactStore";
 
-export function ChatsPage() {
+export function ChatsPage({
+  conversationId,
+  enableCta,
+  thread,
+}: {
+  conversationId: string | null;
+  enableCta: ReactNode;
+  thread: ReactNode;
+}) {
   const router = useRouter();
-  const conversationId = usePathSegment("chats");
   const inbox = useInbox();
   const upsertContact = useContactStore((s) => s.upsertContact);
   const [peerDraft, setPeerDraft] = useState("");
@@ -65,7 +69,7 @@ export function ChatsPage() {
           </Link>
         </div>
 
-        <EnableMessagingCta testId="chatsEnableMessaging" />
+        {enableCta}
 
         <form
           className="mt-4 space-y-2"
@@ -138,7 +142,7 @@ export function ChatsPage() {
         {inbox.error ? <p className="mt-3 text-sm text-red-400">{inbox.error}</p> : null}
       </aside>
       <section className={!conversationId ? "hidden md:block" : undefined}>
-        <ThreadView conversationId={conversationId} />
+        {thread}
       </section>
     </div>
   );

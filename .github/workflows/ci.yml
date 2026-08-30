@@ -13,6 +13,12 @@ jobs:
     steps:
       - name: Checkout hypercolor-web
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR shas for vibeware diff
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}
 
       - name: Checkout Hypercolor wire pin
         uses: actions/checkout@v4
@@ -39,6 +45,13 @@ jobs:
 
       - name: Vibeware path-policy self-test
         run: npm run check:vibeware
+
+      - name: Vibeware PR path-policy
+        env:
+          VIBEWARE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          VIBEWARE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          VIBEWARE_HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: npm run check:vibeware:pr -- --base "$VIBEWARE_BASE" --head "$VIBEWARE_HEAD" --head-ref "$VIBEWARE_HEAD_REF"
 
       - name: Unit tests
         run: npm test

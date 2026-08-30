@@ -21,6 +21,8 @@
     "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
     "check:wire": "bash scripts/check-wire-drift.sh",
     "check:vibeware": "node scripts/check-vibeware-selftest.mjs",
+    "check:vibeware:pr": "node scripts/check-vibeware-pr.mjs",
+    "check:vibeware:imports": "node scripts/check-vibeware-writable-imports.mjs",
     "backup:vector": "node scripts/backup-cross-restore-vector.mjs"
   },
   "dependencies": {

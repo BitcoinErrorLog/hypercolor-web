@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Composer } from "@/components/composer";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
+import { AttachmentBubble } from "@/components/attachment-bubble";
 import { GroupMessageBubble } from "@/components/message-bubble";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -141,27 +142,32 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
         {channel.messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>
         ) : (
-          channel.messages.map((message) => (
-            <GroupMessageBubble
-              key={`${message.senderPubky}:${message.kind}:${message.eventId}`}
-              message={message}
-              attachment={
-                message.kind === CHAT_ATTACHMENT_KIND
-                  ? channel.attachments.find((row) => row.eventId === message.eventId)
-                  : undefined
-              }
-              mine={message.senderPubky === channel.localPubky}
-              localPubky={channel.localPubky}
-              onRetry={channel.retryFailed}
-              onReact={(emoji) => void channel.react(message.eventId, message.senderPubky, emoji)}
-              onEdit={() => {
-                channel.setEditingEventId(message.eventId);
-                channel.setDraft(message.body);
-              }}
-              onDelete={() => void channel.deleteMessage(message.eventId)}
-              onResolved={() => void channel.reload()}
-            />
-          ))
+          channel.messages.map((message) => {
+            const attachment =
+              message.kind === CHAT_ATTACHMENT_KIND
+                ? channel.attachments.find((row) => row.eventId === message.eventId)
+                : undefined;
+            return (
+              <GroupMessageBubble
+                key={`${message.senderPubky}:${message.kind}:${message.eventId}`}
+                message={message}
+                attachmentSlot={
+                  attachment ? (
+                    <AttachmentBubble record={attachment} onResolved={() => void channel.reload()} />
+                  ) : undefined
+                }
+                mine={message.senderPubky === channel.localPubky}
+                localPubky={channel.localPubky}
+                onRetry={channel.retryFailed}
+                onReact={(emoji) => void channel.react(message.eventId, message.senderPubky, emoji)}
+                onEdit={() => {
+                  channel.setEditingEventId(message.eventId);
+                  channel.setDraft(message.body);
+                }}
+                onDelete={() => void channel.deleteMessage(message.eventId)}
+              />
+            );
+          })
         )}
       </div>
 

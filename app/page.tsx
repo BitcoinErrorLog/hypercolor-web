@@ -1,5 +1,5 @@
-import { WelcomePage } from "@/components/welcome-page";
+import { WelcomePageHost } from "@/services/onboarding/welcomeActions";
 
 export default function HomePage() {
-  return <WelcomePage />;
+  return <WelcomePageHost />;
 }

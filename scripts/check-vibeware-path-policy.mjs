@@ -2,30 +2,61 @@
 /**
  * Fail if a changed file is outside a surface's writable_paths or matches
  * any forbidden_paths (shared + per-surface). Forbidden wins writable.
+ *
+ * Path safety (fail-closed):
+ * - normalizePath rejects `..` / `.` segments, a leading `/`, and any
+ *   backslash leftover after `/` folding. Those paths are violations
+ *   (reason: unsafe_path), even if a writable glob would otherwise match.
+ * - git diff mode (`--base` / range): reject typechange (`T` in
+ *   `git diff --name-status`) and symlink mode 120000 (`git diff --raw`).
+ *   A symlink at a writable path must not pass as a path string.
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertEvidenceContract,
+  V1_EVIDENCE_ALLOWLIST,
+  validateEvidencePayload,
+} from "./vibeware-evidence.mjs";
 
-export const V1_EVIDENCE_ALLOWLIST = [
-  "app.route.viewed",
-  "app.onboarding.state",
-  "app.onboarding.abandoned",
-  "app.chat.empty_state",
-  "app.thread.send_settled",
-  "app.request.decision",
-  "app.backup.export_outcome",
-  "app.error.coarse",
-  "app.pwa.installed",
+export { V1_EVIDENCE_ALLOWLIST, validateEvidencePayload };
+
+export const REQUIRED_SHARED_FORBIDDEN = [
+  "src/services/link/session.ts",
+  "vibeware.yaml",
+  ".github/**",
+  "scripts/check-vibeware*",
 ];
 
+export const MIN_SHARED_FORBIDDEN_PATHS = 40;
+
+const ALLOWED_COHORTS = new Set(["experimental", "internal", "opted_in"]);
+
+export class UnsafePathError extends Error {
+  constructor(filePath, detail) {
+    super(`unsafe path (${detail}): ${filePath}`);
+    this.name = "UnsafePathError";
+    this.filePath = filePath;
+    this.detail = detail;
+  }
+}
+
 export function normalizePath(filePath) {
-  return filePath
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\//, "")
-    .replace(/\/{2,}/g, "/");
+  const trimmed = String(filePath).trim();
+  if (trimmed.startsWith("/")) {
+    throw new UnsafePathError(trimmed, "absolute");
+  }
+  const unified = trimmed.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/");
+  if (unified.includes("\\")) {
+    throw new UnsafePathError(trimmed, "backslash");
+  }
+  const segments = unified.split("/");
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    throw new UnsafePathError(trimmed, "dot-segment");
+  }
+  return unified;
 }
 
 function escapeRegex(text) {
@@ -64,6 +95,38 @@ export function pathMatches(pattern, filePath) {
     if (file === prefix || file.startsWith(`${prefix}/`)) return true;
   }
   return globToRegExp(glob).test(file);
+}
+
+export function stripCommentOutsideQuotes(text) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "\\" && (inSingle || inDouble)) {
+      i += 1;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+    } else if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+    } else if (ch === "#" && !inSingle && !inDouble) {
+      return text.slice(0, i);
+    }
+  }
+  return text;
+}
+
+function rejectYamlTokens(raw, lineNumber) {
+  if (/(^|\s)<<\s*:/.test(raw) || raw.trim() === "<<" || raw.trim().startsWith("<<:")) {
+    throw new Error(`yaml: merge keys are not allowed at line ${lineNumber}`);
+  }
+  if (/(^|[\s:-])&[A-Za-z0-9_]/.test(raw)) {
+    throw new Error(`yaml: anchors are not allowed at line ${lineNumber}`);
+  }
+  if (/(^|[\s:-])\*[A-Za-z0-9_]/.test(raw)) {
+    throw new Error(`yaml: aliases are not allowed at line ${lineNumber}`);
+  }
 }
 
 export function parseYaml(text) {
@@ -105,6 +168,16 @@ function parseBlock(lines, start, minIndent) {
   return parseMapping(lines, i, line.indent);
 }
 
+function assignUnique(object, key, value, lineNumber) {
+  if (Object.prototype.hasOwnProperty.call(object, key)) {
+    throw new Error(`yaml: duplicate key ${key} at line ${lineNumber}`);
+  }
+  if (key === "<<") {
+    throw new Error(`yaml: merge keys are not allowed at line ${lineNumber}`);
+  }
+  object[key] = value;
+}
+
 function parseMapping(lines, start, keyIndent) {
   const object = {};
   let i = start;
@@ -119,25 +192,28 @@ function parseMapping(lines, start, keyIndent) {
     if (line.text.startsWith("- ")) {
       throw new Error(`yaml: sequence item where mapping key expected at line ${line.index}`);
     }
-    const colon = line.text.indexOf(":");
+    const strippedLine = stripCommentOutsideQuotes(line.text);
+    rejectYamlTokens(strippedLine, line.index);
+    const colon = strippedLine.indexOf(":");
     if (colon < 0) {
       throw new Error(`yaml: expected key: at line ${line.index}`);
     }
-    const key = line.text.slice(0, colon).trim();
+    const key = strippedLine.slice(0, colon).trim();
     if (!key) throw new Error(`yaml: empty key at line ${line.index}`);
-    const rest = line.text.slice(colon + 1).replace(/\s+#.*$/, "").trim();
+    const rest = strippedLine.slice(colon + 1).trim();
     i += 1;
     if (rest !== "") {
-      object[key] = parseScalar(rest, line.index);
+      rejectYamlTokens(rest, line.index);
+      assignUnique(object, key, parseScalar(rest, line.index), line.index);
       continue;
     }
     const next = skipBlank(lines, i);
     if (next >= lines.length || lines[next].indent <= keyIndent) {
-      object[key] = null;
+      assignUnique(object, key, null, line.index);
       continue;
     }
     const [child, after] = parseBlock(lines, next, keyIndent + 1);
-    object[key] = child;
+    assignUnique(object, key, child, line.index);
     i = after;
   }
   return [object, i];
@@ -157,8 +233,10 @@ function parseSequence(lines, start, dashIndent) {
     if (!line.text.startsWith("- ")) {
       break;
     }
-    const rest = line.text.slice(2);
-    const trimmed = rest.replace(/\s+#.*$/, "").trim();
+    const strippedLine = stripCommentOutsideQuotes(line.text);
+    rejectYamlTokens(strippedLine, line.index);
+    const rest = strippedLine.slice(2);
+    const trimmed = rest.trim();
     i += 1;
     const next = skipBlank(lines, i);
     const hasNested = next < lines.length && lines[next].indent > dashIndent;
@@ -175,26 +253,30 @@ function parseSequence(lines, start, dashIndent) {
     if (looksLikeInlineMapKey(trimmed)) {
       const colon = trimmed.indexOf(":");
       const firstKey = trimmed.slice(0, colon).trim();
-      const firstRest = trimmed.slice(colon + 1).replace(/\s+#.*$/, "").trim();
+      const firstRest = stripCommentOutsideQuotes(trimmed.slice(colon + 1)).trim();
       const item = {};
       if (firstRest !== "") {
-        item[firstKey] = parseScalar(firstRest, line.index);
+        rejectYamlTokens(firstRest, line.index);
+        assignUnique(item, firstKey, parseScalar(firstRest, line.index), line.index);
       } else if (hasNested) {
         const [child, after] = parseBlock(lines, next, dashIndent + 1);
-        item[firstKey] = child;
+        assignUnique(item, firstKey, child, line.index);
         i = after;
       } else {
-        item[firstKey] = null;
+        assignUnique(item, firstKey, null, line.index);
       }
       const cont = skipBlank(lines, i);
       if (cont < lines.length && lines[cont].indent > dashIndent && !lines[cont].text.startsWith("- ")) {
         const [more, after] = parseMapping(lines, cont, lines[cont].indent);
-        Object.assign(item, more);
+        for (const [moreKey, moreValue] of Object.entries(more)) {
+          assignUnique(item, moreKey, moreValue, lines[cont].index);
+        }
         i = after;
       }
       items.push(item);
       continue;
     }
+    rejectYamlTokens(trimmed, line.index);
     items.push(parseScalar(trimmed, line.index));
   }
   return [items, i];
@@ -244,13 +326,66 @@ function requireString(value, label) {
   return value.trim();
 }
 
+function validateExposure(exposure, id) {
+  if (!exposure || typeof exposure !== "object" || Array.isArray(exposure)) {
+    throw new Error(`vibeware: ${id} exposure is required`);
+  }
+  const cohorts = asStringList(exposure.allowed_cohorts, `${id} exposure.allowed_cohorts`);
+  for (const cohort of cohorts) {
+    if (!ALLOWED_COHORTS.has(cohort)) {
+      throw new Error(`vibeware: ${id} exposure.allowed_cohorts contains ${cohort}`);
+    }
+  }
+  const max = exposure.max_initial_percent;
+  if (typeof max !== "number" || max < 1 || max > 10) {
+    throw new Error(`vibeware: ${id} exposure.max_initial_percent must be in 1..10`);
+  }
+  const human = exposure.requires_human_for_percent_over;
+  if (typeof human !== "number" || human < 25) {
+    throw new Error(`vibeware: ${id} exposure.requires_human_for_percent_over must be >= 25`);
+  }
+  return { allowed_cohorts: cohorts, max_initial_percent: max, requires_human_for_percent_over: human };
+}
+
+function validateAutonomy(autonomy, id) {
+  if (!autonomy || typeof autonomy !== "object" || Array.isArray(autonomy)) {
+    throw new Error(`vibeware: ${id} autonomy is required`);
+  }
+  if (autonomy.auto_merge !== false) {
+    throw new Error(`vibeware: ${id} autonomy.auto_merge must be false`);
+  }
+  if (autonomy.auto_promote !== false) {
+    throw new Error(`vibeware: ${id} autonomy.auto_promote must be false`);
+  }
+  return autonomy;
+}
+
+function validateKillSwitch(killSwitch, id) {
+  if (!killSwitch || typeof killSwitch !== "object" || Array.isArray(killSwitch)) {
+    throw new Error(`vibeware: ${id} kill_switch is required`);
+  }
+  const flag = requireString(killSwitch.flag, `${id} kill_switch.flag`);
+  return { flag };
+}
+
 export function loadManifest(text) {
   const doc = parseYaml(text);
   const evidenceAllowlist = asStringList(doc.evidence_allowlist, "evidence_allowlist");
   if (evidenceAllowlist.length === 0) {
     throw new Error("vibeware: evidence_allowlist must not be empty");
   }
+  assertEvidenceContract(doc, evidenceAllowlist);
   const sharedForbidden = asStringList(doc.forbidden_paths, "forbidden_paths");
+  if (sharedForbidden.length < MIN_SHARED_FORBIDDEN_PATHS) {
+    throw new Error(
+      `vibeware: forbidden_paths must have at least ${MIN_SHARED_FORBIDDEN_PATHS} entries`,
+    );
+  }
+  for (const required of REQUIRED_SHARED_FORBIDDEN) {
+    if (!sharedForbidden.includes(required)) {
+      throw new Error(`vibeware: forbidden_paths must include ${required}`);
+    }
+  }
   const rawSurfaces = doc.surfaces;
   if (!Array.isArray(rawSurfaces) || rawSurfaces.length === 0) {
     throw new Error("vibeware: surfaces must be a non-empty list");
@@ -286,10 +421,10 @@ export function loadManifest(text) {
       forbidden_paths: asStringList(scope.forbidden_paths, `${id} forbidden_paths`),
       evidence_allowed: allowed,
       evidence_forbidden: asStringList(evidence.forbidden, `${id} evidence.forbidden`),
-      exposure: entry.exposure ?? {},
+      exposure: validateExposure(entry.exposure, id),
       selection: entry.selection ?? {},
-      autonomy: entry.autonomy ?? {},
-      kill_switch: entry.kill_switch ?? {},
+      autonomy: validateAutonomy(entry.autonomy, id),
+      kill_switch: validateKillSwitch(entry.kill_switch, id),
     };
   });
   const ids = surfaces.map((surface) => surface.id);
@@ -300,6 +435,9 @@ export function loadManifest(text) {
     app: doc.app ?? null,
     owner: doc.owner ?? null,
     evidence_allowlist: evidenceAllowlist,
+    evidence_payloads: doc.evidence_payloads,
+    max_payload_bytes: doc.max_payload_bytes,
+    privacy: doc.privacy,
     forbidden_paths: sharedForbidden,
     surfaces,
   };
@@ -307,6 +445,17 @@ export function loadManifest(text) {
 
 export function loadManifestFile(manifestPath) {
   return loadManifest(readFileSync(manifestPath, "utf8"));
+}
+
+function rejectUnsafe(raw) {
+  try {
+    return { path: normalizePath(raw), unsafe: false };
+  } catch (error) {
+    if (error instanceof UnsafePathError) {
+      return { path: error.filePath, unsafe: true };
+    }
+    throw error;
+  }
 }
 
 export function evaluateChangedFiles(manifest, surfaceId, changedFiles) {
@@ -317,14 +466,31 @@ export function evaluateChangedFiles(manifest, surfaceId, changedFiles) {
   const forbiddenPatterns = [...manifest.forbidden_paths, ...surface.forbidden_paths];
   const rejected = [];
   for (const raw of changedFiles) {
-    const filePath = normalizePath(raw);
-    if (!filePath) continue;
-    const forbidden = forbiddenPatterns.find((pattern) => pathMatches(pattern, filePath));
+    if (typeof raw !== "string" || raw.trim() === "") continue;
+    const checked = rejectUnsafe(raw);
+    if (checked.unsafe) {
+      rejected.push({ path: checked.path, reason: "unsafe_path", pattern: null });
+      continue;
+    }
+    const filePath = checked.path;
+    const forbidden = forbiddenPatterns.find((pattern) => {
+      try {
+        return pathMatches(pattern, filePath);
+      } catch {
+        return false;
+      }
+    });
     if (forbidden) {
       rejected.push({ path: filePath, reason: "forbidden", pattern: forbidden });
       continue;
     }
-    const writable = surface.writable_paths.some((pattern) => pathMatches(pattern, filePath));
+    const writable = surface.writable_paths.some((pattern) => {
+      try {
+        return pathMatches(pattern, filePath);
+      } catch {
+        return false;
+      }
+    });
     if (!writable) {
       rejected.push({ path: filePath, reason: "outside_writable", pattern: null });
     }
@@ -340,26 +506,72 @@ export function readChangedFilesList(filePath) {
   const text = readFileSync(filePath, "utf8");
   return text
     .split(/\r?\n/)
-    .map((line) => line.replace(/#.*$/, "").trim())
-    .filter(Boolean)
-    .map(normalizePath);
+    .map((line) => stripCommentOutsideQuotes(line).trim())
+    .filter(Boolean);
 }
 
-export function changedFilesFromBase(repoRoot, baseSha) {
-  const result = spawnSync("git", ["diff", "--name-only", baseSha], {
+function runGit(repoRoot, args) {
+  const result = spawnSync("git", args, {
     cwd: repoRoot,
     encoding: "utf8",
   });
   if (result.status !== 0) {
     throw new Error(
-      `git diff --name-only ${baseSha} failed: ${(result.stderr || result.stdout || "").trim()}`,
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
     );
   }
-  return result.stdout
+  return result.stdout;
+}
+
+export function inspectDiffSafety(repoRoot, baseSha, headSha = "HEAD") {
+  const spec = `${baseSha}...${headSha}`;
+  const rejected = [];
+  const nameStatus = runGit(repoRoot, ["diff", "--name-status", spec]);
+  for (const line of nameStatus.split(/\r?\n/)) {
+    if (!line) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const status = line.slice(0, tab);
+    const filePath = line.slice(tab + 1).split("\t").pop();
+    if (status.startsWith("T") && filePath) {
+      rejected.push({ path: filePath, reason: "symlink_or_typechange", pattern: null });
+    }
+  }
+  const raw = runGit(repoRoot, ["diff", "--raw", spec]);
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.startsWith(":")) continue;
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const meta = line.slice(0, tab).split(/\s+/);
+    const filePath = line.slice(tab + 1).split("\t").pop();
+    const oldMode = (meta[0] || "").replace(/^:/, "");
+    const newMode = meta[1] || "";
+    if ((oldMode === "120000" || newMode === "120000") && filePath) {
+      if (!rejected.some((item) => item.path === filePath)) {
+        rejected.push({ path: filePath, reason: "symlink_or_typechange", pattern: null });
+      }
+    }
+  }
+  return rejected;
+}
+
+export function changedFilesFromRange(repoRoot, baseSha, headSha = "HEAD") {
+  const spec = `${baseSha}...${headSha}`;
+  const names = runGit(repoRoot, ["diff", "--name-only", spec])
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map(normalizePath);
+    .filter(Boolean);
+  const unsafe = inspectDiffSafety(repoRoot, baseSha, headSha);
+  return { files: names, unsafe };
+}
+
+export function changedFilesFromBase(repoRoot, baseSha) {
+  const { files, unsafe } = changedFilesFromRange(repoRoot, baseSha, "HEAD");
+  if (unsafe.length > 0) {
+    const labeled = unsafe.map((item) => item.path);
+    throw new Error(`symlink or typechange in diff: ${labeled.join(", ")}`);
+  }
+  return files;
 }
 
 function usage() {
@@ -413,6 +625,12 @@ function parseArgs(argv) {
   return out;
 }
 
+function writeRejected(io, rejected) {
+  for (const item of rejected) {
+    io.stderr.write(`${item.path}\t${item.reason}\n`);
+  }
+}
+
 export function main(argv = process.argv.slice(2), io = process) {
   let args;
   try {
@@ -440,17 +658,19 @@ export function main(argv = process.argv.slice(2), io = process) {
       ? path.resolve(args.repo)
       : path.dirname(manifestPath);
     const files = [];
+    const extraRejected = [];
     for (const listPath of args.changedFiles) {
       files.push(...readChangedFilesList(path.resolve(listPath)));
     }
     if (args.base) {
-      files.push(...changedFilesFromBase(repoRoot, args.base));
+      const ranged = changedFilesFromRange(repoRoot, args.base, "HEAD");
+      files.push(...ranged.files);
+      extraRejected.push(...ranged.unsafe);
     }
     const result = evaluateChangedFiles(manifest, args.surface, files);
-    if (!result.ok) {
-      for (const item of result.rejected) {
-        io.stderr.write(`${item.path}\n`);
-      }
+    const rejected = [...extraRejected, ...result.rejected];
+    if (rejected.length > 0) {
+      writeRejected(io, rejected);
       return 1;
     }
     return 0;
