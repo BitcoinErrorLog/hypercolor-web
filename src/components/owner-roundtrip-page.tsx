@@ -12,6 +12,9 @@ declare global {
 export function OwnerRoundtripPage() {
   useEffect(() => {
     window.runOwnerRoundtrip = runOwnerRoundtrip;
+    return () => {
+      delete window.runOwnerRoundtrip;
+    };
   }, []);
 
   return (

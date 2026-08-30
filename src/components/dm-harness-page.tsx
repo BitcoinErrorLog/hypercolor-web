@@ -26,6 +26,13 @@ export function DmHarnessPage() {
     window.runDmSend = runDmSend;
     window.runDmSync = runDmSync;
     window.runDmRound = runDmRound;
+    return () => {
+      delete window.runDmSignup;
+      delete window.runDmEnsure;
+      delete window.runDmSend;
+      delete window.runDmSync;
+      delete window.runDmRound;
+    };
   }, []);
 
   return (

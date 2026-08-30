@@ -3,8 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { LinkService } from "@/services/link/LinkService";
+import { useContactStore } from "@/stores/contactStore";
 import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+
+function evictServiceWorkerCache() {
+  if (typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return;
+  navigator.serviceWorker.controller.postMessage({ type: "hypercolor-sign-out" });
+}
 
 export function useSignOut() {
   const router = useRouter();
@@ -16,6 +22,8 @@ export function useSignOut() {
     try {
       await LinkService.clearSession();
       useInboxStore.getState().reset();
+      useContactStore.setState({ contacts: {}, meshPeers: {} });
+      evictServiceWorkerCache();
       reset();
       router.push("/");
     } finally {

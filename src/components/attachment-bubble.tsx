@@ -1,27 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { isRasterImageContentType } from "@/lib/attachment-preview";
 import { KeyStore } from "@/services/KeyStore";
-import { StorageService } from "@/services/StorageService";
 import { AttachmentService } from "@/services/attachments/AttachmentService";
-import {
-  attachmentCachePath,
-  writeFileFromStandardBase64,
-} from "@/services/attachments/fileIo";
-import { AttachmentError, isImageContentType, type AttachmentRecord } from "@/types/attachment";
-
-function bytesToStandardB64(bytes: Uint8Array): string {
-  if (typeof Buffer !== "undefined") {
-    return Buffer.from(bytes).toString("base64");
-  }
-  let bin = "";
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
-  }
-  return btoa(bin);
-}
+import { AttachmentError, type AttachmentRecord } from "@/types/attachment";
 
 export function AttachmentBubble({
   record,
@@ -34,8 +18,13 @@ export function AttachmentBubble({
   const [error, setError] = useState<string | null>(null);
   const [objectUrl, setObjectUrl] = useState<string | null>(null);
 
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectUrl]);
+
   const unavailable = record.resolveState === "unavailable-from-backup";
-  const ready = record.resolveState === "ready" || Boolean(record.localCachePath);
 
   async function decrypt() {
     setBusy(true);
@@ -54,22 +43,14 @@ export function AttachmentBubble({
         secret.key,
         secret.nonce,
       );
-      const cachePath = attachmentCachePath(
-        record.ownerPubky,
-        record.senderPubky,
-        record.eventId,
-      );
-      await writeFileFromStandardBase64(cachePath, bytesToStandardB64(plaintext));
-      await StorageService.updateAttachmentResolve(
-        record.ownerPubky,
-        record.senderPubky,
-        record.eventId,
-        { resolveState: "ready", localCachePath: cachePath },
-      );
       const copy = new Uint8Array(plaintext.byteLength);
       copy.set(plaintext);
       const blob = new Blob([copy.buffer], { type: record.contentType });
-      setObjectUrl(URL.createObjectURL(blob));
+      const nextUrl = URL.createObjectURL(blob);
+      setObjectUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return nextUrl;
+      });
       onResolved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Decrypt failed");
@@ -91,7 +72,7 @@ export function AttachmentBubble({
           Unavailable from backup until this file is shared again.
         </p>
       ) : null}
-      {isImageContentType(record.contentType) && objectUrl ? (
+      {isRasterImageContentType(record.contentType) && objectUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={objectUrl} alt="Attachment" className="max-h-64 rounded-md" />
       ) : objectUrl ? (
@@ -107,7 +88,7 @@ export function AttachmentBubble({
           disabled={busy}
           onClick={() => void decrypt()}
         >
-          {busy ? "Decrypting…" : ready ? "Open" : "Decrypt"}
+          {busy ? "Decrypting…" : "Decrypt"}
         </Button>
       ) : null}
       {error ? <p className="text-sm text-red-400">{error}</p> : null}

@@ -19,6 +19,10 @@ export function BackupHarnessPage() {
     installHomeserverBackupTransport();
     window.runBackupSignupExport = runBackupSignupExport;
     window.runBackupRestore = runBackupRestore;
+    return () => {
+      delete window.runBackupSignupExport;
+      delete window.runBackupRestore;
+    };
   }, []);
 
   return (
