@@ -1,9 +1,9 @@
-import { PathSegmentPage } from "@/components/path-segment-page";
+import { ChatsPage } from "@/components/chats-page";
 
 export function generateStaticParams() {
   return [{ conversationId: [] }];
 }
 
-export default function ChatsPage() {
-  return <PathSegmentPage title="Chats" segment="chats" />;
+export default function ChatsRoute() {
+  return <ChatsPage />;
 }

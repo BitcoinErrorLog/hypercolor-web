@@ -3,6 +3,7 @@ import type { EnableStatus } from "@/services/link/session";
 
 export type SessionUiStatus =
   | { kind: "unknown" }
+  | { kind: "no-identity" }
   | { kind: "needs-enable" }
   | { kind: "session-offline"; pubky: string }
   | { kind: "live"; pubky: string }
@@ -13,14 +14,16 @@ interface SessionStatusState {
   setFromRestore: (
     restore: { status: "live" | "needs-enable" | "session-offline"; pubky?: string },
     enable?: EnableStatus,
+    opts?: { hasIdentity?: boolean },
   ) => void;
   setEnabled: (pubky: string) => void;
+  setNeedsEnable: () => void;
   reset: () => void;
 }
 
 export const useSessionStatusStore = create<SessionStatusState>((set) => ({
   status: { kind: "unknown" },
-  setFromRestore: (restore, enable) => {
+  setFromRestore: (restore, enable, opts) => {
     if (restore.status === "session-offline") {
       set({
         status: { kind: "session-offline", pubky: restore.pubky ?? "" },
@@ -28,7 +31,9 @@ export const useSessionStatusStore = create<SessionStatusState>((set) => ({
       return;
     }
     if (restore.status !== "live" || !restore.pubky) {
-      set({ status: { kind: "needs-enable" } });
+      set({
+        status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
+      });
       return;
     }
     if (enable === "enabled") {
@@ -38,5 +43,6 @@ export const useSessionStatusStore = create<SessionStatusState>((set) => ({
     set({ status: { kind: "live", pubky: restore.pubky } });
   },
   setEnabled: (pubky) => set({ status: { kind: "enabled", pubky } }),
-  reset: () => set({ status: { kind: "needs-enable" } }),
+  setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),
+  reset: () => set({ status: { kind: "no-identity" } }),
 }));

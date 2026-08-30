@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useState } from "react";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { Button } from "@/components/ui/button";
@@ -77,7 +78,10 @@ export function EnablePage() {
 
       {enabled ? (
         <p className="text-sm text-muted-foreground">
-          Ring approved the grant and this device published a receiver marker.
+          Ring approved the grant and this device published a receiver marker.{" "}
+          <Link href="/chats" className="underline underline-offset-4">
+            Open chats
+          </Link>
         </p>
       ) : null}
 

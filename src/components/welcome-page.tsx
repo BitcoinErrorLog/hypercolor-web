@@ -14,11 +14,13 @@ import {
   type HandoffPublicParams,
 } from "@/services/RingConnect";
 import { useAuthStore } from "@/stores/authStore";
+import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
 export function WelcomePage() {
   const router = useRouter();
   const pubky = useAuthStore((s) => s.pubky);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const setNeedsEnable = useSessionStatusStore((s) => s.setNeedsEnable);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<{
     params: HandoffPublicParams;
@@ -52,6 +54,7 @@ export function WelcomePage() {
     try {
       const result = await adoptHandoff(pending.params, pending.payload);
       if (result) {
+        setNeedsEnable();
         router.push("/enable");
       }
     } catch (err) {
