@@ -148,6 +148,8 @@ export interface LinkReceiveResult {
   snapshot: string;
 }
 
+export type PaymentEndpointMap = Record<string, string>;
+
 type LiveWasmHandle =
   | { kind: "handshake"; handle: LinkHandshakeHandle; alias: string }
   | { kind: "established"; handle: EncryptedLinkHandle; alias: string };
@@ -349,6 +351,101 @@ export const PaykitLinkWeb = {
   ): Promise<Uint8Array> {
     const wasm = await loadPaykitWasm();
     return wasm.sb2Decrypt(envelope, recipientSk, ownerPubky, canonicalPath);
+  },
+
+  async setPaymentEndpoint(
+    session: SessionHandle,
+    receiverPath: string,
+    identifier: string,
+    payload: string,
+  ): Promise<void> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      await wasm.setPaymentEndpoint(session, receiverPath, identifier, payload);
+    });
+  },
+
+  async removePaymentEndpoint(
+    session: SessionHandle,
+    receiverPath: string,
+    identifier: string,
+  ): Promise<void> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      await wasm.removePaymentEndpoint(session, receiverPath, identifier);
+    });
+  },
+
+  async getPaymentEndpoint(
+    payeePubky: string,
+    receiverPath: string,
+    identifier: string,
+  ): Promise<string | undefined> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      const wasmClient = await getPaykitClient();
+      const payload = (await wasm.getPaymentEndpoint(
+        wasmClient,
+        payeePubky,
+        receiverPath,
+        identifier,
+      )) as unknown;
+      return typeof payload === "string" ? payload : undefined;
+    });
+  },
+
+  async getPaymentList(
+    payeePubky: string,
+    receiverPath: string,
+  ): Promise<PaymentEndpointMap> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      const wasmClient = await getPaykitClient();
+      return asEndpointMap(
+        await wasm.getPaymentList(wasmClient, payeePubky, receiverPath),
+      );
+    });
+  },
+
+  async listPaymentMethods(
+    payeePubky: string,
+    receiverPath: string,
+  ): Promise<string[]> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      const wasmClient = await getPaykitClient();
+      return asStringArray(
+        await wasm.listPaymentMethods(wasmClient, payeePubky, receiverPath),
+      );
+    });
+  },
+
+  async listPaykitReceiverPaths(ownerPubky: string): Promise<string[]> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      const wasmClient = await getPaykitClient();
+      return asStringArray(await wasm.listPaykitReceiverPaths(wasmClient, ownerPubky));
+    });
+  },
+
+  async serializePrivatePaymentListJson(
+    endpoints: PaymentEndpointMap,
+  ): Promise<string> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      const json = wasm.serializePrivatePaymentListJson(endpoints);
+      if (typeof json !== "string") {
+        throw createLinkNativeError("protocol", "serializePrivatePaymentListJson");
+      }
+      return json;
+    });
+  },
+
+  async parsePrivatePaymentListJson(rawJson: string): Promise<PaymentEndpointMap> {
+    return invoke(async () => {
+      const wasm = await wasmModule();
+      return asEndpointMap(wasm.parsePrivatePaymentListJson(rawJson));
+    });
   },
 
   isAvailable(): boolean {
@@ -640,6 +737,21 @@ export const PaykitLinkWeb = {
     });
   },
 
+  async sendPrivatePaymentList(
+    linkId: string,
+    endpoints: PaymentEndpointMap,
+  ): Promise<LinkSendResult> {
+    return invoke(async () => {
+      const entry = requireEstablished(linkId);
+      await entry.handle.sendPrivatePaymentList(endpoints);
+      const snapshot = await persistHandleSnapshot(
+        entry.handle.snapshot(),
+        entry.alias,
+      );
+      return { snapshot };
+    });
+  },
+
   async receivePrivateMessages(linkId: string): Promise<LinkReceiveResult> {
     return invoke(async () => {
       const entry = requireEstablished(linkId);
@@ -764,6 +876,24 @@ function freeQuietly(handle: { free: () => void }): void {
   } catch {
     // already freed
   }
+}
+
+function asEndpointMap(value: unknown): PaymentEndpointMap {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return {};
+  }
+  const out: PaymentEndpointMap = {};
+  for (const [identifier, payload] of Object.entries(value)) {
+    if (typeof payload === "string") {
+      out[identifier] = payload;
+    }
+  }
+  return out;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function parseInboundMessages(raw: unknown[] | undefined): LinkInboundMessage[] {

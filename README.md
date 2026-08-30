@@ -75,6 +75,21 @@ sends `chat.group.message.v0`, and both B and C receive it on that
 staging-invite script and never printed. A skipped test is not a
 green live proof.
 
+### Staging payments proof
+
+```bash
+npm run proof:staging:payments
+```
+
+Two isolated Chromium processes: A signs up and publishes a public
+`lno` Payment Endpoint; B reads it unauthenticated via
+`getPaymentEndpoint` / `getPaymentList` / `listPaymentMethods`. A and B
+then establish an Encrypted Link, A sends a Private Payment List, and B
+receives it through `receivePrivateApplicationMessages` and parses with
+`parsePrivatePaymentListJson`. A removes the public endpoint; B's
+re-fetch is empty. Tokens are minted by the staging-invite script and
+never printed. A skipped test is not a green live proof.
+
 P3 exit still needs one live Ring phone run against staging (https
 callback). Wasm staging signup from this client is no longer the blocker.
 
@@ -155,8 +170,9 @@ Ring auth service, etc.). P1 adds web executors.
 ## paykit-wasm
 
 Vendored from `BitcoinErrorLog/paykit-rs-official` branch `feat/wasm-binding`
-at `132628c1622de4a76c1c52e0033aae225d087732` (includes
-`resumeSessionFromCookie`). See `vendor/paykit-wasm/PROVENANCE.md`.
+at `24ed3a0e85067d3416e1a7085ed8b7ff9f241267` (Encrypted Links, SB2,
+session helpers, and Payment Endpoint / Private Payment List exports).
+See `vendor/paykit-wasm/PROVENANCE.md`.
 
 Load only through `src/lib/paykit-wasm.ts` (dynamic import). Never import WASM
 at module scope on the server.

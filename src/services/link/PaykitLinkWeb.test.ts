@@ -258,6 +258,169 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
     }
   });
 
+  it("maps payment wasm writes and public reads through the adapter", async () => {
+    const setEndpoint = vi.fn(async () => undefined);
+    const removeEndpoint = vi.fn(async () => undefined);
+    const getEndpoint = vi.fn(async () => "lno1dummyoffer");
+    const getList = vi.fn(async () => ({ lno: "lno1dummyoffer" }));
+    const listMethods = vi.fn(async () => ["lno"]);
+    const listPaths = vi.fn(async () => ["hypercolor/wallet"]);
+    const serializeList = vi.fn(() => '{"kind":"paykit.private_payment_list"}');
+    const parseList = vi.fn(() => ({ lno: "lno1dummyoffer" }));
+    setPaykitWasmForTests(
+      {
+        setPaymentEndpoint: setEndpoint,
+        removePaymentEndpoint: removeEndpoint,
+        getPaymentEndpoint: getEndpoint,
+        getPaymentList: getList,
+        listPaymentMethods: listMethods,
+        listPaykitReceiverPaths: listPaths,
+        serializePrivatePaymentListJson: serializeList,
+        parsePrivatePaymentListJson: parseList,
+        PubkyClient: class {
+          // test double
+        },
+      } as never,
+      { tag: "public-client" } as never,
+    );
+
+    const session = sessionHandle();
+    await PaykitLinkWeb.setPaymentEndpoint(
+      session as never,
+      "hypercolor/wallet",
+      "lno",
+      "lno1dummyoffer",
+    );
+    expect(setEndpoint).toHaveBeenCalledWith(
+      session,
+      "hypercolor/wallet",
+      "lno",
+      "lno1dummyoffer",
+    );
+
+    await PaykitLinkWeb.removePaymentEndpoint(
+      session as never,
+      "hypercolor/wallet",
+      "lno",
+    );
+    expect(removeEndpoint).toHaveBeenCalledWith(session, "hypercolor/wallet", "lno");
+
+    await expect(
+      PaykitLinkWeb.getPaymentEndpoint(PEER, "hypercolor/wallet", "lno"),
+    ).resolves.toBe("lno1dummyoffer");
+    expect(getEndpoint).toHaveBeenCalledWith(
+      { tag: "public-client" },
+      PEER,
+      "hypercolor/wallet",
+      "lno",
+    );
+
+    await expect(
+      PaykitLinkWeb.getPaymentList(PEER, "hypercolor/wallet"),
+    ).resolves.toEqual({ lno: "lno1dummyoffer" });
+    await expect(
+      PaykitLinkWeb.listPaymentMethods(PEER, "hypercolor/wallet"),
+    ).resolves.toEqual(["lno"]);
+    await expect(PaykitLinkWeb.listPaykitReceiverPaths(PEER)).resolves.toEqual([
+      "hypercolor/wallet",
+    ]);
+
+    await expect(
+      PaykitLinkWeb.serializePrivatePaymentListJson({ lno: "lno1dummyoffer" }),
+    ).resolves.toBe('{"kind":"paykit.private_payment_list"}');
+    await expect(
+      PaykitLinkWeb.parsePrivatePaymentListJson('{"kind":"paykit.private_payment_list"}'),
+    ).resolves.toEqual({ lno: "lno1dummyoffer" });
+  });
+
+  it("treats a missing public payment endpoint as undefined", async () => {
+    setPaykitWasmForTests(
+      {
+        getPaymentEndpoint: vi.fn(async () => undefined),
+        getPaymentList: vi.fn(async () => ({})),
+        listPaymentMethods: vi.fn(async () => []),
+        PubkyClient: class {
+          // test double
+        },
+      } as never,
+      {} as never,
+    );
+    await expect(
+      PaykitLinkWeb.getPaymentEndpoint(PEER, "hypercolor/wallet", "lno"),
+    ).resolves.toBeUndefined();
+    await expect(
+      PaykitLinkWeb.getPaymentList(PEER, "hypercolor/wallet"),
+    ).resolves.toEqual({});
+    await expect(
+      PaykitLinkWeb.listPaymentMethods(PEER, "hypercolor/wallet"),
+    ).resolves.toEqual([]);
+  });
+
+  it("maps payment wasm validation failures to LinkNativeError", async () => {
+    setPaykitWasmForTests(
+      {
+        setPaymentEndpoint: vi.fn(async () => {
+          throw new Error("validation failed: identifier is reserved");
+        }),
+        parsePrivatePaymentListJson: vi.fn(() => {
+          throw new Error("validation failed: malformed private payment list");
+        }),
+        PubkyClient: class {
+          // test double
+        },
+      } as never,
+      {} as never,
+    );
+    await expect(
+      PaykitLinkWeb.setPaymentEndpoint(
+        sessionHandle() as never,
+        "hypercolor/wallet",
+        "private",
+        "x",
+      ),
+    ).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      PaykitLinkWeb.parsePrivatePaymentListJson("{"),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("sendPrivatePaymentList uses the established handle and wraps the snapshot", async () => {
+    const sendList = vi.fn(async () => undefined);
+    const establishedBytes = new Uint8Array([5, 5, 5]);
+    const link = {
+      snapshot: () => new Uint8Array(establishedBytes),
+      close: vi.fn(async () => undefined),
+      free: vi.fn(),
+      sendPrivateApplicationMessageJson: vi.fn(),
+      receivePrivateApplicationMessages: vi.fn(),
+      sendPrivatePaymentList: sendList,
+    };
+    accept.mockReturnValue(
+      handshake({
+        before: new Uint8Array([3, 3, 3]),
+        after: new Uint8Array([3, 3, 3]),
+        status: "complete",
+        link,
+      }),
+    );
+    const probed = await PaykitLinkWeb.probeInboundLink(
+      sessionHandle() as never,
+      RECEIVER_ALIAS,
+      PEER,
+      "peer-noise",
+      "hypercolor/wallet",
+      "hypercolor/wallet",
+    );
+    expect(probed.result).toBe("established");
+    if (probed.result !== "established") throw new Error("expected established");
+    const sent = await PaykitLinkWeb.sendPrivatePaymentList(probed.linkId, {
+      lno: "lno1dummyoffer",
+    });
+    expect(sendList).toHaveBeenCalledWith({ lno: "lno1dummyoffer" });
+    expect(sent.snapshot.startsWith("HC1.")).toBe(true);
+    expect(await KeyStore.unwrapLinkSnapshot(sent.snapshot)).toEqual(establishedBytes);
+  });
+
   it("restoreLink zeroizes the receiver secret when unwrap throws", async () => {
     const localSecret = new Uint8Array(SECRET);
     const spy = vi

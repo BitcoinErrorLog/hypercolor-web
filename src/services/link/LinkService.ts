@@ -186,6 +186,11 @@ export const LinkService = {
     return provisionReceiver(active.handle, active.pubky);
   },
 
+  async establishedLinkId(peerPubky: PubkyKey): Promise<string> {
+    const ownerPubky = await requireOwner();
+    return requireEstablishedHandle(ownerPubky, peerPubky);
+  },
+
   async enable(): Promise<LinkEnableFlow> {
     const flow = await PaykitLinkWeb.startAuthFlow(RING_GRANT_CAPABILITIES);
     let cancelled = false;
