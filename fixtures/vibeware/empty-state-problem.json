@@ -1,0 +1,21 @@
+{
+  "id": "fixture-empty-state-001",
+  "status": "qualified",
+  "surface": "hc-chats-ui",
+  "summary": "Inbox empty-state secondary line does not point at the start-chat field.",
+  "problem": {
+    "kind": "empty_state_copy",
+    "target_file": "src/components/chats-page.tsx",
+    "find": "Search for a contact to start chatting.",
+    "replace": "Start a new chat from the field above."
+  },
+  "evidence_refs": ["ev_fixture_0001", "ev_fixture_0002"],
+  "candidate_request": {
+    "surface": "hc-chats-ui",
+    "writable_paths": ["src/components/chats-page.tsx"],
+    "forbidden_paths": [
+      "src/stores/inboxStore.ts",
+      "src/lib/inbox.ts"
+    ]
+  }
+}

@@ -424,6 +424,35 @@ try {
   );
 }
 
+try {
+  const fixturePath = path.join(ROOT, "fixtures/vibeware/empty-state-problem.json");
+  const problem = JSON.parse(readFileSync(fixturePath, "utf8"));
+  assert(problem.status === "qualified", "empty-state fixture must be qualified");
+  assert(
+    Array.isArray(problem.evidence_refs) &&
+      problem.evidence_refs.every((ref) => /^ev_[a-z0-9_]+$/.test(ref)),
+    "empty-state fixture evidence_refs must be fake ev_ ids",
+  );
+  assert(problem.problem?.target_file === "src/components/chats-page.tsx", "fixture target");
+  const chats = readFileSync(path.join(ROOT, "src/components/chats-page.tsx"), "utf8");
+  assert(chats.includes(problem.problem.find), "main chats-page must still have the unpatched find string");
+  assert(!chats.includes(problem.problem.replace) || problem.problem.find === problem.problem.replace, "main must not keep the fixture replace string");
+  const sandboxOk = run("hc-chats-ui", [problem.problem.target_file]);
+  assert(sandboxOk.status === 0, "fixture target must be writable for hc-chats-ui");
+  const sandboxProbe = run("hc-chats-ui", ["src/services/link/session.ts"]);
+  assert(sandboxProbe.status === 1, "session probe must fail path-policy");
+  assert(
+    rejectMap(sandboxProbe).get("src/services/link/session.ts") === "forbidden",
+    "session probe must be forbidden",
+  );
+  console.log("ok sandbox fixture stays off main and session probe is forbidden");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL sandbox fixture: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
 if (failed > 0) {
   console.error(`check:vibeware failed (${failed})`);
   process.exit(1);
