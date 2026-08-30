@@ -1,10 +1,12 @@
 import { KeyStore } from "../KeyStore";
 import { StorageService } from "../StorageService";
+import { getLiveSession } from "../link/session";
 import {
   backupLatestUrl,
   decryptOwnerBackup,
   encryptOwnerBackup,
 } from "./crypto";
+import { createHomeserverBackupTransport } from "./homeserver";
 
 export type { OwnerBackupSnapshot } from "./snapshot";
 export { OWNER_BACKUP_VERSION } from "./snapshot";
@@ -27,18 +29,19 @@ export {
   xchachaSeal,
 } from "./crypto";
 export type { EncryptedOwnerBackup, OwnerBackupBlob } from "./crypto";
+export { createHomeserverBackupTransport } from "./homeserver";
 
 /**
- * Homeserver upload/download hook. P3 `PaykitLinkWeb` (or any authenticated
- * owner PUT / public GET) must call `configureBackupTransport`:
+ * Homeserver upload/download hook.
  *
  * - `putOwner(url, content)` — authenticated PUT of the backup blob to
  *   `backupLatestUrl(owner)`
  * - `getPublic(url)` — GET of that blob (404 → `null`)
  *
- * Crypto does not wait on that hook. `encryptOwnerBackup` /
- * `decryptOwnerBackup` are the product functions this service calls. Until
- * the hook is configured, `exportBackup` / `restoreBackup` throw so a
+ * Tests inject a mock with `configureBackupTransport`. When no hook is set
+ * and a live owner session exists, {@link createHomeserverBackupTransport}
+ * PUTs via `PaykitLinkWeb.putPublic` and GETs via wasm `publicGet`.
+ * Without a session and without a hook, export/restore throw so a
  * homeserver write is never implied.
  */
 export type BackupTransport = {
@@ -112,10 +115,9 @@ async function requireOwner(): Promise<string> {
 }
 
 function requireTransport(): BackupTransport {
-  if (!transport) {
-    throw new Error(
-      "BackupService: homeserver transport is not configured. Call configureBackupTransport({ putOwner, getPublic }) after P3 PaykitLinkWeb owner writes are wired. Use encryptOwnerBackup / decryptOwnerBackup until then.",
-    );
-  }
-  return transport;
+  if (transport) return transport;
+  if (getLiveSession()) return createHomeserverBackupTransport();
+  throw new Error(
+    "BackupService: homeserver transport is not configured. Call configureBackupTransport({ putOwner, getPublic }) or sign in with an owner session before export/restore.",
+  );
 }
