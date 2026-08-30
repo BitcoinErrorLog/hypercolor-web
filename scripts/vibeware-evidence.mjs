@@ -166,10 +166,17 @@ export function validateEvidencePayload(eventType, payload) {
   } catch {
     return { ok: false, reason: "unserializable" };
   }
-  if (Buffer.byteLength(encoded, "utf8") > MAX_PAYLOAD_BYTES) {
+  if (utf8ByteLength(encoded) > MAX_PAYLOAD_BYTES) {
     return { ok: false, reason: "payload_too_large" };
   }
   return { ok: true };
+}
+
+function utf8ByteLength(text) {
+  if (typeof Buffer !== "undefined" && typeof Buffer.byteLength === "function") {
+    return Buffer.byteLength(text, "utf8");
+  }
+  return new TextEncoder().encode(text).byteLength;
 }
 
 export function deepEqual(a, b) {

@@ -1,12 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSignOut } from "@/hooks/useSignOut";
 import { canDismissRecoveryCode } from "@/lib/backup-gate";
 import { sessionStatusLabel } from "@/lib/session-ui";
 import { BackupService } from "@/services/backup/BackupService";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError } from "@/services/vibeware/coarse";
+import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
@@ -21,6 +24,18 @@ export function SettingsPage() {
   const [copied, setCopied] = useState(false);
   const [restoreCode, setRestoreCode] = useState("");
   const [note, setNote] = useState<string | null>(null);
+  const recoveryCodeRef = useRef<string | null>(null);
+  const confirmedSavedRef = useRef(false);
+  recoveryCodeRef.current = recoveryCode;
+  confirmedSavedRef.current = confirmedSaved;
+
+  useLeaveOnce(
+    "settings-backup",
+    () => Boolean(recoveryCodeRef.current) && !confirmedSavedRef.current,
+    () => {
+      void emit("app.backup.export_outcome", { outcome: "cancelled" });
+    },
+  );
 
   return (
     <article className="space-y-8" data-testid="settingsScreen">
@@ -62,9 +77,11 @@ export function SettingsPage() {
             void BackupService.exportBackup()
               .then((result) => {
                 setRecoveryCode(result.recoveryCode);
+                void emit("app.backup.export_outcome", { outcome: "shown" });
               })
               .catch((err) => {
                 setNote(err instanceof Error ? err.message : "Backup failed");
+                emitCoarseError("settings", err);
               })
               .finally(() => setBackupBusy(false));
           }}
@@ -103,6 +120,7 @@ export function SettingsPage() {
               size="sm"
               disabled={!canDismissRecoveryCode({ recoveryCode, confirmedSaved })}
               onClick={() => {
+                void emit("app.backup.export_outcome", { outcome: "confirmed" });
                 setRecoveryCode(null);
                 setConfirmedSaved(false);
                 setCopied(false);

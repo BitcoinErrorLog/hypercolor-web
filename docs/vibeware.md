@@ -24,6 +24,19 @@ A candidate cannot rewrite the evaluator and then grade itself.
 Actor on every evidence event is a **cohort key** (`experimental` |
 `internal` | `opted_in`). A `pubky` field is never allowed.
 
+## Phase 1 collector
+
+`src/services/vibeware/**` is shared-forbidden. `emit` calls
+`validateEvidencePayload` from `scripts/vibeware-evidence.mjs` and drops
+unknown types, extra keys, and banned field names. Writable surfaces must
+not import this directory; they pass a callback or dispatch
+`hypercolor-vibeware` with an already-shaped payload. Ingest is
+`NEXT_PUBLIC_VIBEWARE_INGEST_URL` (optional Bearer
+`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`). If the URL is unset, events stay in
+an in-memory sink, also exposed as `window.__vibewareSink` when
+`NEXT_PUBLIC_E2E_HARNESS=1`. Payloads are never logged and never sent to
+Sentry.
+
 ## Candidate PRs
 
 A PR is a candidate when the head branch matches `vibeware/**` or
@@ -62,7 +75,7 @@ tree cannot prove the GitHub branch-protection setting is enabled.
 | `evidence_payloads` | Yes — exact per-event field lists |
 | `max_payload_bytes` | Yes — must be `256` |
 | `privacy.contains_user_content` | Yes — must be `false` |
-| `forbidden_paths` | Yes — min length + required entries (`session.ts`, `vibeware.yaml`, `.github/**`, `scripts/check-vibeware*`, `scripts/copy-sqlite-wasm.mjs`, `package.json`, `package-lock.json`, `useInbox.ts`, `useChannel.ts`, `useSignOut.ts`) |
+| `forbidden_paths` | Yes — min length + required entries (`session.ts`, `vibeware.yaml`, `.github/**`, `scripts/check-vibeware*`, `scripts/copy-sqlite-wasm.mjs`, `package.json`, `package-lock.json`, `useInbox.ts`, `useChannel.ts`, `useSignOut.ts`, `src/services/vibeware/**`) |
 | `scope.writable_paths` | Yes — non-empty; candidate diffs must stay inside |
 | `evidence.allowed` | Yes — subset of the allowlist |
 | `kill_switch.flag` | Yes — non-empty string |
@@ -112,7 +125,7 @@ Reason: the inbox list must show a last-message snippet. The writable
 file does not subscribe to inbox state or write contacts.
 
 Mitigation: same as F4. Conversation ids are not evidence fields; the
-collector (P1, other branch) must not emit them.
+collector must not emit them.
 
 ### Type imports (F4 import check)
 

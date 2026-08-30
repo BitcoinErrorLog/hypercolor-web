@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useRef } from "react";
+import { emit } from "@/services/vibeware/collector";
+import { productRouteFromPathname, type ProductRoute } from "@/services/vibeware/route";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { hasIdentity } from "@/lib/session-ui";
 
@@ -18,6 +21,15 @@ export function SiteNav() {
   const pathname = usePathname();
   const status = useSessionStatusStore((s) => s.status);
   const showEnable = hasIdentity(status) && status.kind !== "enabled";
+  const fromRoute = useRef<ProductRoute | null>(null);
+
+  useEffect(() => {
+    const route = productRouteFromPathname(pathname);
+    if (!route) return;
+    const previous = fromRoute.current;
+    fromRoute.current = route;
+    void emit("app.route.viewed", { route, from_route: previous });
+  }, [pathname]);
 
   if (pathname.startsWith("/e2e")) return null;
 

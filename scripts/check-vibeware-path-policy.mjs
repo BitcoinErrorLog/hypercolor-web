@@ -34,6 +34,7 @@ export const REQUIRED_SHARED_FORBIDDEN = [
   "src/hooks/useInbox.ts",
   "src/hooks/useChannel.ts",
   "src/hooks/useSignOut.ts",
+  "src/services/vibeware/**",
 ];
 
 export const MIN_SHARED_FORBIDDEN_PATHS = 40;

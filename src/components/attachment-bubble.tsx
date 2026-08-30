@@ -6,6 +6,7 @@ import { isRasterImageContentType } from "@/lib/attachment-preview";
 import { KeyStore } from "@/services/KeyStore";
 import { AttachmentService } from "@/services/attachments/AttachmentService";
 import { AttachmentError, type AttachmentRecord } from "@/types/attachment";
+import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function AttachmentBubble({
   record,
@@ -54,6 +55,7 @@ export function AttachmentBubble({
       onResolved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Decrypt failed");
+      emitCoarseError("attachment", err);
     } finally {
       setBusy(false);
     }

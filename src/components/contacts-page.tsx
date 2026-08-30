@@ -15,6 +15,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { useContactStore } from "@/stores/contactStore";
 import type { Contact } from "@/types";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function ContactsPage() {
   const router = useRouter();
@@ -69,6 +71,7 @@ export function ContactsPage() {
             event.preventDefault();
             if (!ownerPubky) {
               setError("Connect with Pubky Ring first.");
+              void emit("app.error.coarse", { code: "auth", surface: "contacts" });
               return;
             }
             setBusy(true);
@@ -77,6 +80,7 @@ export function ContactsPage() {
               .then((result) => {
                 if (!result.ok) {
                   setError(result.message);
+                  void emit("app.error.coarse", { code: "validation", surface: "contacts" });
                   return;
                 }
                 upsertContact(result.contact);
@@ -84,6 +88,10 @@ export function ContactsPage() {
                 return reload().then(() => {
                   router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
                 });
+              })
+              .catch((err) => {
+                setError(err instanceof Error ? err.message : "Could not add contact");
+                emitCoarseError("contacts", err);
               })
               .finally(() => setBusy(false));
           }}

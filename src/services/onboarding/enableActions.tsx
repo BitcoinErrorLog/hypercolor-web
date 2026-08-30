@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
+import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import type { SessionHandle } from "@/services/link/PaykitLinkWeb";
 
@@ -48,9 +51,25 @@ export function EnablePageHost() {
   const auth = useAuthUrl({
     autoFetch: status.kind === "needs-enable" || status.kind === "live",
     onApproved,
-    onError: (err) =>
-      setError(err instanceof Error ? err.message : "Authorization failed"),
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "Authorization failed");
+      emitCoarseError("enable", err);
+    },
   });
+
+  useEffect(() => {
+    const state = onboardingStateFromKind(status.kind);
+    if (!state) return;
+    void emit("app.onboarding.state", { state });
+  }, [status.kind]);
+
+  useLeaveOnce(
+    "enable",
+    () => status.kind === "needs-enable" || status.kind === "live",
+    () => {
+      void emit("app.onboarding.abandoned", { step: "enable" });
+    },
+  );
 
   const enabled = status.kind === "enabled";
   const offline = status.kind === "session-offline";

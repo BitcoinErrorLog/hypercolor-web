@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { WelcomePage } from "@/components/welcome-page";
@@ -13,6 +13,9 @@ import {
   type HandoffPayload,
   type HandoffPublicParams,
 } from "@/services/RingConnect";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
+import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
@@ -39,7 +42,10 @@ export function WelcomePageHost() {
   const router = useRouter();
   const pubky = useAuthStore((s) => s.pubky);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const status = useSessionStatusStore((s) => s.status);
   const setNeedsEnable = useSessionStatusStore((s) => s.setNeedsEnable);
+  const adopted = useRef(false);
+  const cancelled = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<{
     params: HandoffPublicParams;
@@ -53,31 +59,52 @@ export function WelcomePageHost() {
       setPending({ params, payload });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Handoff failed");
+      emitCoarseError("welcome", err);
     }
   }, []);
 
   const connect = usePaykitConnect({
     autoStart: !isAuthenticated,
     onParams,
-    onError: (err) =>
-      setError(err instanceof Error ? err.message : "paykit-connect failed"),
+    onError: (err) => {
+      setError(err instanceof Error ? err.message : "paykit-connect failed");
+      emitCoarseError("welcome", err);
+    },
   });
+
+  useEffect(() => {
+    const state = onboardingStateFromKind(status.kind);
+    if (!state) return;
+    void emit("app.onboarding.state", { state });
+  }, [status.kind]);
+
+  useLeaveOnce(
+    "welcome",
+    () => !isAuthenticated && !adopted.current && !cancelled.current,
+    () => {
+      void emit("app.onboarding.abandoned", { step: "welcome" });
+    },
+  );
 
   async function confirmAdoption(accepted: boolean) {
     if (!pending) return;
     if (!accepted) {
+      cancelled.current = true;
       setPending(null);
+      void emit("app.onboarding.abandoned", { step: "welcome" });
       return;
     }
     setAdopting(true);
     try {
       const result = await adoptHandoff(pending.params, pending.payload);
       if (result) {
+        adopted.current = true;
         setNeedsEnable();
         router.push("/enable");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Handoff failed");
+      emitCoarseError("welcome", err);
     } finally {
       setAdopting(false);
     }

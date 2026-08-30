@@ -7,6 +7,7 @@ import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import { LinkService } from "@/services/link/LinkService";
 import { subscribeGroupEvents } from "@/services/group/GroupService";
+import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function useInbox() {
   const ownerPubky = useAuthStore((s) => s.pubky);
@@ -36,6 +37,7 @@ export function useInbox() {
       useInboxStore
         .getState()
         .setError(err instanceof Error ? err.message : "Could not load conversations");
+      emitCoarseError("chats", err);
     } finally {
       useInboxStore.getState().setLoading(false);
     }
