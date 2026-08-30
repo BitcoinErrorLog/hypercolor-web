@@ -62,6 +62,19 @@ Chromium processes signed up on staging, reached Encrypted Link
 `ready`, and exchanged `hello-from-a` / `hello-from-b`. Passed in 15.7s.
 Tokens were minted by the script and not printed.
 
+### Staging private-group proof (P5)
+
+```bash
+npm run proof:staging:groups
+```
+
+Three isolated Chromium processes sign up on staging. A↔B and A↔C
+establish Encrypted Links. A creates a private group with B and C,
+sends `chat.group.message.v0`, and both B and C receive it on that
+`channel_id`. B replies; A receives it. Tokens are minted by the
+staging-invite script and never printed. A skipped test is not a
+green live proof.
+
 P3 exit still needs one live Ring phone run against staging (https
 callback). Wasm staging signup from this client is no longer the blocker.
 

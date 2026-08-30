@@ -16,6 +16,7 @@
     "proof:staging": "RUN_STAGING_DM=1 playwright test e2e/dm-staging.spec.ts",
     "proof:staging:attach": "RUN_STAGING_ATTACH=1 playwright test e2e/attachment-staging.spec.ts",
     "proof:staging:backup": "RUN_STAGING_BACKUP=1 playwright test e2e/backup-staging.spec.ts",
+    "proof:staging:groups": "RUN_STAGING_GROUPS=1 playwright test e2e/groups-staging.spec.ts",
     "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
     "check:wire": "bash scripts/check-wire-drift.sh",
     "backup:vector": "node scripts/backup-cross-restore-vector.mjs"
