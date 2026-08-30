@@ -42,6 +42,7 @@ describe("provisionReceiver", () => {
 
   it("wraps the Noise secret and publishes a messaging-only marker", async () => {
     const secret = new Uint8Array(32).fill(7);
+    const persisted = new Uint8Array(secret);
     generateNoiseSecretKey.mockResolvedValue(secret);
     noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
     publishReceiverMarker.mockResolvedValue(undefined);
@@ -54,8 +55,9 @@ describe("provisionReceiver", () => {
       receiverPath: LINK_RECEIVER_PATH,
       noisePublicKey: "noise-pk-z32",
     });
+    expect(secret).toEqual(new Uint8Array(32));
     expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
-      secret,
+      persisted,
     );
     expect(publishReceiverMarker).toHaveBeenCalledWith(
       session,
@@ -69,5 +71,31 @@ describe("provisionReceiver", () => {
     const row = await StorageService.getLinkReceiver(OWNER);
     expect(row?.markerPublished).toBe(true);
     expect(row?.receiverPath).toBe(LINK_RECEIVER_PATH);
+  });
+
+  it("zeroizes the re-derived receiver secret after publishing", async () => {
+    const persisted = new Uint8Array(32).fill(9);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, persisted);
+    await StorageService.upsertLinkReceiver({
+      ownerPubky: OWNER,
+      receiverAlias: LINK_RECEIVER_PATH,
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: false,
+    });
+    const derived = new Uint8Array(persisted);
+    const spy = vi
+      .spyOn(KeyStore, "getReceiverNoiseSecret")
+      .mockResolvedValueOnce(derived);
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
+    publishReceiverMarker.mockResolvedValue(undefined);
+
+    try {
+      await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      expect(derived).toEqual(new Uint8Array(32));
+      expect(generateNoiseSecretKey).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

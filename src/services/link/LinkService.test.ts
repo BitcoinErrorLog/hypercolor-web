@@ -123,7 +123,14 @@ vi.mock("./provisionReceiver", () => ({
   provisionReceiver: vi.fn(),
 }));
 
-import { LINK_RETRY_PAYLOAD_TYPE, LinkService, resetLinkServiceHarnessState } from "./LinkService";
+import { RetryQueue } from "@/services/RetryQueue";
+import { StorageService } from "@/services/StorageService";
+import {
+  LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+  LINK_RETRY_PAYLOAD_TYPE,
+  LinkService,
+  resetLinkServiceHarnessState,
+} from "./LinkService";
 import { CHAT_MESSAGE_KIND, LINK_RECEIVER_PATH } from "../../types/link";
 
 const OWNER = "a".repeat(52);
@@ -172,6 +179,11 @@ describe("LinkService persist-then-send", () => {
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce(EVENT_ID)
       .mockReturnValue(QUEUE_ID);
+    vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
+    vi.mocked(RetryQueue.recordFailure).mockReset();
+    vi.mocked(StorageService.updateGroupMessageDeliveryState).mockReset();
+    vi.mocked(StorageService.updateAttachmentDelivery).mockReset();
+    vi.mocked(StorageService.countDeliveryQueueForMessage).mockReset().mockResolvedValue(0);
     await LinkService.adoptHarnessSession(handle() as never);
   });
 
@@ -242,5 +254,55 @@ describe("LinkService persist-then-send", () => {
     };
     const payload = JSON.parse(queued.queueItem.payload) as { rawJson: string };
     expect(payload.rawJson).toContain('"body":"hello"');
+  });
+
+  it("marks group fanout failed when RetryQueue permanently drops the last recipient", async () => {
+    const channelId = `${OWNER}:chan-1`;
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: EVENT_ID,
+      sent_at: NOW,
+      body: "group hello",
+    });
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([
+      {
+        id: QUEUE_ID,
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: JSON.stringify({
+          type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          kind: CHAT_MESSAGE_KIND,
+          eventId: EVENT_ID,
+          channelId,
+          rawJson,
+        }),
+        attempts: 9,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+    vi.mocked(RetryQueue.recordFailure).mockResolvedValueOnce(true);
+    sendPrivate.mockRejectedValueOnce({ code: "protocol", message: "protocol error" });
+
+    await LinkService.drainRetries();
+
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT_ID,
+      "failed",
+    );
+    expect(StorageService.updateGroupMessageDeliveryState).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      "sent",
+    );
   });
 });

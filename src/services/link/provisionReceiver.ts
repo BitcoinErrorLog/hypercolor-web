@@ -1,3 +1,4 @@
+import { zeroizeBytes } from "@/lib/hex";
 import { KeyStore } from "@/services/KeyStore";
 import { StorageService } from "@/services/StorageService";
 import {
@@ -21,15 +22,19 @@ async function mintReceiver(
   receiverPath: string,
 ): Promise<{ noisePublicKey: string }> {
   const secret = await PaykitLinkWeb.generateNoiseSecretKey();
-  await KeyStore.setReceiverNoiseSecret(RECEIVER_NOISE_ALIAS, secret);
-  const noisePublicKey = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
-  await StorageService.upsertLinkReceiver({
-    ownerPubky,
-    receiverAlias: RECEIVER_NOISE_ALIAS,
-    receiverPath,
-    markerPublished: false,
-  });
-  return { noisePublicKey };
+  try {
+    await KeyStore.setReceiverNoiseSecret(RECEIVER_NOISE_ALIAS, secret);
+    const noisePublicKey = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
+    await StorageService.upsertLinkReceiver({
+      ownerPubky,
+      receiverAlias: RECEIVER_NOISE_ALIAS,
+      receiverPath,
+      markerPublished: false,
+    });
+    return { noisePublicKey };
+  } finally {
+    zeroizeBytes(secret);
+  }
 }
 
 export async function provisionReceiver(
@@ -43,7 +48,11 @@ export async function provisionReceiver(
   if (existing) {
     const secret = await KeyStore.getReceiverNoiseSecret(existing.receiverAlias);
     if (secret) {
-      noisePublicKey = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
+      try {
+        noisePublicKey = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
+      } finally {
+        zeroizeBytes(secret);
+      }
     } else {
       await StorageService.deleteLinkReceiver(pubky);
       ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));

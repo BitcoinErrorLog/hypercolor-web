@@ -1514,8 +1514,16 @@ async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
         payload.channelId,
         payload.senderPubky,
         payload.eventId,
-        "sent",
+        "failed",
       );
+      if (payload.kind === CHAT_ATTACHMENT_KIND) {
+        await StorageService.updateAttachmentDelivery(
+          payload.ownerPubky,
+          payload.senderPubky,
+          payload.eventId,
+          "failed",
+        );
+      }
     }
     return;
   }

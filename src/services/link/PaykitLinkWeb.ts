@@ -496,6 +496,7 @@ export const PaykitLinkWeb = {
           }
           const after = handle.snapshot();
           if (bytesEqual(before, after)) {
+            zeroizeBytes(after);
             freeQuietly(handle);
             return { result: "none" };
           }
@@ -555,28 +556,31 @@ export const PaykitLinkWeb = {
   ): Promise<LinkRestoreHandshakeResult> {
     return invoke(async () => {
       const secret = await requireReceiverSecret(receiverAlias);
-      const bytes = await KeyStore.unwrapLinkSnapshot(snapshot);
-      const forWasm = new Uint8Array(bytes);
-      zeroizeBytes(bytes);
       try {
-        const wasm = await wasmModule();
-        const wasmClient = await getPaykitClient();
-        const handle = (await wasm.restoreEncryptedLinkHandshake(
-          session,
-          secret,
-          peerPubky,
-          localReceiverPath,
-          remoteReceiverPath,
-          wasmClient,
-          forWasm,
-        )) as LinkHandshakeHandle;
-        const linkId = crypto.randomUUID();
-        const alias = snapshotAlias(session.pubky(), peerPubky);
-        liveWasmHandles.set(linkId, { kind: "handshake", handle, alias });
-        return { linkId, status: "pending" };
+        const bytes = await KeyStore.unwrapLinkSnapshot(snapshot);
+        const forWasm = new Uint8Array(bytes);
+        zeroizeBytes(bytes);
+        try {
+          const wasm = await wasmModule();
+          const wasmClient = await getPaykitClient();
+          const handle = (await wasm.restoreEncryptedLinkHandshake(
+            session,
+            secret,
+            peerPubky,
+            localReceiverPath,
+            remoteReceiverPath,
+            wasmClient,
+            forWasm,
+          )) as LinkHandshakeHandle;
+          const linkId = crypto.randomUUID();
+          const alias = snapshotAlias(session.pubky(), peerPubky);
+          liveWasmHandles.set(linkId, { kind: "handshake", handle, alias });
+          return { linkId, status: "pending" };
+        } finally {
+          zeroizeBytes(forWasm);
+        }
       } finally {
         zeroizeBytes(secret);
-        zeroizeBytes(forWasm);
       }
     });
   },
@@ -592,28 +596,31 @@ export const PaykitLinkWeb = {
   ): Promise<LinkRestoreResult> {
     return invoke(async () => {
       const secret = await requireReceiverSecret(receiverAlias);
-      const bytes = await KeyStore.unwrapLinkSnapshot(snapshot);
-      const forWasm = new Uint8Array(bytes);
-      zeroizeBytes(bytes);
       try {
-        const wasm = await wasmModule();
-        const wasmClient = await getPaykitClient();
-        const handle = (await wasm.restoreEncryptedLink(
-          session,
-          secret,
-          peerPubky,
-          localReceiverPath,
-          remoteReceiverPath,
-          wasmClient,
-          forWasm,
-        )) as EncryptedLinkHandle;
-        const linkId = crypto.randomUUID();
-        const alias = snapshotAlias(session.pubky(), peerPubky);
-        liveWasmHandles.set(linkId, { kind: "established", handle, alias });
-        return { linkId };
+        const bytes = await KeyStore.unwrapLinkSnapshot(snapshot);
+        const forWasm = new Uint8Array(bytes);
+        zeroizeBytes(bytes);
+        try {
+          const wasm = await wasmModule();
+          const wasmClient = await getPaykitClient();
+          const handle = (await wasm.restoreEncryptedLink(
+            session,
+            secret,
+            peerPubky,
+            localReceiverPath,
+            remoteReceiverPath,
+            wasmClient,
+            forWasm,
+          )) as EncryptedLinkHandle;
+          const linkId = crypto.randomUUID();
+          const alias = snapshotAlias(session.pubky(), peerPubky);
+          liveWasmHandles.set(linkId, { kind: "established", handle, alias });
+          return { linkId };
+        } finally {
+          zeroizeBytes(forWasm);
+        }
       } finally {
         zeroizeBytes(secret);
-        zeroizeBytes(forWasm);
       }
     });
   },

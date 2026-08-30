@@ -127,7 +127,17 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
 
   it("probeInboundLink discards when snapshot bytes are unchanged", async () => {
     const same = new Uint8Array([10, 11, 12]);
-    const handle = handshake({ before: same, after: same, status: "pending" });
+    const issued: Uint8Array[] = [];
+    const handle = {
+      snapshot: () => {
+        const copy = new Uint8Array(same);
+        issued.push(copy);
+        return copy;
+      },
+      advance: vi.fn(async () => ({ status: "pending" as const })),
+      free: vi.fn(),
+      setMaxRecoveryAttempts: vi.fn(),
+    };
     accept.mockReturnValue(handle);
     const probed = await PaykitLinkWeb.probeInboundLink(
       sessionHandle() as never,
@@ -139,6 +149,8 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
     );
     expect(probed).toEqual({ result: "none" });
     expect(handle.free).toHaveBeenCalled();
+    expect(issued.length).toBeGreaterThanOrEqual(2);
+    expect(issued[1]).toEqual(new Uint8Array(3));
   });
 
   it("probeInboundLink keeps a pending handshake when snapshot bytes change", async () => {
@@ -220,5 +232,53 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
     expect(restored.linkId.length).toBeGreaterThan(0);
     expect(passed).toBeInstanceOf(Uint8Array);
     expect(passed).toEqual(inner);
+  });
+
+  it("restoreHandshake zeroizes the receiver secret when unwrap throws", async () => {
+    const localSecret = new Uint8Array(SECRET);
+    const spy = vi
+      .spyOn(KeyStore, "getReceiverNoiseSecret")
+      .mockResolvedValueOnce(localSecret);
+    try {
+      await expect(
+        PaykitLinkWeb.restoreHandshake(
+          sessionHandle() as never,
+          RECEIVER_ALIAS,
+          PEER,
+          "peer-noise",
+          "hypercolor/wallet",
+          "hypercolor/wallet",
+          "not-a-valid-snapshot",
+        ),
+      ).rejects.toMatchObject({ code: "protocol" });
+      expect(localSecret).toEqual(new Uint8Array(SECRET.length));
+      expect(restoreHandshake).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("restoreLink zeroizes the receiver secret when unwrap throws", async () => {
+    const localSecret = new Uint8Array(SECRET);
+    const spy = vi
+      .spyOn(KeyStore, "getReceiverNoiseSecret")
+      .mockResolvedValueOnce(localSecret);
+    try {
+      await expect(
+        PaykitLinkWeb.restoreLink(
+          sessionHandle() as never,
+          RECEIVER_ALIAS,
+          PEER,
+          "peer-noise",
+          "hypercolor/wallet",
+          "hypercolor/wallet",
+          "not-a-valid-snapshot",
+        ),
+      ).rejects.toMatchObject({ code: "protocol" });
+      expect(localSecret).toEqual(new Uint8Array(SECRET.length));
+      expect(restoreLink).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
