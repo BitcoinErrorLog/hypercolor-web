@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
@@ -17,7 +18,7 @@ import {
   V1_EVIDENCE_ALLOWLIST,
   validateEvidencePayload,
 } from "./check-vibeware-path-policy.mjs";
-import { isCandidateBranchName, parseCandidateSurface } from "./check-vibeware-pr.mjs";
+import { evaluatePullRequest, isCandidateBranchName, parseCandidateSurface } from "./check-vibeware-pr.mjs";
 import { resolveSpecifier, scanWritableFile } from "./check-vibeware-writable-imports.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -113,6 +114,11 @@ describe("vibeware path policy", () => {
     expect(manifest.forbidden_paths).toContain("src/lib/group-invites.ts");
     expect(manifest.forbidden_paths).toContain("src/services/backup/**");
     expect(manifest.forbidden_paths).toContain("src/services/onboarding/enableActions.tsx");
+    expect(manifest.forbidden_paths).toContain("package.json");
+    expect(manifest.forbidden_paths).toContain("package-lock.json");
+    expect(manifest.forbidden_paths).toContain("src/hooks/useInbox.ts");
+    expect(manifest.forbidden_paths).toContain("src/hooks/useChannel.ts");
+    expect(manifest.forbidden_paths).toContain("src/hooks/useSignOut.ts");
     expect(manifest.surfaces[0]?.writable_paths).toEqual(["src/components/chats-page.tsx"]);
     expect(manifest.surfaces[0]?.forbidden_paths).toContain("src/stores/inboxStore.ts");
     expect(manifest.surfaces[1]?.writable_paths).toEqual([
@@ -244,8 +250,14 @@ describe("evidence payload schema", () => {
     expect(
       validateEvidencePayload("app.thread.send_settled", {
         channel: "dm",
-        outcome: "ok",
+        outcome: "sent",
         kind: "text",
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      validateEvidencePayload("app.route.viewed", {
+        route: "chats",
+        from_route: "none",
       }),
     ).toEqual({ ok: true });
   });
@@ -253,12 +265,46 @@ describe("evidence payload schema", () => {
   it("rejects a planted body field", () => {
     const result = validateEvidencePayload("app.thread.send_settled", {
       channel: "dm",
-      outcome: "ok",
+      outcome: "sent",
       kind: "text",
       body: "hi",
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("banned_key");
+  });
+
+  it("rejects route secret message as invalid_value", () => {
+    const result = validateEvidencePayload("app.route.viewed", {
+      route: "secret message",
+      from_route: "none",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("invalid_value");
+    expect(result.key).toBe("route");
+  });
+
+  it("rejects nested objects and arrays in payloads", () => {
+    expect(
+      validateEvidencePayload("app.pwa.installed", { outcome: { accepted: true } }).reason,
+    ).toBe("nested_value");
+    expect(
+      validateEvidencePayload("app.chat.empty_state", { kind: ["dms"] }).reason,
+    ).toBe("nested_value");
+  });
+
+  it("rejects seed credential password and url keys", () => {
+    expect(
+      validateEvidencePayload("app.pwa.installed", { outcome: "accepted", seed: "x" }).reason,
+    ).toBe("banned_key");
+    expect(
+      validateEvidencePayload("app.pwa.installed", { outcome: "accepted", credential: "x" }).reason,
+    ).toBe("banned_key");
+    expect(
+      validateEvidencePayload("app.pwa.installed", { outcome: "accepted", password: "x" }).reason,
+    ).toBe("banned_key");
+    expect(
+      validateEvidencePayload("app.pwa.installed", { outcome: "accepted", url: "https://x" }).reason,
+    ).toBe("banned_key");
   });
 
   it("rejects an unknown event", () => {
@@ -311,6 +357,77 @@ describe("writable import scan", () => {
   it("resolves @/ specifiers into src/", () => {
     expect(resolveSpecifier("src/components/enable-page.tsx", "@/services/link/session")).toBe(
       "src/services/link/session.ts",
+    );
+  });
+
+  it("flags a writable import of useInbox", () => {
+    const findings = scanWritableFile(
+      `import { useInbox } from "@/hooks/useInbox";\n`,
+      "src/components/chats-page.tsx",
+      ["src/hooks/useInbox.ts"],
+    );
+    expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
+  });
+
+  it("keeps chats-page free of inbox orchestration", () => {
+    const source = readFileSync(path.join(ROOT, "src/components/chats-page.tsx"), "utf8");
+    expect(source).not.toMatch(/useInbox|addManualContact/);
+  });
+});
+
+describe("honest evaluator vs rewritten candidate", () => {
+  function git(cwd, args) {
+    const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+    if (result.status !== 0) {
+      throw new Error(
+        `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+      );
+    }
+    return result;
+  }
+
+  it("rejects a candidate that rewrites the evaluator and touches session.ts", () => {
+    const fake = mkdtempSync(path.join(tmpdir(), "vibeware-f2-unit-"));
+    git(fake, ["init"]);
+    git(fake, ["config", "user.email", "vibeware@test"]);
+    git(fake, ["config", "user.name", "vibeware"]);
+    git(fake, ["config", "commit.gpgsign", "false"]);
+    mkdirSync(path.join(fake, "scripts"), { recursive: true });
+    mkdirSync(path.join(fake, "src/services/link"), { recursive: true });
+    copyFileSync(MANIFEST, path.join(fake, "vibeware.yaml"));
+    writeFileSync(path.join(fake, "scripts/check-vibeware-pr.mjs"), "console.log('honest');\n");
+    writeFileSync(path.join(fake, "src/services/link/session.ts"), "export {}\n");
+    git(fake, ["add", "-A"]);
+    git(fake, ["commit", "-m", "base"]);
+    const baseSha = git(fake, ["rev-parse", "HEAD"]).stdout.trim();
+    git(fake, ["checkout", "-b", "vibeware/probe"]);
+    mkdirSync(path.join(fake, ".vibeware"), { recursive: true });
+    writeFileSync(path.join(fake, ".vibeware/candidate"), "surface: hc-chats-ui\n");
+    writeFileSync(path.join(fake, "scripts/check-vibeware-pr.mjs"), "process.exit(0);\n");
+    writeFileSync(path.join(fake, "src/services/link/session.ts"), "export const pwned = true;\n");
+    git(fake, ["add", "-A"]);
+    git(fake, ["commit", "-m", "rewrite evaluator and session"]);
+    const headSha = git(fake, ["rev-parse", "HEAD"]).stdout.trim();
+
+    const candidate = spawnSync(
+      process.execPath,
+      [path.join(fake, "scripts/check-vibeware-pr.mjs")],
+      { encoding: "utf8" },
+    );
+    expect(candidate.status).toBe(0);
+
+    const result = evaluatePullRequest({
+      repoRoot: fake,
+      baseSha,
+      headSha,
+      headRef: "vibeware/probe",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.rejected).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "scripts/check-vibeware-pr.mjs", reason: "forbidden" }),
+        expect.objectContaining({ path: "src/services/link/session.ts", reason: "forbidden" }),
+      ]),
     );
   });
 });

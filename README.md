@@ -208,8 +208,10 @@ is tabulated in [docs/vibeware.md](docs/vibeware.md).
 
 `scripts/check-vibeware-path-policy` rejects a change set if any file is
 outside that surface's `writable_paths` or matches `forbidden_paths`. A path
-that matches both is forbidden. Candidate PRs are graded against the **base**
-manifest (`npm run check:vibeware:pr`).
+that matches both is forbidden. On `pull_request`, CI extracts the **base**
+tree into `$RUNNER_TEMP/vibeware-base` and runs those copies against the
+candidate workspace. `npm run check:vibeware:pr` is local/dev only — it is
+not the PR gate.
 
 ```bash
 ./scripts/check-vibeware-path-policy --manifest vibeware.yaml --surface hc-chats-ui --changed-files <file>
@@ -218,11 +220,15 @@ npm run check:vibeware
 npm run check:vibeware:pr -- --base <sha> --head <sha> --head-ref <branch>
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck, lint, the vibeware self-test,
-the vibeware PR gate (always passed base/head shas), vitest, the wasm smoke,
-and the wire-drift check. Checking out the private Hypercolor pin in Actions
-needs a token that can read `BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN`
-if the default `GITHUB_TOKEN` cannot).
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, the in-tree vibeware
+self-test on push to main, the base-tree vibeware PR gates on pull_request,
+vitest, the wasm smoke, and the wire-drift check. Checking out the private
+Hypercolor pin in Actions needs a token that can read
+`BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN` if the default
+`GITHUB_TOKEN` cannot).
+
+Require review from Code Owners on the CODEOWNERS paths is load-bearing;
+this tree cannot prove that GitHub setting.
 
 Deploy later to Vercel (account `john-3778`). Do not treat this README as
 permission to ship production.

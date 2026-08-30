@@ -2,3 +2,7 @@ vibeware.yaml @BitcoinErrorLog
 scripts/check-vibeware* @BitcoinErrorLog
 scripts/vibeware-evidence.mjs @BitcoinErrorLog
 .github/ @BitcoinErrorLog
+package.json @BitcoinErrorLog
+package-lock.json @BitcoinErrorLog
+docs/vibeware.md @BitcoinErrorLog
+README.md @BitcoinErrorLog

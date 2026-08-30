@@ -103,6 +103,11 @@ forbidden_paths:
   - src/hooks/useThread.ts
   - src/hooks/useAuthUrl.ts
   - src/hooks/usePaykitConnect.ts
+  - src/hooks/useInbox.ts
+  - src/hooks/useChannel.ts
+  - src/hooks/useSignOut.ts
+  - package.json
+  - package-lock.json
 
 surfaces:
   - surface:

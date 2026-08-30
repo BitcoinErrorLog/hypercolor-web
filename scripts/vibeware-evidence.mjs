@@ -30,8 +30,82 @@ export const EVIDENCE_PAYLOAD_FIELDS = {
 
 export const MAX_PAYLOAD_BYTES = 256;
 
+export const EVIDENCE_ROUTES = [
+  "welcome",
+  "enable",
+  "chats",
+  "chat",
+  "channels",
+  "channel",
+  "contacts",
+  "contact",
+  "requests",
+  "profile",
+  "settings",
+  "ring-callback",
+];
+
+export const EVIDENCE_FIELD_VALUES = {
+  "app.route.viewed": {
+    route: EVIDENCE_ROUTES,
+    from_route: [...EVIDENCE_ROUTES, "none"],
+  },
+  "app.onboarding.state": {
+    state: ["no-identity", "needs-enable", "session-offline", "live"],
+  },
+  "app.onboarding.abandoned": {
+    step: ["welcome", "enable"],
+  },
+  "app.chat.empty_state": {
+    kind: ["dms", "groups", "requests"],
+  },
+  "app.thread.send_settled": {
+    channel: ["dm", "group"],
+    outcome: ["sent", "failed", "queued"],
+    kind: ["text", "attachment"],
+  },
+  "app.request.decision": {
+    kind: ["dm", "group-invite"],
+    decision: ["accept", "decline"],
+  },
+  "app.backup.export_outcome": {
+    outcome: ["shown", "confirmed", "cancelled"],
+  },
+  "app.error.coarse": {
+    code: [
+      "network",
+      "auth",
+      "protocol",
+      "consumed",
+      "validation",
+      "unavailable",
+      "too-large",
+      "not-found",
+      "unsupported-target",
+      "decrypt-failed",
+    ],
+    surface: [
+      "hc-chats-ui",
+      "hc-thread-ui",
+      "hc-onboarding-ui",
+      "chats",
+      "thread",
+      "onboarding",
+      "settings",
+      "requests",
+      "pwa",
+      "groups",
+      "contacts",
+      "ring-callback",
+    ],
+  },
+  "app.pwa.installed": {
+    outcome: ["accepted", "dismissed"],
+  },
+};
+
 const BANNED_KEY_RE =
-  /(body|rawjson|raw_json|recovery|token|pubky|secret|payment|attachment)/i;
+  /(body|rawjson|raw_json|recovery|token|pubky|secret|payment|attachment|seed|credential|password|url)/i;
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -71,6 +145,20 @@ export function validateEvidencePayload(eventType, payload) {
   const missing = allowed.filter((key) => !Object.hasOwn(payload, key));
   if (missing.length > 0) {
     return { ok: false, reason: "missing_keys", keys: missing };
+  }
+  const enums = EVIDENCE_FIELD_VALUES[eventType];
+  for (const key of allowed) {
+    const value = payload[key];
+    if (value !== null && typeof value === "object") {
+      return { ok: false, reason: "nested_value", key };
+    }
+    if (typeof value !== "string") {
+      return { ok: false, reason: "value_not_string", key };
+    }
+    const allowedValues = enums?.[key];
+    if (!allowedValues || !allowedValues.includes(value)) {
+      return { ok: false, reason: "invalid_value", key };
+    }
   }
   let encoded;
   try {
@@ -133,6 +221,10 @@ export function assertEvidenceContract(doc, allowlist) {
   for (const eventType of V1_EVIDENCE_ALLOWLIST) {
     if (!deepEqual(fromDoc[eventType], EVIDENCE_PAYLOAD_FIELDS[eventType])) {
       throw new Error(`vibeware: evidence_payloads.${eventType}.fields do not match the P0 schema`);
+    }
+    const enums = EVIDENCE_FIELD_VALUES[eventType];
+    if (!enums || !deepEqual(Object.keys(enums), EVIDENCE_PAYLOAD_FIELDS[eventType])) {
+      throw new Error(`vibeware: EVIDENCE_FIELD_VALUES.${eventType} fields do not match the P0 schema`);
     }
   }
   if (doc.max_payload_bytes !== MAX_PAYLOAD_BYTES) {

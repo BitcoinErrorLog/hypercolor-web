@@ -7,6 +7,9 @@
  *
  * Mechanical: specifier scan + banned identifiers. `src/types/**` imports
  * are waived (see docs/vibeware.md).
+ *
+ * Manifest and scanner code come from this script's tree (base, when CI
+ * invokes the extracted copy). `--repo` selects which workspace to walk.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -17,20 +20,20 @@ import {
   UnsafePathError,
 } from "./check-vibeware-path-policy.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MANIFEST = path.join(ROOT, "vibeware.yaml");
+const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const MANIFEST = path.join(SCRIPT_ROOT, "vibeware.yaml");
 const BANNED_IDENTIFIERS = /\b(fetch|sendBeacon|XMLHttpRequest|WebSocket)\b/;
 const IMPORT_RE =
   /(?:import\s+(?:type\s+)?[\s\S]*?from\s*|import\s+|export\s+[\s\S]*?from\s*|import\s*\(\s*)["']([^"']+)["']/g;
 
-function walkFiles(relDir, acc = []) {
-  const abs = path.join(ROOT, relDir);
+function walkFiles(repoRoot, relDir, acc = []) {
+  const abs = path.join(repoRoot, relDir);
   if (!existsSync(abs)) return acc;
   for (const entry of readdirSync(abs, { withFileTypes: true })) {
     if (entry.name.startsWith(".")) continue;
     const rel = path.posix.join(relDir.replace(/\\/g, "/"), entry.name);
     if (entry.isDirectory()) {
-      walkFiles(rel, acc);
+      walkFiles(repoRoot, rel, acc);
     } else {
       acc.push(rel);
     }
@@ -38,12 +41,12 @@ function walkFiles(relDir, acc = []) {
   return acc;
 }
 
-function expandWritable(pattern) {
+function expandWritable(repoRoot, pattern) {
   const normalized = pattern.replace(/\\/g, "/");
   if (!normalized.includes("*")) {
-    return existsSync(path.join(ROOT, normalized)) ? [normalized] : [normalized];
+    return existsSync(path.join(repoRoot, normalized)) ? [normalized] : [normalized];
   }
-  const all = walkFiles(".");
+  const all = walkFiles(repoRoot, ".");
   return all.filter((filePath) => {
     try {
       return pathMatches(normalized, filePath);
@@ -54,7 +57,7 @@ function expandWritable(pattern) {
   });
 }
 
-function tryResolve(rel) {
+function tryResolve(repoRoot, rel) {
   const unified = rel.replace(/\\/g, "/").replace(/^\.\//, "");
   const candidates = [
     unified,
@@ -66,18 +69,18 @@ function tryResolve(rel) {
     `${unified}/index.tsx`,
   ];
   for (const candidate of candidates) {
-    if (existsSync(path.join(ROOT, candidate))) return candidate;
+    if (existsSync(path.join(repoRoot, candidate))) return candidate;
   }
   return unified;
 }
 
-export function resolveSpecifier(fromFile, specifier) {
+export function resolveSpecifier(fromFile, specifier, repoRoot = SCRIPT_ROOT) {
   if (specifier.startsWith("@/")) {
-    return tryResolve(`src/${specifier.slice(2)}`);
+    return tryResolve(repoRoot, `src/${specifier.slice(2)}`);
   }
   if (specifier.startsWith("./") || specifier.startsWith("../")) {
     const fromDir = path.posix.dirname(fromFile.replace(/\\/g, "/"));
-    return tryResolve(path.posix.normalize(`${fromDir}/${specifier}`));
+    return tryResolve(repoRoot, path.posix.normalize(`${fromDir}/${specifier}`));
   }
   return null;
 }
@@ -90,7 +93,7 @@ function isTypesWaiver(resolved) {
   }
 }
 
-export function scanWritableFile(source, fromFile, forbiddenPatterns) {
+export function scanWritableFile(source, fromFile, forbiddenPatterns, repoRoot = SCRIPT_ROOT) {
   const findings = [];
   if (BANNED_IDENTIFIERS.test(source)) {
     findings.push({
@@ -107,7 +110,7 @@ export function scanWritableFile(source, fromFile, forbiddenPatterns) {
       findings.push({ path: fromFile, reason: "collector_import", detail: specifier });
       continue;
     }
-    const resolved = resolveSpecifier(fromFile, specifier);
+    const resolved = resolveSpecifier(fromFile, specifier, repoRoot);
     if (!resolved) continue;
     if (isTypesWaiver(resolved)) continue;
     const hit = forbiddenPatterns.find((pattern) => {
@@ -128,36 +131,73 @@ export function scanWritableFile(source, fromFile, forbiddenPatterns) {
   return findings;
 }
 
-export function checkWritableImports(manifest = loadManifestFile(MANIFEST)) {
+export function checkWritableImports(manifest, options = {}) {
+  const repoRoot = options.repoRoot ?? SCRIPT_ROOT;
+  const resolvedManifest = manifest ?? loadManifestFile(MANIFEST);
   const forbiddenPatterns = [
-    ...manifest.forbidden_paths,
-    ...manifest.surfaces.flatMap((surface) => surface.forbidden_paths),
+    ...resolvedManifest.forbidden_paths,
+    ...resolvedManifest.surfaces.flatMap((surface) => surface.forbidden_paths),
     "src/services/vibeware/**",
   ];
   const writable = new Set();
-  for (const surface of manifest.surfaces) {
+  for (const surface of resolvedManifest.surfaces) {
     for (const pattern of surface.writable_paths) {
-      for (const filePath of expandWritable(pattern)) {
+      for (const filePath of expandWritable(repoRoot, pattern)) {
         writable.add(filePath);
       }
     }
   }
   const findings = [];
   for (const filePath of writable) {
-    const abs = path.join(ROOT, filePath);
+    const abs = path.join(repoRoot, filePath);
     if (!existsSync(abs) || !statSync(abs).isFile()) {
       findings.push({ path: filePath, reason: "missing_writable", detail: "listed writable path is not a file" });
       continue;
     }
     const source = readFileSync(abs, "utf8");
-    findings.push(...scanWritableFile(source, filePath, forbiddenPatterns));
+    findings.push(...scanWritableFile(source, filePath, forbiddenPatterns, repoRoot));
   }
   return { ok: findings.length === 0, findings };
 }
 
-export function main(io = process) {
+function usage() {
+  return "Usage: node scripts/check-vibeware-writable-imports.mjs [--repo <dir>]";
+}
+
+function parseArgs(argv) {
+  const out = { repo: null, help: false };
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === "-h" || arg === "--help") {
+      out.help = true;
+      continue;
+    }
+    if (arg === "--repo") {
+      i += 1;
+      if (i >= argv.length) throw new Error("missing value for --repo");
+      out.repo = argv[i];
+      continue;
+    }
+    throw new Error(`unknown argument: ${arg}\n${usage()}`);
+  }
+  return out;
+}
+
+export function main(argv = process.argv.slice(2), io = process) {
+  let args;
   try {
-    const result = checkWritableImports();
+    args = parseArgs(argv);
+  } catch (error) {
+    io.stderr.write(`${error instanceof Error ? error.message : error}\n`);
+    return 2;
+  }
+  if (args.help) {
+    io.stdout.write(`${usage()}\n`);
+    return 0;
+  }
+  const repoRoot = args.repo ? path.resolve(args.repo) : SCRIPT_ROOT;
+  try {
+    const result = checkWritableImports(undefined, { repoRoot });
     if (!result.ok) {
       for (const item of result.findings) {
         io.stderr.write(`${item.path}\t${item.reason}\t${item.detail || ""}\n`);

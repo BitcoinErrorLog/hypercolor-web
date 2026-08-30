@@ -20,6 +20,18 @@ jobs:
         if: github.event_name == 'pull_request'
         run: git fetch --no-tags origin ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}
 
+      - name: Extract base vibeware gate outside workspace
+        if: github.event_name == 'pull_request'
+        env:
+          VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          BASE_DIR="${RUNNER_TEMP}/vibeware-base"
+          mkdir -p "$BASE_DIR"
+          git archive "$VIBEWARE_BASE" | tar -x -C "$BASE_DIR"
+          test -f "$BASE_DIR/scripts/check-vibeware-pr.mjs"
+          test -f "$BASE_DIR/scripts/check-vibeware-selftest.mjs"
+          test -f "$BASE_DIR/scripts/check-vibeware-writable-imports.mjs"
+
       - name: Checkout Hypercolor wire pin
         uses: actions/checkout@v4
         with:
@@ -44,14 +56,25 @@ jobs:
         run: npm run lint
 
       - name: Vibeware path-policy self-test
+        if: github.event_name != 'pull_request'
         run: npm run check:vibeware
 
-      - name: Vibeware PR path-policy
+      - name: Vibeware PR gates from base tree
+        if: github.event_name == 'pull_request'
         env:
-          VIBEWARE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          VIBEWARE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-          VIBEWARE_HEAD_REF: ${{ github.head_ref || github.ref_name }}
-        run: npm run check:vibeware:pr -- --base "$VIBEWARE_BASE" --head "$VIBEWARE_HEAD" --head-ref "$VIBEWARE_HEAD_REF"
+          VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base
+          VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
+          VIBEWARE_HEAD: ${{ github.event.pull_request.head.sha }}
+          VIBEWARE_HEAD_REF: ${{ github.head_ref }}
+        run: |
+          node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-pr.mjs" \
+            --repo "$GITHUB_WORKSPACE" \
+            --base "$VIBEWARE_BASE" \
+            --head "$VIBEWARE_HEAD" \
+            --head-ref "$VIBEWARE_HEAD_REF"
+          node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-selftest.mjs"
+          node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-writable-imports.mjs" \
+            --repo "$GITHUB_WORKSPACE"
 
       - name: Unit tests
         run: npm test

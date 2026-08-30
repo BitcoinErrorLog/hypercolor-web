@@ -1,17 +1,80 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
-import { ChatsPage } from "@/components/chats-page";
+import { ChatsPage, type ChatsPageRow } from "@/components/chats-page";
+import { useInbox } from "@/hooks/useInbox";
 import { usePathSegment } from "@/hooks/usePathSegment";
+import { addManualContact } from "@/services/contacts/addManualContact";
 import { ThreadViewHost } from "@/services/thread/threadActions";
+import { useContactStore } from "@/stores/contactStore";
+import type { InboxRow } from "@/lib/inbox";
+import { buildDmConversationId } from "@/types/link";
+import { parsePubky } from "@/utils/pubkyId";
+
+export function mapInboxRowsToChatsPageRows(rows: InboxRow[]): ChatsPageRow[] {
+  return rows.map((row) => ({
+    key: `${row.kind}:${row.id}`,
+    href: row.href,
+    title: row.title,
+    kind: row.kind,
+    preview: row.preview,
+    lastMessageAt: row.lastMessageAt,
+    unreadCount: row.unreadCount,
+  }));
+}
 
 export function ChatsPageHost() {
   const conversationId = usePathSegment("chats");
+  const router = useRouter();
+  const inbox = useInbox();
+  const upsertContact = useContactStore((s) => s.upsertContact);
+  const [peerDraft, setPeerDraft] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  async function startChat() {
+    if (!inbox.ownerPubky) {
+      setStartError("Connect with Pubky Ring first.");
+      return;
+    }
+    const parsed = parsePubky(peerDraft);
+    if (!parsed) {
+      setStartError("Paste a 52-character z-base-32 pubky.");
+      return;
+    }
+    setStarting(true);
+    setStartError(null);
+    try {
+      const result = await addManualContact(inbox.ownerPubky, parsed);
+      if (!result.ok) {
+        setStartError(result.message);
+        return;
+      }
+      upsertContact(result.contact);
+      setPeerDraft("");
+      router.push(`/chats/${encodeURIComponent(buildDmConversationId(result.contact.pubky))}`);
+    } finally {
+      setStarting(false);
+    }
+  }
+
   return (
     <ChatsPage
       conversationId={conversationId}
       enableCta={<EnableMessagingCta testId="chatsEnableMessaging" />}
       thread={<ThreadViewHost conversationId={conversationId} />}
+      rows={mapInboxRowsToChatsPageRows(inbox.rows)}
+      pendingRequests={inbox.pendingRequests}
+      inboxError={inbox.error}
+      peerDraft={peerDraft}
+      starting={starting}
+      startError={startError}
+      onChangePeerDraft={setPeerDraft}
+      onStartChat={() => {
+        void startChat();
+      }}
     />
   );
 }

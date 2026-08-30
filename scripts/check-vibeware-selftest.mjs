@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -112,6 +112,20 @@ const cases = [
     expectStatus: 0,
     expectRejected: [],
   },
+  {
+    name: "rejects package.json as forbidden",
+    surface: "hc-chats-ui",
+    files: ["package.json"],
+    expectStatus: 1,
+    expectRejected: [{ path: "package.json", reason: "forbidden" }],
+  },
+  {
+    name: "rejects useInbox.ts as forbidden",
+    surface: "hc-chats-ui",
+    files: ["src/hooks/useInbox.ts"],
+    expectStatus: 1,
+    expectRejected: [{ path: "src/hooks/useInbox.ts", reason: "forbidden" }],
+  },
 ];
 
 let failed = 0;
@@ -191,7 +205,7 @@ try {
 try {
   const planted = validateEvidencePayload("app.thread.send_settled", {
     channel: "dm",
-    outcome: "ok",
+    outcome: "sent",
     kind: "text",
     body: "hi",
   });
@@ -205,6 +219,35 @@ try {
 }
 
 try {
+  const secretRoute = validateEvidencePayload("app.route.viewed", {
+    route: "secret message",
+    from_route: "none",
+  });
+  assert(secretRoute.ok === false, "route secret message must fail");
+  assert(secretRoute.reason === "invalid_value", "route secret message must be invalid_value");
+  console.log("ok route secret message fails validator");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL route secret message: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
+  const nested = validateEvidencePayload("app.pwa.installed", {
+    outcome: { accepted: true },
+  });
+  assert(nested.ok === false, "nested object payload must fail");
+  assert(nested.reason === "nested_value", "nested object must be nested_value");
+  console.log("ok nested object payload fails validator");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL nested object payload: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
   const imports = checkWritableImports();
   assert(imports.ok, `writable-import check failed: ${JSON.stringify(imports.findings)}`);
   console.log("ok writable-import check");
@@ -212,6 +255,89 @@ try {
   failed += 1;
   console.error(
     `FAIL writable-import check: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+function git(cwd, args, allowFail = false) {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+  if (result.status !== 0 && !allowFail) {
+    throw new Error(
+      `git ${args.join(" ")} failed: ${(result.stderr || result.stdout || "").trim()}`,
+    );
+  }
+  return result;
+}
+
+try {
+  const fake = mkdtempSync(path.join(tmpdir(), "vibeware-f2-"));
+  git(fake, ["init"]);
+  git(fake, ["config", "user.email", "vibeware@test"]);
+  git(fake, ["config", "user.name", "vibeware"]);
+  git(fake, ["config", "commit.gpgsign", "false"]);
+  mkdirSync(path.join(fake, "scripts"), { recursive: true });
+  mkdirSync(path.join(fake, "src/services/link"), { recursive: true });
+  copyFileSync(MANIFEST, path.join(fake, "vibeware.yaml"));
+  writeFileSync(path.join(fake, "scripts/check-vibeware-pr.mjs"), "console.log('honest');\n");
+  writeFileSync(path.join(fake, "src/services/link/session.ts"), "export {}\n");
+  git(fake, ["add", "-A"]);
+  git(fake, ["commit", "-m", "base"]);
+  const baseSha = git(fake, ["rev-parse", "HEAD"]).stdout.trim();
+  git(fake, ["checkout", "-b", "vibeware/probe"]);
+  mkdirSync(path.join(fake, ".vibeware"), { recursive: true });
+  writeFileSync(path.join(fake, ".vibeware/candidate"), "surface: hc-chats-ui\n");
+  writeFileSync(path.join(fake, "scripts/check-vibeware-pr.mjs"), "process.exit(0);\n");
+  writeFileSync(path.join(fake, "src/services/link/session.ts"), "export const pwned = true;\n");
+  git(fake, ["add", "-A"]);
+  git(fake, ["commit", "-m", "rewrite evaluator and session"]);
+  const headSha = git(fake, ["rev-parse", "HEAD"]).stdout.trim();
+
+  const candidateRun = spawnSync(
+    process.execPath,
+    [
+      path.join(fake, "scripts/check-vibeware-pr.mjs"),
+      "--repo",
+      fake,
+      "--base",
+      baseSha,
+      "--head",
+      headSha,
+      "--head-ref",
+      "vibeware/probe",
+    ],
+    { encoding: "utf8" },
+  );
+  assert(candidateRun.status === 0, `candidate rewrite must exit 0, got ${candidateRun.status}`);
+
+  const honest = spawnSync(
+    process.execPath,
+    [
+      path.join(ROOT, "scripts/check-vibeware-pr.mjs"),
+      "--repo",
+      fake,
+      "--base",
+      baseSha,
+      "--head",
+      headSha,
+      "--head-ref",
+      "vibeware/probe",
+    ],
+    { encoding: "utf8" },
+  );
+  assert(honest.status === 1, `honest evaluator must reject, got ${honest.status}`);
+  const rejected = (honest.stderr || "").split(/\r?\n/).filter(Boolean);
+  assert(
+    rejected.some((line) => line.startsWith("scripts/check-vibeware-pr.mjs\tforbidden")),
+    `honest run must reject rewritten evaluator: ${honest.stderr}`,
+  );
+  assert(
+    rejected.some((line) => line.startsWith("src/services/link/session.ts\tforbidden")),
+    `honest run must reject session.ts: ${honest.stderr}`,
+  );
+  console.log("ok rewritten evaluator still rejected by base copy");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL rewritten evaluator still rejected by base copy: ${error instanceof Error ? error.message : error}`,
   );
 }
 

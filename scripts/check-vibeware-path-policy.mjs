@@ -28,6 +28,11 @@ export const REQUIRED_SHARED_FORBIDDEN = [
   "vibeware.yaml",
   ".github/**",
   "scripts/check-vibeware*",
+  "package.json",
+  "package-lock.json",
+  "src/hooks/useInbox.ts",
+  "src/hooks/useChannel.ts",
+  "src/hooks/useSignOut.ts",
 ];
 
 export const MIN_SHARED_FORBIDDEN_PATHS = 40;
