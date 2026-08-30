@@ -1,12 +1,14 @@
-// Smoke test for the vendored paykit-wasm messaging binding (vendor/paykit-wasm).
+// Smoke test for the vendored paykit-wasm messaging + payments binding
+// (vendor/paykit-wasm).
 //
 // Instantiates the compiled WASM in Node and proves with REAL crypto (no mocks):
 // the bound messaging API surface, receiver Noise key generation, a full Noise
 // XX handshake between two in-memory parties with converging link ids,
 // encrypted roundtrips, AEAD tamper rejection, the 1000-byte message limit,
 // pubkyauth URL shape for /pub/paykit/:rw, resumeSessionFromCookie
-// declaration + invalid-pubky rejection, and d.ts presence of the SB2 /
-// X25519 / public-storage / session exports. Does not hit a homeserver.
+// declaration + invalid-pubky rejection, d.ts presence of the SB2 /
+// X25519 / public-storage / session / payment exports, and a local
+// serialize/parse Private Payment List roundtrip. Does not hit a homeserver.
 
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -70,6 +72,15 @@ const requiredSnippets = [
   "export function publishReceiverMarker(",
   "export function getReceiverMarker(",
   "export function removeReceiverMarker(",
+  "export function setPaymentEndpoint(",
+  "export function removePaymentEndpoint(",
+  "export function getPaymentEndpoint(",
+  "export function getPaymentList(",
+  "export function listPaymentMethods(",
+  "export function listPaykitReceiverPaths(",
+  "export function serializePrivatePaymentListJson(",
+  "export function parsePrivatePaymentListJson(",
+  "sendPrivatePaymentList(endpoints: object): Promise<any>;",
   "export function initiateEncryptedLink(",
   "export function acceptEncryptedLink(",
   "export function restoreEncryptedLink(",
@@ -169,5 +180,14 @@ assert.ok(
 
 alice.close();
 bob.close();
+
+const privateList = {
+  lno: "lno1qgsqvgnwgcg35z6ee2m68z3gthgl96qfnu7hvasu7a3r5pk5lzrefzpd9kx7mmwxu025chv9dcu",
+};
+const serialized = sdk.serializePrivatePaymentListJson(privateList);
+assert.equal(typeof serialized, "string");
+assert.match(serialized, /paykit\.private_payment_list/);
+const parsed = sdk.parsePrivatePaymentListJson(serialized);
+assert.equal(parsed.lno, privateList.lno);
 
 console.log("vendored paykit-wasm messaging binding smoke check passed");
