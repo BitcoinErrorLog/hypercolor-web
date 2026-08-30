@@ -2,7 +2,7 @@ import { PaykitLinkWeb } from "./PaykitLinkWeb";
 
 /** Staging homeserver used by shop.pubky.app / Pubky App staging. */
 export const STAGING_HOMESERVER_Z32 =
-  "8um71us3fyw6h8wbcxb5ar3rwusy1a6u49ba7eabxpqi8gnetewy";
+  "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
 
 export const OWNER_ROUNDTRIP_PATH =
   "/pub/hypercolor.app/v1/e2e/owner-roundtrip.json";

@@ -17,6 +17,14 @@ class FakeLockManager {
     const callback =
       typeof optionsOrCb === "function" ? optionsOrCb : maybeCb;
     if (!callback) return Promise.resolve();
+    if (options.ifAvailable && options.signal) {
+      return Promise.reject(
+        new DOMException(
+          "ifAvailable and signal cannot be used together.",
+          "NotSupportedError",
+        ),
+      );
+    }
 
     return new Promise((resolve, reject) => {
       const grant = () => {
@@ -70,6 +78,19 @@ describe("tabLock", () => {
     const tabLock = await loadTabLock();
     const lock = await tabLock.initTabLock();
     expect(lock.mode).toBe("writer");
+    expect(tabLock.getTabLock().mode).toBe("writer");
+  });
+
+  it("waits for an in-flight acquire so concurrent callers do not see stale readonly", async () => {
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    const tabLock = await loadTabLock();
+    const [first, second] = await Promise.all([
+      tabLock.initTabLock(),
+      tabLock.initTabLock(),
+    ]);
+    expect(first.mode).toBe("writer");
+    expect(second.mode).toBe("writer");
     expect(tabLock.getTabLock().mode).toBe("writer");
   });
 

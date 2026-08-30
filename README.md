@@ -43,19 +43,27 @@ Two Playwright browser contexts sign up on staging, handshake, and exchange
 `chat.message.v0` both ways. Tokens are minted by the staging-invite script
 and never printed.
 
-A live attempt on 2026-08-30 minted a token and then failed inside wasm
-`signupWithSecret`: Pkarr for the staging homeserver
-`8um71us3fyw6h8wbcxb5ar3rwusy1a6u49ba7eabxpqi8gnetewy` returned no HTTPS
-endpoints via the binding's mainnet client. That is not a green proof. The
-`/e2e/dm-harness` page and `e2e/dm-staging.spec.ts` are the real harness;
-do not treat a skip as live-proof green.
+The 2026-08-30 `signupWithSecret` failures ("Pkarr returned no HTTPS
+endpoints") were caused by a wrong homeserver key in this harness, not by
+Pkarr infrastructure. That key was never a real homeserver. The correct
+staging homeserver public key is
+`ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy` (pubky-app's
+`NEXT_PUBLIC_HOMESERVER` default; it resolves a signed packet on
+https://pkarr.pubky.app and https://pkarr.pubky.org). A skipped test is
+not a green proof. The `/e2e/dm-harness` page and
+`e2e/dm-staging.spec.ts` are the real harness.
 
-P4 `npm run proof:staging` (2026-08-30) minted two tokens, opened two
-browser contexts, and failed at the same `signupWithSecret` Pkarr/HTTPS
-gap. Tokens were redacted in the thrown error. Not a green live proof.
+Owner roundtrip (2026-08-30, corrected key):
+`STAGING_SIGNUP_TOKEN=<token> npm run test:e2e -- e2e/owner-roundtrip.spec.ts`
+passed (PUT → public GET → DELETE → 404, 5.5s).
 
-P3 exit still needs: a working staging signup from this wasm client, plus
-one live Ring phone run against staging (https callback).
+P4 `npm run proof:staging` (2026-08-30, corrected key): two isolated
+Chromium processes signed up on staging, reached Encrypted Link
+`ready`, and exchanged `hello-from-a` / `hello-from-b`. Passed in 15.7s.
+Tokens were minted by the script and not printed.
+
+P3 exit still needs one live Ring phone run against staging (https
+callback). Wasm staging signup from this client is no longer the blocker.
 
 ## Static routes and unknown IDs
 

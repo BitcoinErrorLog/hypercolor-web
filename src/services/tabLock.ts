@@ -7,7 +7,7 @@ export interface TabLock {
 
 const LOCK_NAME = "hypercolor-writer";
 
-let started = false;
+let startPromise: Promise<TabLock> | null = null;
 let mode: TabLockMode = "readonly";
 let currentAbort: AbortController | null = null;
 const listeners = new Set<(lock: TabLock) => void>();
@@ -67,10 +67,15 @@ function tryAcquire(options: { ifAvailable?: boolean; steal?: boolean }): Promis
       resolve();
     };
 
+    // Chromium rejects ifAvailable + signal together (NotSupportedError).
+    const requestOptions: LockOptions = options.ifAvailable
+      ? { mode: "exclusive", ifAvailable: true }
+      : { mode: "exclusive", steal: options.steal, signal: ac.signal };
+
     void navigator.locks
       .request(
         LOCK_NAME,
-        { ...options, mode: "exclusive", signal: ac.signal },
+        requestOptions,
         async (lock) => {
           if (!lock) {
             mode = "readonly";
@@ -101,17 +106,19 @@ function tryAcquire(options: { ifAvailable?: boolean; steal?: boolean }): Promis
  * believe they are writers. Documented in README.
  */
 export async function initTabLock(): Promise<TabLock> {
-  if (started) return snapshot();
-  started = true;
+  if (startPromise) return startPromise;
 
-  if (!hasWebLocks()) {
-    mode = "writer";
-    emit();
+  startPromise = (async () => {
+    if (!hasWebLocks()) {
+      mode = "writer";
+      emit();
+      return snapshot();
+    }
+    await tryAcquire({ ifAvailable: true });
     return snapshot();
-  }
+  })();
 
-  await tryAcquire({ ifAvailable: true });
-  return snapshot();
+  return startPromise;
 }
 
 export function getTabLock(): TabLock {
@@ -139,7 +146,7 @@ export function requestTakeover(): void {
 export function resetTabLockForTests(): void {
   currentAbort?.abort();
   currentAbort = null;
-  started = false;
+  startPromise = null;
   mode = "readonly";
   emit();
 }

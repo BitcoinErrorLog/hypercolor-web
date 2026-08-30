@@ -12,7 +12,7 @@ import {
 } from "./RingConnect";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
-const HOMESERVER = "8um71us3fyw6h8wbcxb5ar3rwusy1a6u49ba7eabxpqi8gnetewy";
+const HOMESERVER = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
 
 describe("RingConnect URL and params", () => {
   afterEach(() => {

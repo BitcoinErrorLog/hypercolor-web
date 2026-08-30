@@ -18,6 +18,7 @@ async function resolveSignupToken(): Promise<string | null> {
 }
 
 test("staging owner PUT → public GET → DELETE → 404", async ({ page }) => {
+  test.setTimeout(120_000);
   const token = await resolveSignupToken();
   test.skip(
     !token,
@@ -34,6 +35,7 @@ test("staging owner PUT → public GET → DELETE → 404", async ({ page }) => 
   await expect(
     page.getByRole("heading", { name: "Owner round-trip harness" }),
   ).toBeVisible();
+  await page.waitForFunction(() => typeof window.runOwnerRoundtrip === "function");
 
   const result = await page.evaluate(async (signupToken) => {
     const run = (
