@@ -206,6 +206,14 @@ shared forbidden paths, the v1 evidence allowlist and payload schema,
 exposure caps, and kill switches. Which keys are enforced vs informational
 is tabulated in [docs/vibeware.md](docs/vibeware.md).
 
+The Phase 1 collector lives in `src/services/vibeware/` (forbidden). It
+emits only the nine allowlisted events after
+`validateEvidencePayload`. Optional ingest:
+`NEXT_PUBLIC_VIBEWARE_INGEST_URL` and
+`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN` (empty placeholders in `.env.example`).
+With no URL, events go to an in-memory sink (`window.__vibewareSink` when
+`NEXT_PUBLIC_E2E_HARNESS=1`).
+
 `scripts/check-vibeware-path-policy` rejects a change set if any file is
 outside that surface's `writable_paths` or matches `forbidden_paths`. A path
 that matches both is forbidden. On `pull_request`, CI extracts the **base**

@@ -59,6 +59,12 @@ describe("vibeware path policy", () => {
     expect(result.rejected[0]?.reason).toBe("forbidden");
   });
 
+  it("rejects the collector as forbidden", () => {
+    const result = check("hc-chats-ui", ["src/services/vibeware/collector.ts"]);
+    expect(result.ok).toBe(false);
+    expect(result.rejected[0]?.reason).toBe("forbidden");
+  });
+
   it("rejects attachment-bubble.tsx for hc-thread-ui", () => {
     const result = check("hc-thread-ui", ["src/components/attachment-bubble.tsx"]);
     expect(result.ok).toBe(false);
@@ -125,6 +131,7 @@ describe("vibeware path policy", () => {
     expect(manifest.forbidden_paths).toContain("src/services/group/GroupService.ts");
     expect(manifest.forbidden_paths).toContain("src/services/StorageService.ts");
     expect(manifest.forbidden_paths).toContain("src/stores/inboxStore.ts");
+    expect(manifest.forbidden_paths).toContain("src/services/vibeware/**");
     expect(manifest.surfaces[0]?.writable_paths).toEqual(["src/components/chats-page.tsx"]);
     expect(manifest.surfaces[0]?.forbidden_paths).toContain("src/stores/inboxStore.ts");
     expect(manifest.surfaces[1]?.writable_paths).toEqual([

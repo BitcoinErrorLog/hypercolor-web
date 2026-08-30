@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChannelView } from "@/components/channel-view";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,8 @@ import { isMessagingEnabled } from "@/lib/session-ui";
 import type { Contact } from "@/types";
 import type { GroupChannel } from "@/types/group";
 import { GroupServiceError } from "@/types/group";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function ChannelsPage() {
   const router = useRouter();
@@ -33,11 +35,14 @@ export function ChannelsPage() {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const emptyEmitted = useRef(false);
 
   const reload = useCallback(async () => {
     if (!ownerPubky) {
       setChannels([]);
       setEligible([]);
+      setLoaded(true);
       return;
     }
     const [rows, people, links, requests] = await Promise.all([
@@ -48,11 +53,20 @@ export function ChannelsPage() {
     ]);
     setChannels(excludeHeldFounderChannels(rows, heldGroupFounderSet(requests)));
     setEligible(contactsWithEstablishedLinks(people, links));
+    setLoaded(true);
   }, [ownerPubky]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (channels.length !== 0) return;
+    if (emptyEmitted.current) return;
+    emptyEmitted.current = true;
+    void emit("app.chat.empty_state", { kind: "groups" });
+  }, [loaded, channels.length]);
 
   useEffect(() => {
     if (!ownerPubky) return;
@@ -80,6 +94,7 @@ export function ChannelsPage() {
             event.preventDefault();
             if (!isMessagingEnabled(status)) {
               setError("Enable encrypted messaging before creating a group.");
+              void emit("app.error.coarse", { code: "auth", surface: "channel" });
               return;
             }
             setBusy(true);
@@ -100,6 +115,7 @@ export function ChannelsPage() {
                       ? err.message
                       : "Could not create group",
                 );
+                emitCoarseError("channel", err);
               })
               .finally(() => setBusy(false));
           }}

@@ -15,6 +15,8 @@ import type { Contact } from "@/types";
 import type { GroupChannel, GroupMember, GroupMessage } from "@/types/group";
 import { isGroupTimelineVisible } from "@/types/group";
 import { parsePubky } from "@/utils/pubkyId";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
 
 export function useChannel(channelId: string | null) {
   const localPubky = useAuthStore((s) => s.pubky);
@@ -101,11 +103,21 @@ export function useChannel(channelId: string | null) {
     setError(null);
     try {
       if (editId) await GroupService.editMessage(channelId, editId, text);
-      else await GroupService.sendGroupMessage(channelId, text);
+      else {
+        const sent = await GroupService.sendGroupMessage(channelId, text);
+        const outcome = sendOutcomeFromDelivery(sent.deliveryState);
+        if (outcome) {
+          void emit("app.thread.send_settled", { channel: "group", outcome, kind: "text" });
+        }
+      }
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Send failed");
       setDraft(text);
+      if (!editId) {
+        void emit("app.thread.send_settled", { channel: "group", outcome: "failed", kind: "text" });
+      }
+      emitCoarseError("channel", err);
     } finally {
       setSending(false);
     }
@@ -118,14 +130,28 @@ export function useChannel(channelId: string | null) {
       setError(null);
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        await sendAttachmentFromBytes(
+        const record = await sendAttachmentFromBytes(
           { type: "channel", channelId },
           bytes,
           file.type || "application/octet-stream",
         );
+        const outcome = sendOutcomeFromDelivery(record.deliveryState);
+        if (outcome) {
+          void emit("app.thread.send_settled", {
+            channel: "group",
+            outcome,
+            kind: "attachment",
+          });
+        }
         await reload();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Attachment failed");
+        void emit("app.thread.send_settled", {
+          channel: "group",
+          outcome: "failed",
+          kind: "attachment",
+        });
+        emitCoarseError("channel", err);
       } finally {
         setSending(false);
       }
@@ -140,9 +166,10 @@ export function useChannel(channelId: string | null) {
       try {
         await GroupService.reactToMessage(channelId, eventId, emoji, authorPubky);
         await reload();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Reaction failed");
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reaction failed");
+      emitCoarseError("channel", err);
+    }
     },
     [channelId, reload],
   );
@@ -154,9 +181,10 @@ export function useChannel(channelId: string | null) {
       try {
         await GroupService.removeMember(channelId, memberPubky);
         await reload();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Remove failed");
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remove failed");
+      emitCoarseError("channel", err);
+    }
     },
     [channelId, reload],
   );
@@ -167,6 +195,7 @@ export function useChannel(channelId: string | null) {
       const parsed = parsePubky(raw);
       if (!parsed) {
         setError("Member must be a 52-character z-base-32 pubky with an established link.");
+        void emit("app.error.coarse", { code: "validation", surface: "channel" });
         return;
       }
       setError(null);
@@ -175,6 +204,7 @@ export function useChannel(channelId: string | null) {
         await reload();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Add failed");
+        emitCoarseError("channel", err);
       }
     },
     [channelId, reload],
@@ -188,6 +218,7 @@ export function useChannel(channelId: string | null) {
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Leave failed");
+      emitCoarseError("channel", err);
     }
   }, [channelId, reload]);
 
@@ -198,9 +229,10 @@ export function useChannel(channelId: string | null) {
       try {
         await GroupService.deleteMessage(channelId, eventId);
         await reload();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Delete failed");
-      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+      emitCoarseError("channel", err);
+    }
     },
     [channelId, reload],
   );
@@ -212,6 +244,7 @@ export function useChannel(channelId: string | null) {
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Retry failed");
+      emitCoarseError("channel", err);
     }
   }, [reload]);
 

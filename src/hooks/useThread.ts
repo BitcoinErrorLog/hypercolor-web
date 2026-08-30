@@ -10,6 +10,8 @@ import { isMessagingEnabled } from "@/lib/session-ui";
 import { StorageService } from "@/services/StorageService";
 import { LinkService } from "@/services/link/LinkService";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
 
 export function useThread(conversationId: string | null) {
   const localPubky = useAuthStore((s) => s.pubky);
@@ -69,11 +71,17 @@ export function useThread(conversationId: string | null) {
     setSending(true);
     setError(null);
     try {
-      await LinkService.sendDm(participantPubky, text);
+      const sent = await LinkService.sendDm(participantPubky, text);
+      const outcome = sendOutcomeFromDelivery(sent.deliveryState);
+      if (outcome) {
+        void emit("app.thread.send_settled", { channel: "dm", outcome, kind: "text" });
+      }
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send this message.");
       setDraft(text);
+      void emit("app.thread.send_settled", { channel: "dm", outcome: "failed", kind: "text" });
+      emitCoarseError("thread", err);
     } finally {
       setSending(false);
     }
@@ -86,6 +94,7 @@ export function useThread(conversationId: string | null) {
       await reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Retry failed.");
+      emitCoarseError("thread", err);
     }
   }, [reload]);
 
@@ -96,14 +105,24 @@ export function useThread(conversationId: string | null) {
       setError(null);
       try {
         const bytes = new Uint8Array(await file.arrayBuffer());
-        await sendAttachmentFromBytes(
+        const record = await sendAttachmentFromBytes(
           { type: "conversation", peerPubky: participantPubky },
           bytes,
           file.type || "application/octet-stream",
         );
+        const outcome = sendOutcomeFromDelivery(record.deliveryState);
+        if (outcome) {
+          void emit("app.thread.send_settled", { channel: "dm", outcome, kind: "attachment" });
+        }
         await reload();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Attachment failed.");
+        void emit("app.thread.send_settled", {
+          channel: "dm",
+          outcome: "failed",
+          kind: "attachment",
+        });
+        emitCoarseError("thread", err);
       } finally {
         setSending(false);
       }

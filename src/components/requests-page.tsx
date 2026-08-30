@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { shortPubky } from "@/lib/format";
@@ -11,6 +11,8 @@ import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
 import { threadRouteParams } from "@/types/link";
 import type { Contact, MessageRequest } from "@/types";
+import { emit } from "@/services/vibeware/collector";
+import { emitCoarseError } from "@/services/vibeware/coarse";
 
 type RequestRow = {
   request: MessageRequest;
@@ -24,10 +26,13 @@ export function RequestsPage() {
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [busyPeer, setBusyPeer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const emptyEmitted = useRef(false);
 
   const load = useCallback(async () => {
     if (!ownerPubky) {
       setRows([]);
+      setLoaded(true);
       return;
     }
     const pending = await StorageService.listMessageRequests(ownerPubky, "pending");
@@ -44,11 +49,20 @@ export function RequestsPage() {
       });
     }
     setRows(next);
+    setLoaded(true);
   }, [ownerPubky]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (rows.length !== 0) return;
+    if (emptyEmitted.current) return;
+    emptyEmitted.current = true;
+    void emit("app.chat.empty_state", { kind: "requests" });
+  }, [loaded, rows.length]);
 
   return (
     <article className="space-y-6" data-testid="messageRequestsScreen">
@@ -102,11 +116,16 @@ export function RequestsPage() {
                       void LinkService.acceptMessageRequest(peer)
                         .then(async () => {
                           await load();
+                          void emit("app.request.decision", {
+                            kind: row.invitations.length > 0 ? "group-invite" : "dm",
+                            decision: "accept",
+                          });
                           const params = threadRouteParams(peer);
                           router.push(`/chats/${encodeURIComponent(params.threadId)}`);
                         })
                         .catch((err) => {
                           setError(err instanceof Error ? err.message : "Accept failed");
+                          emitCoarseError("requests", err);
                           return load();
                         })
                         .finally(() => setBusyPeer(null));
@@ -124,9 +143,16 @@ export function RequestsPage() {
                       setBusyPeer(peer);
                       setError(null);
                       void LinkService.declineMessageRequest(peer)
-                        .then(() => load())
+                        .then(async () => {
+                          await load();
+                          void emit("app.request.decision", {
+                            kind: row.invitations.length > 0 ? "group-invite" : "dm",
+                            decision: "decline",
+                          });
+                        })
                         .catch((err) => {
                           setError(err instanceof Error ? err.message : "Decline failed");
+                          emitCoarseError("requests", err);
                           return load();
                         })
                         .finally(() => setBusyPeer(null));

@@ -218,6 +218,24 @@ try {
 }
 
 try {
+  const schemaSrc = readFileSync(path.join(ROOT, "src/services/vibeware/schema.ts"), "utf8");
+  assert(
+    schemaSrc.includes('from "../../../scripts/vibeware-evidence.mjs"'),
+    "schema.ts must re-export scripts/vibeware-evidence.mjs",
+  );
+  assert(
+    !/function validateEvidencePayload/.test(schemaSrc),
+    "schema.ts must not define its own validateEvidencePayload",
+  );
+  console.log("ok schema.ts re-exports the P0 validator");
+} catch (error) {
+  failed += 1;
+  console.error(
+    `FAIL schema.ts re-export: ${error instanceof Error ? error.message : error}`,
+  );
+}
+
+try {
   const planted = validateEvidencePayload("app.thread.send_settled", {
     channel: "dm",
     outcome: "sent",

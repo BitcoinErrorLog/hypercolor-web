@@ -104,7 +104,7 @@ export const EVIDENCE_FIELD_VALUES = {
   },
 };
 
-const BANNED_KEY_RE =
+export const BANNED_KEY_RE =
   /(body|rawjson|raw_json|recovery|token|pubky|secret|payment|attachment|seed|credential|password|url)/i;
 
 function isPlainObject(value) {
@@ -166,10 +166,14 @@ export function validateEvidencePayload(eventType, payload) {
   } catch {
     return { ok: false, reason: "unserializable" };
   }
-  if (Buffer.byteLength(encoded, "utf8") > MAX_PAYLOAD_BYTES) {
+  if (utf8ByteLength(encoded) > MAX_PAYLOAD_BYTES) {
     return { ok: false, reason: "payload_too_large" };
   }
   return { ok: true };
+}
+
+function utf8ByteLength(text) {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 export function deepEqual(a, b) {

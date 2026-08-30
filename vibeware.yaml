@@ -113,6 +113,7 @@ forbidden_paths:
   - src/services/group/GroupService.ts
   - src/services/StorageService.ts
   - src/stores/inboxStore.ts
+  - src/services/vibeware/**
 
 surfaces:
   - surface:
