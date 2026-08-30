@@ -4,8 +4,9 @@
 // the bound messaging API surface, receiver Noise key generation, a full Noise
 // XX handshake between two in-memory parties with converging link ids,
 // encrypted roundtrips, AEAD tamper rejection, the 1000-byte message limit,
-// pubkyauth URL shape for /pub/paykit/:rw, and resumeSessionFromCookie
-// declaration + invalid-pubky rejection. Does not hit a homeserver.
+// pubkyauth URL shape for /pub/paykit/:rw, resumeSessionFromCookie
+// declaration + invalid-pubky rejection, and d.ts presence of the SB2 /
+// X25519 / public-storage / session exports. Does not hit a homeserver.
 
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -46,6 +47,12 @@ const requiredSnippets = [
   "startAuthFlow(capabilities: string): AuthFlowHandle;",
   "static testnet(): PubkyClient;",
   "resumeSessionFromCookie(pubky: string): Promise<any>;",
+  "putPublic(path: string, body: Uint8Array): Promise<any>;",
+  "export function publicGet(",
+  "export function signOutSession(",
+  "export function x25519GenerateKeypair(): object;",
+  "export function sb2VerifySignature(",
+  "export function sb2Decrypt(",
   "export class AuthFlowHandle",
   "authorizationUrl(): string;",
   "awaitApproval(): Promise<any>;",
