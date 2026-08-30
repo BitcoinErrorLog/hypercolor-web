@@ -1,4 +1,5 @@
-const CACHE = "hypercolor-shell-v1";
+// v2: purge entries written by the v1 worker, which cached any same-origin GET.
+const CACHE = "hypercolor-shell-v2";
 const SHELL = [
   "/",
   "/chats",
