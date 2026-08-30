@@ -183,6 +183,14 @@ receive the authorization URL string to render the QR.
 Reason: Ring onboarding needs a scannable grant. Clipboard, `href`, and
 the raw URL paragraph live in forbidden `src/components/auth-url-actions.tsx`.
 
+### Shared sandbox caches (F7)
+
+Sandbox worktrees symlink the main `node_modules` and `.cache`; validation writes may mutate those caches, but product source is not shared.
+
+### Kept sandbox worktrees (F8)
+
+`--keep` is opt-in and not product; kept dirs are named `vibeware-sandbox-KEEP-…` and must not be treated as the main tree.
+
 ## Path safety
 
 `normalizePath` rejects `..` / `.` segments, a leading `/`, and backslash

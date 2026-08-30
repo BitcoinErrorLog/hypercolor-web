@@ -21,7 +21,10 @@ import {
   containsPubkyId,
   loadProblem,
   parseArgs,
+  playwrightBrowsersAvailable,
   resolveScope,
+  resolveWorktreePath,
+  runPathPolicy,
   scanDiffForDanger,
   stripSecretsFromEnv,
 } from "./vibeware-sandbox.mjs";
@@ -35,6 +38,25 @@ function tempDir(prefix) {
   const dir = mkdtempSync(path.join(tmpdir(), prefix));
   temps.push(dir);
   return dir;
+}
+
+function writeTmpProblem(targetFile, find, replace) {
+  const dir = tempDir("vibeware-problem-tmp-");
+  const file = path.join(dir, "problem.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      status: "qualified",
+      surface: "hc-chats-ui",
+      evidence_refs: ["ev_tmp_0001"],
+      problem: {
+        target_file: targetFile,
+        find,
+        replace,
+      },
+    }),
+  );
+  return file;
 }
 
 function committedFile(rel) {
@@ -126,6 +148,26 @@ describe("vibeware sandbox patches and policy", () => {
     expect(readFileSync(path.join(tree, SESSION_FILE), "utf8")).toContain(SESSION_PROBE_EXPORT);
   });
 
+  it("rejects a traversing target_file before any write", () => {
+    const tree = tempDir("vibeware-trav-");
+    const beforeSession = readFileSync(path.join(ROOT, SESSION_FILE), "utf8");
+    const beforeChats = readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8");
+    expect(() =>
+      applyFixturePatch(tree, {
+        problem: {
+          target_file: "../../src/services/link/session.ts",
+          find: 'const DB_NAME = "hypercolor-session";',
+          replace: 'const DB_NAME = "vibeware-pwned-session";',
+        },
+      }),
+    ).toThrow(/unsafe path|dot-segment|escapes worktree/);
+    expect(() =>
+      resolveWorktreePath(tree, "../../src/services/link/session.ts"),
+    ).toThrow(/unsafe path|dot-segment|escapes worktree/);
+    expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
+    expect(readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8")).toBe(beforeChats);
+  });
+
   it("accepts chats-page-only and rejects session.ts against this repo manifest", () => {
     const manifest = loadManifestFile(path.join(ROOT, "vibeware.yaml"));
     const problem = loadProblem(FIXTURE);
@@ -154,11 +196,68 @@ describe("vibeware sandbox safety scans", () => {
       STAGING_INVITE_PASSWORD: "secret",
       NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN: "secret",
       HYPERCOLOR_READ_TOKEN: "secret",
+      GITHUB_PRIVATE_KEY: "secret",
+      GH_ENTERPRISE_TOKEN: "secret",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      NPM_TOKEN: "secret",
+      NODE_AUTH_TOKEN: "secret",
+      NODE_ENV: "test",
+      NODE_OPTIONS: "--max-old-space-size=512",
+      NODE_PATH: "/usr/lib/node",
+      npm_config_user_agent: "npm/10",
+      npm_lifecycle_event: "test",
+      "npm_config_//registry.npmjs.org/:_authToken": "secret",
     });
     for (const key of SANDBOX_STRIP_ENV) {
       expect(cleaned[key]).toBeUndefined();
     }
+    expect(cleaned.GITHUB_PRIVATE_KEY).toBeUndefined();
+    expect(cleaned.GH_ENTERPRISE_TOKEN).toBeUndefined();
+    expect(cleaned.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(cleaned.NPM_TOKEN).toBeUndefined();
+    expect(cleaned["npm_config_//registry.npmjs.org/:_authToken"]).toBeUndefined();
     expect(cleaned.PATH).toBe("/usr/bin");
+    expect(cleaned.NODE_ENV).toBe("test");
+    expect(cleaned.NODE_OPTIONS).toBe("--max-old-space-size=512");
+    expect(cleaned.NODE_PATH).toBe("/usr/lib/node");
+    expect(cleaned.npm_config_user_agent).toBe("npm/10");
+    expect(cleaned.npm_lifecycle_event).toBe("test");
+  });
+
+  it("does not expose stripped secrets to a child command", () => {
+    const env = stripSecretsFromEnv({
+      PATH: process.env.PATH,
+      NODE_ENV: "test",
+      GITHUB_PRIVATE_KEY: "secret",
+      GH_ENTERPRISE_TOKEN: "secret",
+      AWS_SECRET_ACCESS_KEY: "secret",
+      NPM_TOKEN: "secret",
+    });
+    const result = spawnSync(
+      process.execPath,
+      [
+        "-e",
+        [
+          "if (process.env.GITHUB_PRIVATE_KEY) process.exit(2);",
+          "if (process.env.GH_ENTERPRISE_TOKEN) process.exit(3);",
+          "if (process.env.AWS_SECRET_ACCESS_KEY) process.exit(4);",
+          "if (process.env.NPM_TOKEN) process.exit(5);",
+          "if (process.env.NODE_ENV !== 'test') process.exit(6);",
+          "if (!process.env.PATH) process.exit(7);",
+        ].join(""),
+      ],
+      { encoding: "utf8", env },
+    );
+    expect(result.status).toBe(0);
+  });
+
+  it("passes the stripped env into the playwright version probe", () => {
+    const env = stripSecretsFromEnv({
+      PATH: process.env.PATH,
+      NODE_ENV: "test",
+      GITHUB_PRIVATE_KEY: "must-not-leak",
+    });
+    expect(typeof playwrightBrowsersAvailable(env)).toBe("boolean");
   });
 
   it("flags new dangerouslySetInnerHTML or eval( on added diff lines only", () => {
@@ -168,6 +267,18 @@ describe("vibeware sandbox safety scans", () => {
     expect(scanDiffForDanger("+ eval(user)\n")).toEqual(["eval("]);
     expect(scanDiffForDanger("- dangerouslySetInnerHTML\n- eval(old)\n+ const ok = 1\n")).toEqual([]);
     expect(addedLines("+++ a\n+hello\n-old\n").join("")).toBe("+hello");
+  });
+
+  it("flags injected onError= and <script on added diff lines", () => {
+    expect(scanDiffForDanger("+ <img src=x onError={evil}\n")).toContain("on*=");
+    expect(scanDiffForDanger("+ const x = <script>alert(1)</script>\n")).toContain("<script");
+    expect(scanDiffForDanger("+ href={javascript:alert(1)}\n")).toContain("javascript:");
+    expect(scanDiffForDanger("+ const f = new Function('x')\n")).toContain("new Function");
+    expect(scanDiffForDanger("+ node.innerHTML = html\n")).toContain("innerHTML");
+    expect(scanDiffForDanger("+ node.outerHTML = html\n")).toContain("outerHTML");
+    expect(scanDiffForDanger("+ document.write(html)\n")).toContain("document.write");
+    expect(scanDiffForDanger("+ <iframe srcDoc={html}\n")).toContain("srcDoc");
+    expect(scanDiffForDanger("- <script>old</script>\n- onError=old\n+ const ok = 1\n")).toEqual([]);
   });
 
   it("treats telemetry allowlist, vibeware.yaml, and CI as boundary files", () => {
@@ -181,6 +292,25 @@ describe("vibeware sandbox safety scans", () => {
     ]);
   });
 
+  it("grades path policy from the repo-root manifest, not a worktree rewrite", () => {
+    const worktree = tempDir("vibeware-manifest-");
+    writeFileSync(
+      path.join(worktree, "vibeware.yaml"),
+      "surfaces: []\nforbidden_paths: []\n",
+    );
+    const policy = runPathPolicy({
+      repoRoot: ROOT,
+      worktree,
+      surface: "hc-chats-ui",
+      files: [SESSION_FILE],
+      env: stripSecretsFromEnv(process.env),
+    });
+    expect(policy.ok).toBe(false);
+    expect(
+      policy.rejected.some((item) => item.path === SESSION_FILE && item.reason === "forbidden"),
+    ).toBe(true);
+  });
+
   it("refuses candidate artifacts that contain a pubky id", () => {
     const pubky = "ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u";
     expect(containsPubkyId(`x ${pubky} y`)).toBe(true);
@@ -188,7 +318,7 @@ describe("vibeware sandbox safety scans", () => {
     expect(() =>
       assertArtifactSafe("candidate.json", buildCandidate({
         surface: "hc-chats-ui",
-        baseSha: "abc",
+        baseSha: "581447d05cf956ba8c9a7028aad94c28b08eb6f7",
         scope: { writable_paths: [EMPTY_STATE_FILE], forbidden_paths: [SESSION_FILE], source: "vibeware.yaml" },
         files: [EMPTY_STATE_FILE],
         explanation: "ok",
@@ -201,6 +331,21 @@ describe("vibeware sandbox safety scans", () => {
         keep: false,
       })),
     ).not.toThrow();
+  });
+
+  it("rejects a planted credentialed URL in an excerpt", () => {
+    expect(() =>
+      assertArtifactSafe("excerpt", "npm failed at https://user:pass@host/v1/push"),
+    ).toThrow(/credentialed URLs/);
+    expect(() =>
+      assertArtifactSafe("excerpt", "key=AKIAIOSFODNN7EXAMPLE"),
+    ).toThrow(/AWS-style access keys/);
+    expect(() =>
+      assertArtifactSafe(
+        "excerpt",
+        "seed=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      ),
+    ).toThrow(/long hex secrets/);
   });
 });
 
@@ -281,6 +426,83 @@ describe("vibeware sandbox CLI dry-run", () => {
         candidate.rejected.some((item) => item.path === SESSION_FILE && item.reason === "forbidden"),
       ).toBe(true);
       expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
+    "rejects a traversing target_file and does not touch main",
+    () => {
+      const out = tempDir("vibeware-out-trav-");
+      const beforeSession = readFileSync(path.join(ROOT, SESSION_FILE), "utf8");
+      const beforeChats = readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8");
+      const problem = writeTmpProblem(
+        "../../src/services/link/session.ts",
+        'const DB_NAME = "hypercolor-session";',
+        'const DB_NAME = "vibeware-pwned-session";',
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          SANDBOX,
+          "--surface",
+          "hc-chats-ui",
+          "--problem",
+          problem,
+          "--out",
+          out,
+          "--skip-validate",
+        ],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/unsafe path|dot-segment|escapes worktree/);
+      expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
+      expect(readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8")).toBe(beforeChats);
+      expect(beforeSession).toContain('const DB_NAME = "hypercolor-session";');
+      expect(beforeSession).not.toContain("vibeware-pwned-session");
+      const leftover = spawnSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
+      expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
+    "fails the run when the fixture injects onError= or <script",
+    () => {
+      const out = tempDir("vibeware-out-xss-");
+      const beforeChats = readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8");
+      const problem = writeTmpProblem(
+        EMPTY_STATE_FILE,
+        EMPTY_STATE_FIND,
+        'Start a chat <script>x</script> onError={evil}',
+      );
+      const result = spawnSync(
+        process.execPath,
+        [
+          SANDBOX,
+          "--surface",
+          "hc-chats-ui",
+          "--problem",
+          problem,
+          "--out",
+          out,
+          "--skip-validate",
+        ],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/<script|on\*=/);
+      expect(readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8")).toBe(beforeChats);
     },
     30_000,
   );

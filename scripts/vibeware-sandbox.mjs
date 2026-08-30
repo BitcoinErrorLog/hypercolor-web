@@ -29,6 +29,7 @@ import { fileURLToPath } from "node:url";
 import {
   evaluateChangedFiles,
   loadManifestFile,
+  normalizePath,
 } from "./check-vibeware-path-policy.mjs";
 
 export const EMPTY_STATE_FILE = "src/components/chats-page.tsx";
@@ -62,7 +63,49 @@ export const SANDBOX_STRIP_ENV = [
   "STAGING_INVITE_PASSWORD",
   "HYPERCOLOR_READ_TOKEN",
   "NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN",
+  "NODE_AUTH_TOKEN",
+  "NPM_TOKEN",
 ];
+
+export const SANDBOX_STRIP_PREFIXES = [
+  "GITHUB_",
+  "GH_",
+  "VERCEL_",
+  "RAILWAY_",
+  "STAGING_",
+  "AWS_",
+  "NPM_",
+  "NODE_AUTH",
+];
+
+export const SANDBOX_ENV_ALLOWLIST = [
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+  "npm_config_user_agent",
+  "npm_lifecycle_event",
+];
+
+const SANDBOX_STRIP_SUFFIX_RE = /_TOKEN$|_SECRET$|_KEY$|_PASSWORD$/i;
+const NPM_CONFIG_AUTH_TOKEN_RE = /^npm_config_.*authToken/i;
+
+export const DIFF_DANGER_PATTERNS = [
+  ["dangerouslySetInnerHTML", /dangerouslySetInnerHTML/],
+  ["eval(", /(^|[^\w.$])eval\s*\(/],
+  ["<script", /<script/i],
+  ["javascript:", /javascript:/i],
+  ["on*=", /\bon[A-Z]\w*=/],
+  ["new Function", /new\s+Function\b/],
+  ["innerHTML", /\binnerHTML\b/],
+  ["outerHTML", /\bouterHTML\b/],
+  ["document.write", /document\.write/],
+  ["srcDoc", /srcDoc/],
+];
+
+const ARTIFACT_CREDENTIAL_URL_RE = /:\/\/[^/\s:]+:[^/\s@]+@/;
+const ARTIFACT_AWS_KEY_RE = /\bAKIA[0-9A-Z]{16}\b/;
+const ARTIFACT_LONG_HEX_RE = /\b[0-9a-fA-F]{64,}\b/;
+const ARTIFACT_RECOVERY_PHRASE_RE = /\b(?:[a-z]{3,8}\s+){11,}[a-z]{3,8}\b/;
 
 const PUBKY_ZBASE32 = /(?:^|[^a-z1-9])[ybndrfg8ejkmcpqxot1uwisza345h769]{52}(?:[^a-z1-9]|$)/i;
 const EVIDENCE_REF_RE = /^ev_[a-z0-9_]+$/;
@@ -132,13 +175,29 @@ export function parseArgs(argv) {
   return out;
 }
 
+export function isSandboxStrippedEnvKey(key) {
+  if (SANDBOX_ENV_ALLOWLIST.includes(key)) {
+    return false;
+  }
+  if (SANDBOX_STRIP_ENV.includes(key)) {
+    return true;
+  }
+  if (SANDBOX_STRIP_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+    return true;
+  }
+  if (SANDBOX_STRIP_SUFFIX_RE.test(key)) {
+    return true;
+  }
+  if (NPM_CONFIG_AUTH_TOKEN_RE.test(key)) {
+    return true;
+  }
+  return false;
+}
+
 export function stripSecretsFromEnv(env = process.env) {
   const next = { ...env };
-  for (const key of SANDBOX_STRIP_ENV) {
-    delete next[key];
-  }
   for (const key of Object.keys(next)) {
-    if (/^(VERCEL_|RAILWAY_|STAGING_INVITE)/.test(key)) {
+    if (isSandboxStrippedEnvKey(key)) {
       delete next[key];
     }
   }
@@ -158,6 +217,18 @@ export function assertArtifactSafe(label, text) {
   }
   if (/"body"\s*:|"message_body"\s*:|"raw_json"\s*:/.test(text)) {
     throw new Error(`${label} must not contain message bodies`);
+  }
+  if (ARTIFACT_CREDENTIAL_URL_RE.test(text)) {
+    throw new Error(`${label} must not contain credentialed URLs`);
+  }
+  if (ARTIFACT_AWS_KEY_RE.test(text)) {
+    throw new Error(`${label} must not contain AWS-style access keys`);
+  }
+  if (ARTIFACT_LONG_HEX_RE.test(text)) {
+    throw new Error(`${label} must not contain long hex secrets`);
+  }
+  if (ARTIFACT_RECOVERY_PHRASE_RE.test(text)) {
+    throw new Error(`${label} must not contain recovery-phrase-like text`);
   }
 }
 
@@ -251,25 +322,36 @@ export function resolveSha(repoRoot, rev, env) {
   return runGit(repoRoot, ["rev-parse", "--verify", rev], env).stdout.trim();
 }
 
+export function resolveWorktreePath(worktree, rel) {
+  const normalized = normalizePath(rel);
+  const root = path.resolve(worktree);
+  const full = path.resolve(root, normalized);
+  const prefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!full.startsWith(prefix)) {
+    throw new Error(`path escapes worktree: ${rel}`);
+  }
+  return { rel: normalized, full };
+}
+
 export function applyFixturePatch(worktree, problem) {
   const rel = problem.problem?.target_file || EMPTY_STATE_FILE;
   const find = problem.problem?.find || EMPTY_STATE_FIND;
   const replace = problem.problem?.replace || EMPTY_STATE_REPLACE;
-  const full = path.join(worktree, rel);
+  const { rel: safeRel, full } = resolveWorktreePath(worktree, rel);
   if (!existsSync(full)) {
-    throw new Error(`fixture target missing: ${rel}`);
+    throw new Error(`fixture target missing: ${safeRel}`);
   }
   const text = readFileSync(full, "utf8");
   const count = text.split(find).length - 1;
   if (count !== 1) {
-    throw new Error(`fixture find must match exactly once in ${rel}, got ${count}`);
+    throw new Error(`fixture find must match exactly once in ${safeRel}, got ${count}`);
   }
   writeFileSync(full, text.replace(find, replace));
-  return rel;
+  return safeRel;
 }
 
 export function applySessionProbe(worktree) {
-  const full = path.join(worktree, SESSION_FILE);
+  const { full } = resolveWorktreePath(worktree, SESSION_FILE);
   if (!existsSync(full)) {
     throw new Error(`probe target missing: ${SESSION_FILE}`);
   }
@@ -325,11 +407,10 @@ export function addedLines(diff) {
 export function scanDiffForDanger(diff) {
   const findings = [];
   const added = addedLines(diff).join("\n");
-  if (added.includes("dangerouslySetInnerHTML")) {
-    findings.push("dangerouslySetInnerHTML");
-  }
-  if (/(^|[^\w.$])eval\s*\(/.test(added)) {
-    findings.push("eval(");
+  for (const [label, pattern] of DIFF_DANGER_PATTERNS) {
+    if (pattern.test(added)) {
+      findings.push(label);
+    }
   }
   return findings;
 }
@@ -353,7 +434,7 @@ function writeChangedList(files) {
 export function runPathPolicy({ repoRoot, worktree, surface, files, env }) {
   const listPath = writeChangedList(files);
   const policy = path.join(repoRoot, "scripts/check-vibeware-path-policy.mjs");
-  const manifest = path.join(worktree, "vibeware.yaml");
+  const manifest = path.join(repoRoot, "vibeware.yaml");
   const result = spawnSync(process.execPath, [
     policy,
     "--manifest",
@@ -391,6 +472,7 @@ function ensureLink(from, to) {
 }
 
 function prepareWorktreeLinks(repoRoot, worktree) {
+  // F7: shared node_modules/.cache symlinks mean validation writes may mutate those caches; product source is not shared.
   const nodeModules = path.join(repoRoot, "node_modules");
   if (existsSync(nodeModules)) {
     ensureLink(nodeModules, path.join(worktree, "node_modules"));
@@ -413,13 +495,14 @@ function prepareWorktreeLinks(repoRoot, worktree) {
   );
 }
 
-export function playwrightBrowsersAvailable() {
+export function playwrightBrowsersAvailable(env) {
   const cache = path.join(homedir(), "Library/Caches/ms-playwright");
   if (!existsSync(cache)) return false;
   try {
     const result = spawnSync("npx", ["playwright", "--version"], {
       encoding: "utf8",
       timeout: 15_000,
+      env,
     });
     return result.status === 0;
   } catch {
@@ -552,7 +635,7 @@ async function runValidations({ worktree, env, diff, files }) {
   };
   const danger = scanDiffForDanger(diff);
   const boundary = boundaryViolations(files);
-  const browsers = playwrightBrowsersAvailable();
+  const browsers = playwrightBrowsersAvailable(env);
   let e2e;
   if (browsers) {
     e2e = await runUiSmoke(worktree, env);
@@ -675,8 +758,17 @@ export async function runSandbox(args, io = process) {
   const scope = resolveScope(manifest, surface, problem);
   const baseSha = resolveSha(repoRoot, args.baseSha, env);
   const sandboxId = randomBytes(6).toString("hex");
-  const worktree = path.join(tmpdir(), `vibeware-sandbox-${sandboxId}`);
+  // F8: --keep is opt-in and not product; kept dirs are named vibeware-sandbox-KEEP-… .
+  const worktreeName = args.keep
+    ? `vibeware-sandbox-KEEP-${sandboxId}`
+    : `vibeware-sandbox-${sandboxId}`;
+  const worktree = path.join(tmpdir(), worktreeName);
   mkdirSync(outDir, { recursive: true });
+  if (args.keep) {
+    io.stderr.write(
+      "warning: --keep is opt-in; the kept worktree is not product source\n",
+    );
+  }
 
   let exitCode = 1;
   try {
