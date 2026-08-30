@@ -428,10 +428,11 @@ export function playwrightBrowsersAvailable() {
 }
 
 function runNpm(worktree, script, env) {
+  const childEnv = script === "test" ? { ...env, VIBEWARE_SANDBOX_INNER: "1" } : env;
   const result = spawnSync("npm", ["run", script], {
     cwd: worktree,
     encoding: "utf8",
-    env,
+    env: childEnv,
   });
   return {
     ok: result.status === 0,

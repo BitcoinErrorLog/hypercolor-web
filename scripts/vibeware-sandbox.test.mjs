@@ -37,6 +37,17 @@ function tempDir(prefix) {
   return dir;
 }
 
+function committedFile(rel) {
+  const result = spawnSync("git", ["show", `HEAD:${rel}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  if (result.status !== 0) {
+    throw new Error(`git show HEAD:${rel} failed: ${(result.stderr || "").trim()}`);
+  }
+  return result.stdout;
+}
+
 afterEach(() => {
   while (temps.length) {
     const dir = temps.pop();
@@ -95,8 +106,7 @@ describe("vibeware sandbox patches and policy", () => {
     const tree = tempDir("vibeware-patch-");
     const relDir = path.join(tree, "src/components");
     mkdirSync(relDir, { recursive: true });
-    const src = readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8");
-    writeFileSync(path.join(tree, EMPTY_STATE_FILE), src);
+    writeFileSync(path.join(tree, EMPTY_STATE_FILE), committedFile(EMPTY_STATE_FILE));
     const problem = loadProblem(FIXTURE);
     expect(applyFixturePatch(tree, problem)).toBe(EMPTY_STATE_FILE);
     const patched = readFileSync(path.join(tree, EMPTY_STATE_FILE), "utf8");
@@ -195,72 +205,83 @@ describe("vibeware sandbox safety scans", () => {
 });
 
 describe("vibeware sandbox CLI dry-run", () => {
-  it("writes an in-scope candidate and removes the worktree", () => {
-    const out = tempDir("vibeware-out-ok-");
-    const result = spawnSync(
-      process.execPath,
-      [
-        SANDBOX,
-        "--surface",
-        "hc-chats-ui",
-        "--problem",
-        "fixtures/vibeware/empty-state-problem.json",
-        "--out",
-        out,
-        "--skip-validate",
-      ],
-      {
+  it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
+    "writes an in-scope candidate and removes the worktree",
+    () => {
+      const out = tempDir("vibeware-out-ok-");
+      const beforeChats = readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8");
+      const result = spawnSync(
+        process.execPath,
+        [
+          SANDBOX,
+          "--surface",
+          "hc-chats-ui",
+          "--problem",
+          "fixtures/vibeware/empty-state-problem.json",
+          "--out",
+          out,
+          "--skip-validate",
+        ],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const candidatePath = path.join(out, "candidate.json");
+      expect(existsSync(candidatePath)).toBe(true);
+      const candidate = JSON.parse(readFileSync(candidatePath, "utf8"));
+      expect(candidate.surface).toBe("hc-chats-ui");
+      expect(candidate.files).toEqual([EMPTY_STATE_FILE]);
+      expect(candidate.mode).toBe("in-scope");
+      expect(candidate.worktree).toBeNull();
+      const diff = readFileSync(path.join(out, "candidate.diff"), "utf8");
+      expect(diff).toContain(EMPTY_STATE_REPLACE);
+      expect(diff).not.toContain(SESSION_FILE);
+      expect(readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8")).toBe(beforeChats);
+      expect(committedFile(EMPTY_STATE_FILE)).toContain(EMPTY_STATE_FIND);
+      const leftover = spawnSync("git", ["worktree", "list", "--porcelain"], {
         cwd: ROOT,
         encoding: "utf8",
-      },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    const candidatePath = path.join(out, "candidate.json");
-    expect(existsSync(candidatePath)).toBe(true);
-    const candidate = JSON.parse(readFileSync(candidatePath, "utf8"));
-    expect(candidate.surface).toBe("hc-chats-ui");
-    expect(candidate.files).toEqual([EMPTY_STATE_FILE]);
-    expect(candidate.mode).toBe("in-scope");
-    expect(candidate.worktree).toBeNull();
-    const diff = readFileSync(path.join(out, "candidate.diff"), "utf8");
-    expect(diff).toContain(EMPTY_STATE_REPLACE);
-    expect(diff).not.toContain(SESSION_FILE);
-    expect(readFileSync(path.join(ROOT, EMPTY_STATE_FILE), "utf8")).toContain(EMPTY_STATE_FIND);
-    const leftover = spawnSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: ROOT,
-      encoding: "utf8",
-    });
-    expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
-  }, 30_000);
+      });
+      expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
+    },
+    30_000,
+  );
 
-  it("rejects a session.ts probe", () => {
-    const out = tempDir("vibeware-out-bad-");
-    const result = spawnSync(
-      process.execPath,
-      [
-        SANDBOX,
-        "--surface",
-        "hc-chats-ui",
-        "--problem",
-        "fixtures/vibeware/empty-state-problem.json",
-        "--out",
-        out,
-        "--probe-session",
-        "--skip-validate",
-      ],
-      {
-        cwd: ROOT,
-        encoding: "utf8",
-      },
-    );
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/session\.ts\tforbidden/);
-    const candidate = JSON.parse(readFileSync(path.join(out, "candidate.json"), "utf8"));
-    expect(candidate.mode).toBe("probe-session");
-    expect(candidate.files).toEqual(expect.arrayContaining([EMPTY_STATE_FILE, SESSION_FILE]));
-    expect(candidate.rejected.some((item) => item.path === SESSION_FILE && item.reason === "forbidden")).toBe(
-      true,
-    );
-    expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).not.toContain("VIBEWARE_SANDBOX_PROBE");
-  }, 30_000);
+  it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
+    "rejects a session.ts probe",
+    () => {
+      const out = tempDir("vibeware-out-bad-");
+      const beforeSession = readFileSync(path.join(ROOT, SESSION_FILE), "utf8");
+      const result = spawnSync(
+        process.execPath,
+        [
+          SANDBOX,
+          "--surface",
+          "hc-chats-ui",
+          "--problem",
+          "fixtures/vibeware/empty-state-problem.json",
+          "--out",
+          out,
+          "--probe-session",
+          "--skip-validate",
+        ],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toMatch(/session\.ts\tforbidden/);
+      const candidate = JSON.parse(readFileSync(path.join(out, "candidate.json"), "utf8"));
+      expect(candidate.mode).toBe("probe-session");
+      expect(candidate.files).toEqual(expect.arrayContaining([EMPTY_STATE_FILE, SESSION_FILE]));
+      expect(
+        candidate.rejected.some((item) => item.path === SESSION_FILE && item.reason === "forbidden"),
+      ).toBe(true);
+      expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
+    },
+    30_000,
+  );
 });
