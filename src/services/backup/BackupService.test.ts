@@ -6,6 +6,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setDbForTests } from "../../db";
 import { openMemoryDb } from "../../db/__tests__/betterSqliteAdapter";
 import { runMigrations } from "../../db/migrations";
+import { CHAT_ATTACHMENT_KIND } from "../../types/attachment";
 import { CHAT_MESSAGE_KIND } from "../../types/link";
 import { KeyStore } from "../KeyStore";
 import { StorageService } from "../StorageService";
@@ -140,6 +141,16 @@ describe("encryptOwnerBackup / decryptOwnerBackup", () => {
 
     const restored = decryptOwnerBackup(blob, `  ${recoveryCode}  `, OWNER);
     expect(restored).toEqual(snapshot);
+  });
+
+  it("rejects a blob whose algorithm is not XChaCha20Poly1305", () => {
+    const blob = JSON.stringify({
+      version: 1,
+      algorithm: "AES-GCM",
+      nonceB64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      ciphertextB64: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    expect(() => parseBackupBlob(blob)).toThrow("Unsupported backup algorithm");
   });
 
   it("fails closed on the wrong recovery code", () => {
@@ -322,5 +333,44 @@ describe("BackupService", () => {
     );
     expect(msgs.map((m) => m.body)).toEqual(["hello from owner"]);
     expect(await StorageService.getLinkReadCursor(OWNER, `dm:${PEER}`)).toBe(20);
+  });
+
+  it("tombs corrupt key-bearing attachment rawJson on export collect", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    const liveKey = "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWE";
+    const corrupt = JSON.stringify({
+      kind: CHAT_ATTACHMENT_KIND,
+      key: liveKey,
+      nonce: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    db.executeSync(
+      `INSERT INTO link_messages
+        (owner_pubky, sender_pubky, kind, event_id, conversation_id, peer_pubky,
+         direction, raw_json, body, sent_at, received_at, delivery_state,
+         created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'received', ?, 'Attachment', 20, 21, 'delivered', 1, 1)`,
+      [
+        OWNER,
+        PEER,
+        CHAT_ATTACHMENT_KIND,
+        EVENT,
+        `dm:${PEER}`,
+        PEER,
+        corrupt,
+      ],
+    );
+
+    const result = await BackupService.exportBackup();
+    const stored = uploaded.get(result.path);
+    expect(stored).toBeTruthy();
+    const snapshot = decryptOwnerBackup(stored!, result.recoveryCode, OWNER);
+    expect(JSON.stringify(snapshot)).not.toContain(liveKey);
+    expect(snapshot.linkMessages).toHaveLength(1);
+    expect(snapshot.linkMessages[0]!.rawJson).toBe(
+      JSON.stringify({ kind: CHAT_ATTACHMENT_KIND }),
+    );
   });
 });

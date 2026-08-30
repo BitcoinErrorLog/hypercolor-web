@@ -171,6 +171,9 @@ export function parseBackupBlob(raw: string): OwnerBackupBlob {
   if (rec.version !== 1) {
     throw new Error(`Unsupported backup blob version: ${String(rec.version)}`);
   }
+  if (rec.algorithm !== BACKUP_AEAD_ALGORITHM) {
+    throw new Error("Unsupported backup algorithm");
+  }
   if (typeof rec.ciphertextB64 !== "string" || typeof rec.nonceB64 !== "string") {
     throw new Error("Backup blob is missing ciphertext");
   }

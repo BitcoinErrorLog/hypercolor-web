@@ -2350,9 +2350,20 @@ function conversationPreview(kind: string, body: string): string {
   return body;
 }
 
+/**
+ * Written when an attachment `raw_json` cannot be decoded into a redacted
+ * envelope. `redactAttachmentRawJson` returns the original string on
+ * decode failure, which would otherwise persist live-looking key material.
+ */
+const ATTACHMENT_RAW_TOMBSTONE = JSON.stringify({ kind: CHAT_ATTACHMENT_KIND });
+
 function persistRawJson(kind: string | null | undefined, rawJson: string): string {
   if (kind === CHAT_ATTACHMENT_KIND || peekEnvelopeKind(rawJson) === CHAT_ATTACHMENT_KIND) {
-    return redactAttachmentRawJson(rawJson);
+    const redacted = redactAttachmentRawJson(rawJson);
+    if (decodePersistedAttachmentEnvelope(redacted)) {
+      return redacted;
+    }
+    return ATTACHMENT_RAW_TOMBSTONE;
   }
   return rawJson;
 }
