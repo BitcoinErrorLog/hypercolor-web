@@ -89,6 +89,20 @@ required check never reports and merge is blocked **once that GitHub
 setting exists**. This is load-bearing and unverifiable from the tree.
 Do not use `pull_request_target`.
 
+### One-hop import seams (F18r)
+
+Kimi P0 F16 re-audit (ship) left a residual: the writable-import scanner
+is still one hop. A writable file can import a non-forbidden module
+(`NexusClient`, `http-relay`, `contactStore`, or a computed specifier)
+that itself reaches send/session. That is not a self-grade of the
+evaluator.
+
+Waive for v1: default-deny writable paths, explicit forbids on
+`useInbox` / `useChannel` / `useSignOut` / `addManualContact` /
+`GroupService` / `StorageService` / `inboxStore`, plus `require()` and
+comment-inside-`import()` matching. Transitive scan is a later
+hardening, not a P0 blocker.
+
 ### Message body and draft display (F4)
 
 `src/components/message-bubble.tsx` and `src/components/composer.tsx` may
