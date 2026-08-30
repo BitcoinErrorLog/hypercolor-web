@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout hypercolor-web
+        uses: actions/checkout@v4
+
+      - name: Checkout Hypercolor wire pin
+        uses: actions/checkout@v4
+        with:
+          repository: BitcoinErrorLog/hypercolor
+          ref: c7157aaa1b338dd1d8545e82f639007cba945631
+          path: .cache/hypercolor-pin
+          token: ${{ secrets.HYPERCOLOR_READ_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: paykit-wasm smoke
+        run: node scripts/paykit-wasm-smoke.mjs
+
+      - name: Wire-contract drift
+        env:
+          HYPERCOLOR_REPO: ${{ github.workspace }}/.cache/hypercolor-pin
+        run: bash scripts/check-wire-drift.sh

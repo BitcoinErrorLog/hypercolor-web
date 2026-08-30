@@ -1,0 +1,44 @@
+{
+  "name": "hypercolor-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "preview": "npx --yes serve out -p 3000",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
+    "check:wire": "bash scripts/check-wire-drift.sh"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.3.3",
+    "@scure/base": "^2.4.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "immer": "^11.1.18",
+    "light-bolt11-decoder": "^3.2.0",
+    "lucide-react": "^1.37.0",
+    "next": "16.3.3",
+    "paykit-wasm": "file:vendor/paykit-wasm",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "tailwind-merge": "^3.6.0",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.3",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  }
+}

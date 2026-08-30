@@ -1,0 +1,11 @@
+vendor/paykit-wasm
+src/db
+src/types
+src/flags
+src/services
+src/utils
+src/stores
+.next
+out
+node_modules
+package-lock.json

@@ -1,0 +1,107 @@
+# Hypercolor (web)
+
+Static web client for **Hypercolor Encrypted Links**. Same protocol as the
+mobile app at [`BitcoinErrorLog/hypercolor`](https://github.com/BitcoinErrorLog/hypercolor)
+commit `c7157aaa1b338dd1d8545e82f639007cba945631`. BLE mesh is omitted.
+
+This repo is a Next.js App Router **static export** (`output: 'export'`). The
+Pubky homeserver is the backend. There are no Route Handlers that need a Node
+server.
+
+## Auth (honest)
+
+- A **pubkyauth** session (Pubky Ring) authorizes **owner PUTs** on the
+  homeserver. The identity secret stays in the signer.
+- **AppCert is UKD-only.** It is not a homeserver credential and is not used
+  to authenticate writes here.
+
+Session wiring is a later wave. `/ring-callback` is a real client page that
+reads `window.location.search`.
+
+## Static routes and unknown IDs
+
+`output: 'export'` cannot emit HTML for conversation IDs that do not exist at
+build time. `/chats` and `/channels` are optional catch-alls
+(`app/chats/[[...conversationId]]`, `app/channels/[[...id]]`) with
+`generateStaticParams` returning the empty segment so `/chats` and `/channels`
+are pre-rendered.
+
+The client page then reads any extra path segment from
+`window.location.pathname`. On Vercel, `vercel.json` rewrites
+`/chats/:conversationId` → `/chats` and `/channels/:id` → `/channels` so a
+deep link serves that same static page. Other hosts need the same rewrite (or
+users stay on `/chats` until in-app navigation exists).
+
+Product routes shipped as titled pages (not fake inbox data):
+
+`/`, `/chats`, `/contacts`, `/requests`, `/channels`, `/enable`, `/profile`,
+`/settings`, `/ring-callback`.
+
+## COOP / COEP and SQLite (P1)
+
+paykit-wasm does **not** need SharedArrayBuffer. This app does **not** set
+COOP/COEP on the page — COEP breaks many CDNs.
+
+P1 will persist SQLite with **`opfs-sahpool` + Web Locks**, not the default
+sqlite OPFS VFS.
+
+## Wire-contract pin
+
+Copied files under `src/db`, `src/types`, `src/flags`, `src/services`,
+`src/utils`, and `src/stores` (the P0 list) must stay byte-identical to
+mobile Hypercolor at:
+
+`c7157aaa1b338dd1d8545e82f639007cba945631`
+
+except a 2-line header naming the source path and pin.
+
+`bash scripts/check-wire-drift.sh` diffs that list (header ignored) against
+the local checkout `/Users/johncarvalho/work/hypercolor` when its `HEAD`
+matches the pin, otherwise `git show <pin>:path`, otherwise a clone of
+`https://github.com/BitcoinErrorLog/hypercolor.git`.
+
+**Revisit trigger:** if this drift gate fails more than three times in a
+quarter, fold the web client into the Hypercolor monorepo instead of copying
+files.
+
+Do not copy RN/native modules (`src/db/index.ts`, KeyStore, file I/O, mesh,
+Ring auth service, etc.). P1 adds web executors.
+
+## paykit-wasm
+
+Vendored from `BitcoinErrorLog/paykit-rs-official` branch `feat/wasm-binding`
+at `132628c1622de4a76c1c52e0033aae225d087732` (includes
+`resumeSessionFromCookie`). See `vendor/paykit-wasm/PROVENANCE.md`.
+
+Load only through `src/lib/paykit-wasm.ts` (dynamic import). Never import WASM
+at module scope on the server.
+
+```bash
+node scripts/paykit-wasm-smoke.mjs
+```
+
+## Scripts
+
+```bash
+npm install
+npm run dev
+npm run typecheck
+npm run lint
+npm test
+npm run build          # next build --webpack; writes out/
+npm run preview        # serve out/ on :3000
+npm run test:e2e       # Playwright; point PLAYWRIGHT_BASE_URL at dev or out/
+```
+
+CI (`.github/workflows/ci.yml`) runs typecheck, lint, vitest, the wasm smoke,
+and the wire-drift check. Checking out the private Hypercolor pin in Actions
+needs a token that can read `BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN`
+if the default `GITHUB_TOKEN` cannot).
+
+Deploy later to Vercel (account `john-3778`). Do not treat this README as
+permission to ship production.
+
+## Security
+
+See [SECURITY.md](SECURITY.md). Web key custody is weaker than the mobile
+app: secrets live in JS/wasm memory, and XSS is the kill shot.
