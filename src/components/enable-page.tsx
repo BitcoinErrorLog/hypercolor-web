@@ -16,6 +16,7 @@ export function EnablePage({
   onRetry,
   onSignOut,
   onOpenChats,
+  showOpenChats,
 }: {
   enabled: boolean;
   offline: boolean;
@@ -29,6 +30,7 @@ export function EnablePage({
   onRetry: () => void;
   onSignOut: () => void;
   onOpenChats: () => void;
+  showOpenChats: boolean;
 }) {
   return (
     <article className="space-y-6">
@@ -73,14 +75,16 @@ export function EnablePage({
       {enabled ? (
         <p className="text-sm text-muted-foreground">
           Ring approved the grant and this device published a receiver marker.
-          <Button
-            type="button"
-            className="mt-3"
-            data-testid="enableOpenChats"
-            onClick={onOpenChats}
-          >
-            Open chats
-          </Button>
+          {showOpenChats ? (
+            <Button
+              type="button"
+              className="mt-3"
+              data-testid="enableOpenChats"
+              onClick={onOpenChats}
+            >
+              Open chats
+            </Button>
+          ) : null}
         </p>
       ) : null}
 
