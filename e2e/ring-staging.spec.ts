@@ -16,16 +16,12 @@ async function waitForWelcomeReady(page: Page): Promise<void> {
     timeout: 30_000,
   });
   const qr = page.getByTestId("welcomeQr");
-  const takeover = page.getByRole("button", { name: "Take over" });
+  const takeover = page.getByRole("status").getByRole("button", { name: "Take over" });
   await expect(qr.or(takeover)).toBeVisible({ timeout: 30_000 });
-  if (await takeover.isVisible()) {
+  // A full reload restarts paykit-connect TTL and can hang Next's `load`
+  // event. Take over in-place only when the QR never appeared.
+  if ((await qr.count()) === 0 && (await takeover.isVisible())) {
     await takeover.click();
-    await expect(takeover).toHaveCount(0, { timeout: 15_000 });
-    await page.reload();
-    await expect(page.getByRole("heading", { name: "Hypercolor" })).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(takeover).toHaveCount(0, { timeout: 15_000 });
   }
   await expect(qr).toBeVisible({ timeout: 30_000 });
 }

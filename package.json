@@ -18,7 +18,7 @@
     "proof:staging:backup": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_BACKUP=1 playwright test e2e/backup-staging.spec.ts",
     "proof:staging:groups": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_GROUPS=1 playwright test e2e/groups-staging.spec.ts",
     "proof:staging:payments": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_PAYMENTS=1 playwright test e2e/payments-staging.spec.ts",
-    "proof:staging:ring": "node e2e/support/ensure-ring-deps.mjs && RUN_STAGING_RING=1 playwright test e2e/ring-staging.spec.ts",
+    "proof:staging:ring": "node e2e/support/proof-staging-ring.mjs",
     "check:wasm": "node scripts/paykit-wasm-smoke.mjs",
     "check:wire": "bash scripts/check-wire-drift.sh",
     "check:vibeware": "node scripts/check-vibeware-selftest.mjs",
@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@synonymdev/pubky": "0.11.0",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",

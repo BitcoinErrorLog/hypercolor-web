@@ -9,10 +9,15 @@ import { defineConfig } from "@playwright/test";
  *
  * Ring proof (`RUN_STAGING_RING=1`) starts its own unharnessed server on
  * 3010 so it never inherits `NEXT_PUBLIC_E2E_HARNESS` from a leftover :3000.
+ *
+ * Next runs from `/tmp/hypercolor-ringsim-app` (`app`/`public` copied onto
+ * the boot disk, `src`/`node_modules` symlinked, `.next` local) so this
+ * volume cannot append stray bytes to JSON manifests.
  */
 const ringProof = process.env.RUN_STAGING_RING === "1";
 const ringPort = process.env.PLAYWRIGHT_RING_PORT ?? "3010";
 const localBase = ringProof ? `http://localhost:${ringPort}` : "http://localhost:3000";
+const RUN_NEXT = "node e2e/support/run-next-local.mjs";
 
 function processEnvRecord(): Record<string, string> {
   const out: Record<string, string> = {};
@@ -24,6 +29,7 @@ function processEnvRecord(): Record<string, string> {
 
 const webServerEnv = processEnvRecord();
 webServerEnv.COPYFILE_DISABLE = "1";
+delete webServerEnv.NEXT_DIST_DIR;
 if (ringProof) {
   delete webServerEnv.NEXT_PUBLIC_E2E_HARNESS;
   webServerEnv.NEXT_PUBLIC_APP_ORIGIN = `http://localhost:${ringPort}`;
@@ -42,8 +48,8 @@ export default defineConfig({
     ? undefined
     : {
         command: ringProof
-          ? `rm -rf .next && npm run dev -- --port ${ringPort}`
-          : `rm -rf .next && npm run dev -- --port 3000`,
+          ? `rm -rf /tmp/hypercolor-ringsim-app /tmp/hypercolor-ringsim-next && ${RUN_NEXT} --port ${ringPort}`
+          : `rm -rf /tmp/hypercolor-ringsim-app /tmp/hypercolor-ringsim-next && ${RUN_NEXT} --port 3000`,
         url: localBase,
         reuseExistingServer: ringProof ? false : !process.env.CI,
         timeout: 120_000,

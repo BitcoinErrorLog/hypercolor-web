@@ -5,14 +5,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
-import {
-  getHttpRelayBase,
-  HANDOFF_PATH_PREFIX,
-  HANDOFF_TTL_MS,
-  relayChannelUrl,
-  STAGING_HOMESERVER_Z32,
-} from "./ring-wire";
-import { bytesToHex, hexToBytes, sb2EncryptSigned } from "./sb2";
+import { bytesToHex, hexToBytes } from "../../src/lib/hex";
+import { issueAppCert } from "./app-cert";
 import {
   loadPubkySdk,
   type PubkyKeypair,
@@ -21,6 +15,14 @@ import {
   type PubkySession,
   type PubkySigner,
 } from "./load-pubky";
+import { asX25519HexPair, loadPaykitWasmNode } from "./paykit-wasm-node";
+import {
+  getHttpRelayBase,
+  HANDOFF_PATH_PREFIX,
+  HANDOFF_TTL_MS,
+  relayChannelUrl,
+  STAGING_HOMESERVER_Z32,
+} from "./ring-wire";
 
 const execFileAsync = promisify(execFile);
 const GENERATE =
@@ -96,6 +98,18 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 async function waitUntilHomeserverPublished(
   client: PubkyFacade,
   userPk: PubkyPublicKey,
@@ -125,7 +139,11 @@ async function waitUntilPublicHandoff(
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     try {
-      const json = await client.publicStorage.getJson(address);
+      const json = await withTimeout(
+        client.publicStorage.getJson(address),
+        8_000,
+        "publicStorage.getJson",
+      );
       if (json && typeof json === "object" && json !== null && "sb2" in json) {
         return;
       }
@@ -169,6 +187,7 @@ async function postRelayPublicParams(
 
 export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
   const sdk = loadPubkySdk();
+  const wasm = await loadPaykitWasmNode();
   const keypair: PubkyKeypair = sdk.Keypair.random();
   const pubky = keypair.publicKey.z32();
   const homeserverPk = sdk.PublicKey.from(STAGING_HOMESERVER);
@@ -177,13 +196,23 @@ export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
   const token = await mintSignupToken();
   let session: PubkySession;
   try {
-    session = await signer.signupCookie(homeserverPk, token);
+    try {
+      await signer.signup(homeserverPk, token);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      // Signup publishes PKDNS; a concurrent newer packet is not fatal if
+      // the homeserver later resolves for this key.
+      if (!/more recent SignedPacket/i.test(message)) {
+        throw error;
+      }
+    }
     try {
       await signer.pkdns.publishHomeserverForce(homeserverPk);
     } catch {
       // Signup may already have published. Resolution is the acceptance gate.
     }
     await waitUntilHomeserverPublished(client, keypair.publicKey);
+    session = await withTimeout(signer.signin("hypercolor-web"), 30_000, "signer.signin");
   } catch (error) {
     throw redactToken(error, token);
   }
@@ -197,17 +226,23 @@ export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
     const requestId = randomHex(32);
     const nowSeconds = Math.floor(Date.now() / 1000);
     const expiresAt = nowSeconds + Math.floor(HANDOFF_TTL_MS / 1000) - 30;
-    const inbox = {
-      publicKey: randomHex(32),
-      secretKey: randomHex(32),
-    };
-    const transport = {
-      publicKey: randomHex(32),
-      secretKey: randomHex(32),
-    };
+    const inbox = asX25519HexPair(wasm.x25519GenerateKeypair());
+    const transport = asX25519HexPair(wasm.x25519GenerateKeypair());
+    wasm.computeInboxKid(inbox.publicKey);
     const appPair = sdk.Keypair.random();
     const appSecret = new Uint8Array(appPair.secret());
-    wipe.push(appSecret, hexToBytes(inbox.secretKey), hexToBytes(transport.secretKey));
+    const appPub = appPair.publicKey.toUint8Array();
+    const inboxSk = hexToBytes(inbox.secretKey);
+    const transportSk = hexToBytes(transport.secretKey);
+    wipe.push(appSecret, appPub, inboxSk, transportSk);
+    const cert = issueAppCert({
+      rootSecret: secret,
+      issuerPeerid: ownerPeerid,
+      appId: "hypercolor.app",
+      appEd25519Pub: appPub,
+      transportX25519Pub: hexToBytes(transport.publicKey),
+      inboxX25519Pub: hexToBytes(inbox.publicKey),
+    });
     const payload = {
       version: 3,
       pubky,
@@ -223,43 +258,51 @@ export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
       },
       app_key: {
         ed25519_sk: bytesToHex(appSecret),
-        ed25519_pk: bytesToHex(appPair.publicKey.toUint8Array()),
-        cert_id: randomHex(16),
-        cert_body: randomHex(32),
-        cert_sig: randomHex(64),
+        ed25519_pk: bytesToHex(appPub),
+        cert_id: cert.certIdHex,
+        cert_body: cert.certBodyHex,
+        cert_sig: cert.sigHex,
       },
       created_at: nowSeconds,
       expires_at: expiresAt,
     };
     const storagePath = `${HANDOFF_PATH_PREFIX}${requestId}`;
-    const envelope = sb2EncryptSigned({
-      plaintext: new TextEncoder().encode(JSON.stringify(payload)),
-      recipientInboxPk: hexToBytes(parsed.ephemeralPkHex),
-      ownerPeerid,
-      senderPeerid: ownerPeerid,
-      recipientPeerid: ownerPeerid,
-      senderEd25519Secret: secret,
-      canonicalPath: storagePath,
-      contextId: crypto.getRandomValues(new Uint8Array(32)),
-      msgId: `handoff-${requestId}`,
-      purpose: "handoff",
-      createdAt: nowSeconds,
-      expiresAt,
-    });
-    await session.storage.putJson(storagePath, {
-      sb2: Buffer.from(envelope).toString("base64"),
-    });
-    await waitUntilPublicHandoff(client, pubky, storagePath);
-    await postRelayPublicParams(parsed.channelId, {
+    const envelope = wasm.sb2Encrypt(
+      hexToBytes(parsed.ephemeralPkHex),
+      new TextEncoder().encode(JSON.stringify(payload)),
+      crypto.getRandomValues(new Uint8Array(32)),
+      `handoff-${requestId}`,
+      "handoff",
       pubky,
-      requestId,
-      homeserver: STAGING_HOMESERVER,
-    });
+      pubky,
+      pubky,
+      storagePath,
+      BigInt(nowSeconds),
+      BigInt(expiresAt),
+    );
+    const signed = wasm.sb2Sign(envelope, secret, pubky, storagePath);
+    await withTimeout(
+      session.storage.putJson(storagePath, {
+        sb2: Buffer.from(signed).toString("base64"),
+      }),
+      20_000,
+      "session.storage.putJson",
+    );
+    await waitUntilPublicHandoff(client, pubky, storagePath);
+    await withTimeout(
+      postRelayPublicParams(parsed.channelId, {
+        pubky,
+        requestId,
+        homeserver: STAGING_HOMESERVER,
+      }),
+      15_000,
+      "httprelay POST",
+    );
   }
 
   async function approvePubkyauth(url: string): Promise<void> {
     parsePubkyauth(url);
-    await signer.approveAuthRequest(url);
+    await withTimeout(signer.approveAuthRequest(url), 30_000, "approveAuthRequest");
   }
 
   async function approveRingUrl(url: string): Promise<"paykit-connect" | "pubkyauth"> {

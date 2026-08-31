@@ -1,7 +1,0 @@
-{
-  "private": true,
-  "description": "Test-only Ring simulator runtime (not imported from src/).",
-  "dependencies": {
-    "@synonymdev/pubky": "0.11.0"
-  }
-}

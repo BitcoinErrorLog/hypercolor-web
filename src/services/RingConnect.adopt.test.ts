@@ -53,6 +53,14 @@ describe("adoptHandoff", () => {
       secretKey: "ask",
       publicKey: "apk",
     });
+    // adoptHandoff stores AppCert hex verbatim. isAppCertValid only checks
+    // expiresAt (KeyStore.ts); there is no signature verification on web.
+    expect(await KeyStore.getAppCert()).toEqual({
+      certBodyHex: "cbody",
+      sigHex: "csig",
+      certIdHex: "cid",
+    });
+    expect(await KeyStore.isAppCertValid()).toBe(true);
     expect(KeyStore).not.toHaveProperty("setSessionSecret");
     expect(KeyStore).not.toHaveProperty("getSessionSecret");
     expect(await KeyStore.getNoiseSeed()).toBe("seedhex");

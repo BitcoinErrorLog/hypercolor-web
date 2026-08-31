@@ -1,4 +1,5 @@
-import { readdir, readFile } from "node:fs/promises";
+import { access, readdir, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -12,6 +13,15 @@ async function walkTs(dir: string): Promise<string[]> {
     else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) out.push(path);
   }
   return out;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("ring simulator isolation", () => {
@@ -29,5 +39,11 @@ describe("ring simulator isolation", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("does not keep the hand-rolled SB2 stack", async () => {
+    expect(await exists(join(process.cwd(), "e2e/support/sb2.ts"))).toBe(false);
+    expect(await exists(join(process.cwd(), "e2e/support/vendor/noble-hashes"))).toBe(false);
+    expect(await exists(join(process.cwd(), "e2e/support/ensure-ring-deps.mjs"))).toBe(false);
   });
 });

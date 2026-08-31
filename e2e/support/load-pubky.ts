@@ -2,15 +2,6 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 
 // Playwright transpiles e2e TS to CJS (`import.meta` is not available).
-const vendorRoot = join(
-  process.cwd(),
-  "e2e",
-  "support",
-  ".vendor",
-  "node_modules",
-  "@synonymdev",
-  "pubky",
-);
 const require = createRequire(join(process.cwd(), "e2e/support/load-pubky.ts"));
 
 export type PubkyPublicKey = {
@@ -63,6 +54,6 @@ let cached: PubkySdk | null = null;
 
 export function loadPubkySdk(): PubkySdk {
   if (cached) return cached;
-  cached = require(join(vendorRoot, "index.cjs")) as PubkySdk;
+  cached = require("@synonymdev/pubky") as PubkySdk;
   return cached;
 }
