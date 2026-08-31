@@ -68,7 +68,7 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("setChatsOpen(true)");
     expect(host).not.toContain("requestAnimationFrame");
     expect(host).not.toContain("scheduleChatsOpen");
-    expect(host).toContain("chatsMounted = enabled && (chatsOpen || isChatsRequested())");
+    expect(host).toContain("chatsMounted = enabled && chatsVisible");
     expect(host).toContain("useState(isChatsRequested)");
     expect(host).toContain("setChatsVisible(next)");
     expect(host).toContain("chatsOpen || isChatsRequested()");

@@ -46,7 +46,7 @@ export function EnablePageHost() {
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const [chatsVisible, setChatsVisible] = useState(isChatsRequested);
   const enabled = status.kind === "enabled";
-  const chatsMounted = enabled && (chatsOpen || isChatsRequested());
+  const chatsMounted = enabled && chatsVisible;
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
