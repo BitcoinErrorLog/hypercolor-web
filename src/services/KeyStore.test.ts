@@ -109,8 +109,8 @@ describe("KeyStore", () => {
   });
 
   it("wraps and unwraps the AppCert and reports validity", async () => {
-    await KeyStore.setPubky(owner);
     const signed = makeSignedAppCert();
+    await KeyStore.setPubky(signed.ownerPubky);
     const cert: AppCert = {
       certBodyHex: signed.cert.certBodyHex,
       sigHex: signed.cert.sigHex,

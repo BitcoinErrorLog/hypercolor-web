@@ -125,13 +125,15 @@ export function EnablePageHost() {
           showOpenChats={enabled && !chatsVisible}
         />
       </div>
-      <div
-        {...(!chatsVisible
-          ? { hidden: true, inert: true, "aria-hidden": true as const }
-          : {})}
-      >
-        <ChatsPageHost />
-      </div>
+      {enabled ? (
+        <div
+          {...(!chatsVisible
+            ? { hidden: true, inert: true, "aria-hidden": true as const }
+            : {})}
+        >
+          <ChatsPageHost />
+        </div>
+      ) : null}
     </>
   );
 }
