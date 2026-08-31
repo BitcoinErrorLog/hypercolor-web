@@ -53,7 +53,9 @@ export function RequestsPage() {
   }, [ownerPubky]);
 
   useEffect(() => {
-    void load();
+    void (async () => {
+      await load();
+    })();
   }, [load]);
 
   useEffect(() => {

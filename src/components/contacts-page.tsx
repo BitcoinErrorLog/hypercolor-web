@@ -45,7 +45,9 @@ export function ContactsPage() {
   }, [ownerPubky, upsertContact]);
 
   useEffect(() => {
-    void reload();
+    void (async () => {
+      await reload();
+    })();
   }, [reload]);
 
   return (

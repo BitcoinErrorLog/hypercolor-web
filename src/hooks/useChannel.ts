@@ -75,7 +75,9 @@ export function useChannel(channelId: string | null) {
   }, [channelId, localPubky]);
 
   useEffect(() => {
-    void reload();
+    void (async () => {
+      await reload();
+    })();
   }, [reload]);
 
   useEffect(() => {

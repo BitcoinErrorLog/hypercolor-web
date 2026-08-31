@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useSignOut } from "@/hooks/useSignOut";
@@ -24,14 +24,10 @@ export function SettingsPage() {
   const [copied, setCopied] = useState(false);
   const [restoreCode, setRestoreCode] = useState("");
   const [note, setNote] = useState<string | null>(null);
-  const recoveryCodeRef = useRef<string | null>(null);
-  const confirmedSavedRef = useRef(false);
-  recoveryCodeRef.current = recoveryCode;
-  confirmedSavedRef.current = confirmedSaved;
 
   useLeaveOnce(
     "settings-backup",
-    () => Boolean(recoveryCodeRef.current) && !confirmedSavedRef.current,
+    () => Boolean(recoveryCode) && !confirmedSaved,
     () => {
       void emit("app.backup.export_outcome", { outcome: "cancelled" });
     },

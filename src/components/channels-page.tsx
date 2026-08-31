@@ -57,7 +57,9 @@ export function ChannelsPage() {
   }, [ownerPubky]);
 
   useEffect(() => {
-    void reload();
+    void (async () => {
+      await reload();
+    })();
   }, [reload]);
 
   useEffect(() => {
