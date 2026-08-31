@@ -93,7 +93,7 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("stampAppPath(\"/chats\")");
     expect(source).toContain("showOpenChats");
     expect(host).not.toContain("setTimeout");
-    expect(host).not.toContain("pushAppPath");
+    expect(host).toContain("pushAppPath");
     expect(host).not.toContain("router.push");
     expect(host).not.toContain("location.assign");
     expect(chatsOpen).toContain("sessionStorage");

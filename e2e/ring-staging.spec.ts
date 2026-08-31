@@ -186,10 +186,18 @@ async function openChats(page: Page): Promise<void> {
 
 async function startDm(page: Page, peerPubky: string): Promise<void> {
   await openChats(page);
-  await page.getByTestId("chatsNewInput").fill(peerPubky);
-  await page.getByTestId("chatsNew").click({ noWaitAfter: true });
-  await expect(page.getByTestId("threadScreen")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("threadPeer")).toHaveText(peerPubky);
+    await page.getByTestId("chatsNewInput").fill(peerPubky);
+    console.info("[ring-trace] filled chatsNewInput");
+    await page.getByTestId("chatsNew").click({ noWaitAfter: true });
+    console.info("[ring-trace] clicked chatsNew", page.url());
+    const threadCount = await waitForCount(
+      page.getByTestId("threadScreen"),
+      1,
+      30_000,
+      "threadScreen",
+    );
+    console.info("[ring-trace] threadScreen", { threadCount, url: page.url() });
+    expect(await page.getByTestId("threadPeer").textContent()).toBe(peerPubky);
 }
 
 async function sendAndSee(

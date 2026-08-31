@@ -7,15 +7,20 @@ import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { ChatsPage } from "@/components/chats-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
+import { usePathSegment } from "@/hooks/usePathSegment";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
+import { addManualContact } from "@/services/contacts/addManualContact";
 import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
-import { stampAppPath } from "@/lib/path-id";
+import { pushAppPath, stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
+import { useContactStore } from "@/stores/contactStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { buildDmConversationId } from "@/types/link";
+import { parsePubky } from "@/utils/pubkyId";
 import type { SessionHandle } from "@/services/link/PaykitLinkWeb";
 
 function buildAuthPanel(url: string): ReactNode {
@@ -46,9 +51,14 @@ export function EnablePageHost() {
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const [chatsVisible, setChatsVisible] = useState(isChatsRequested);
+  const [peerDraft, setPeerDraft] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+  const upsertContact = useContactStore((s) => s.upsertContact);
+  const conversationId = usePathSegment("chats");
   const enabled = status.kind === "enabled";
   const chatsRequested = chatsOpen || isChatsRequested();
-  const chatsMounted = enabled && chatsVisible;
+  const chatsMounted = enabled && chatsVisible && Boolean(conversationId);
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -117,6 +127,33 @@ export function EnablePageHost() {
       ? status.pubky
       : null;
 
+  async function startChat() {
+    const ownerPubky = status.kind === "enabled" || status.kind === "live" ? status.pubky : null;
+    if (!ownerPubky) {
+      setStartError("Connect with Pubky Ring first.");
+      return;
+    }
+    const parsed = parsePubky(peerDraft);
+    if (!parsed) {
+      setStartError("Paste a 52-character z-base-32 pubky.");
+      return;
+    }
+    setStarting(true);
+    setStartError(null);
+    try {
+      const result = await addManualContact(ownerPubky, parsed);
+      if (!result.ok) {
+        setStartError(result.message);
+        return;
+      }
+      upsertContact(result.contact);
+      setPeerDraft("");
+      pushAppPath(`/chats/${encodeURIComponent(buildDmConversationId(result.contact.pubky))}`);
+    } finally {
+      setStarting(false);
+    }
+  }
+
   return (
     <>
       <div
@@ -155,17 +192,19 @@ export function EnablePageHost() {
       </div>
       {enabled && chatsRequested && !chatsMounted ? (
         <ChatsPage
-          conversationId={null}
+          conversationId={conversationId}
           enableCta={null}
           thread={null}
           rows={[]}
           pendingRequests={0}
           inboxError={null}
-          peerDraft=""
-          starting={false}
-          startError={null}
-          onChangePeerDraft={() => {}}
-          onStartChat={() => {}}
+          peerDraft={peerDraft}
+          starting={starting}
+          startError={startError}
+          onChangePeerDraft={setPeerDraft}
+          onStartChat={() => {
+            void startChat();
+          }}
         />
       ) : null}
       {enabled && chatsMounted ? (
