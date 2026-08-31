@@ -3,22 +3,31 @@
 import { useEffect } from "react";
 import { KeyStore } from "@/services/KeyStore";
 import { startLinkRetryDrainOnVisibility } from "@/services/link/LinkService";
+import { warmPaykitClient } from "@/services/link/PaykitLinkWeb";
 import { getEnableStatus, restoreSessionOnLoad } from "@/services/link/session";
 import { hydratePersistedAuth } from "@/stores/hydrateAuthSession";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
+let bootstrapRun = 0;
+
 export function SessionBootstrap() {
   const setFromRestore = useSessionStatusStore((s) => s.setFromRestore);
 
   useEffect(() => {
-    let cancelled = false;
     let stopDrain: (() => void) | undefined;
+    const runId = ++bootstrapRun;
     void (async () => {
       await KeyStore.initKeyStore();
+      try {
+        // Compile wasm up front so cookie resume's budget is not spent on it.
+        await warmPaykitClient();
+      } catch {
+        // Cookie resume will load wasm; do not skip restore.
+      }
       const hadIdentity = await hydratePersistedAuth();
       const restore = await restoreSessionOnLoad();
-      if (cancelled) return;
+      if (runId !== bootstrapRun) return;
       if (restore.status === "live") {
         const homeserver = (await KeyStore.getHomeserver()) ?? "";
         useAuthStore.getState().setAuthenticated(restore.pubky, homeserver);
@@ -29,7 +38,7 @@ export function SessionBootstrap() {
       } catch {
         enable = undefined;
       }
-      if (cancelled) return;
+      if (runId !== bootstrapRun) return;
       const pubky = useAuthStore.getState().pubky ?? (await KeyStore.getPubky());
       const hasIdentity =
         hadIdentity ||
@@ -42,7 +51,8 @@ export function SessionBootstrap() {
       }
     })();
     return () => {
-      cancelled = true;
+      // A remount must supersede the previous run, not silence both.
+      bootstrapRun += 1;
       stopDrain?.();
     };
   }, [setFromRestore]);

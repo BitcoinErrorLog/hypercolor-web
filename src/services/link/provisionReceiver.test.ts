@@ -73,6 +73,128 @@ describe("provisionReceiver", () => {
     expect(row?.receiverPath).toBe(LINK_RECEIVER_PATH);
   });
 
+  it("fails fast when publishReceiverMarker hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+      noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
+      publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
+      const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      const assertion = expect(pending).rejects.toMatchObject({
+        name: "SessionResumeTimeout",
+      });
+      await vi.advanceTimersByTimeAsync(15_100);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves no receiver evidence behind when the publish times out", async () => {
+    vi.useFakeTimers();
+    try {
+      generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+      noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
+      publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
+      const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      const assertion = expect(pending).rejects.toMatchObject({
+        name: "SessionResumeTimeout",
+      });
+      await vi.advanceTimersByTimeAsync(15_100);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // A surviving secret would read as "enabled" forever with no marker
+    // published, because the status lookup falls back to this alias.
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
+    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+  });
+
+  it("leaves no receiver evidence behind when the publish rejects", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
+    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
+
+    await expect(
+      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
+    ).rejects.toThrow("homeserver refused");
+
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
+    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+  });
+
+  it("can be re-run after a failed publish and lands a fresh marker", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-first");
+    publishReceiverMarker.mockRejectedValueOnce(new Error("homeserver refused"));
+    await expect(
+      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
+    ).rejects.toThrow("homeserver refused");
+
+    const fresh = new Uint8Array(32).fill(8);
+    const persisted = new Uint8Array(fresh);
+    generateNoiseSecretKey.mockResolvedValue(fresh);
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-second");
+    publishReceiverMarker.mockResolvedValue(undefined);
+
+    const result = await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+
+    expect(result.noisePublicKey).toBe("noise-pk-second");
+    expect(generateNoiseSecretKey).toHaveBeenCalledTimes(2);
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
+      persisted,
+    );
+    const row = await StorageService.getLinkReceiver(OWNER);
+    expect(row?.markerPublished).toBe(true);
+  });
+
+  it("keeps a published receiver when a re-publish fails", async () => {
+    const persisted = new Uint8Array(32).fill(9);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, persisted);
+    await StorageService.upsertLinkReceiver({
+      ownerPubky: OWNER,
+      receiverAlias: LINK_RECEIVER_PATH,
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: true,
+    });
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
+    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
+
+    await expect(
+      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
+    ).rejects.toThrow("homeserver refused");
+
+    // The marker on the homeserver still points at this key, so discarding it
+    // would break a receiver that works.
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
+      persisted,
+    );
+    expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(true);
+  });
+
+  it("rolls back a reused receiver whose marker never landed", async () => {
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, new Uint8Array(32).fill(9));
+    await StorageService.upsertLinkReceiver({
+      ownerPubky: OWNER,
+      receiverAlias: LINK_RECEIVER_PATH,
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: false,
+    });
+    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
+    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
+
+    await expect(
+      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
+    ).rejects.toThrow("homeserver refused");
+
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
+    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+  });
+
   it("zeroizes the re-derived receiver secret after publishing", async () => {
     const persisted = new Uint8Array(32).fill(9);
     await KeyStore.setPubky(OWNER);

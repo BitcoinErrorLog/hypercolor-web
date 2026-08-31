@@ -21,26 +21,46 @@ interface SessionStatusState {
   reset: () => void;
 }
 
+function pubkyOf(status: SessionUiStatus): string {
+  switch (status.kind) {
+    case "session-offline":
+    case "live":
+    case "enabled":
+      return status.pubky;
+    default:
+      return "";
+  }
+}
+
 export const useSessionStatusStore = create<SessionStatusState>((set) => ({
   status: { kind: "unknown" },
   setFromRestore: (restore, enable, opts) => {
-    if (restore.status === "session-offline") {
-      set({
-        status: { kind: "session-offline", pubky: restore.pubky ?? "" },
-      });
-      return;
-    }
-    if (restore.status !== "live" || !restore.pubky) {
-      set({
-        status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
-      });
-      return;
-    }
-    if (enable === "enabled") {
-      set({ status: { kind: "enabled", pubky: restore.pubky } });
-      return;
-    }
-    set({ status: { kind: "live", pubky: restore.pubky } });
+    set((state) => {
+      // `setFromRestore` applies a snapshot read when the document loaded.
+      // The store starts at "unknown" per document, so an "enabled" already in
+      // the store can only have come from the Enable flow completing while the
+      // snapshot was being read — a later fact than the snapshot. Do not
+      // downgrade it. A genuine loss of access arrives via reset/setNeedsEnable
+      // or the next page load's own fresh snapshot.
+      if (state.status.kind === "enabled") return state;
+      if (restore.status === "session-offline") {
+        return {
+          status: {
+            kind: "session-offline" as const,
+            pubky: restore.pubky || pubkyOf(state.status),
+          },
+        };
+      }
+      if (restore.status !== "live" || !restore.pubky) {
+        return {
+          status: { kind: opts?.hasIdentity ? ("needs-enable" as const) : ("no-identity" as const) },
+        };
+      }
+      if (enable === "enabled") {
+        return { status: { kind: "enabled" as const, pubky: restore.pubky } };
+      }
+      return { status: { kind: "live" as const, pubky: restore.pubky } };
+    });
   },
   setEnabled: (pubky) => set({ status: { kind: "enabled", pubky } }),
   setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),

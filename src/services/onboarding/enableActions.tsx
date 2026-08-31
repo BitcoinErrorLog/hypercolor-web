@@ -41,9 +41,17 @@ export function EnablePageHost() {
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
-      const result = await provisionReceiver(session, session.pubky());
-      setProvisionedPath(result.receiverPath);
-      setEnabled(result.pubky);
+      try {
+        const result = await provisionReceiver(session, session.pubky());
+        setError(null);
+        setProvisionedPath(result.receiverPath);
+        setEnabled(result.pubky);
+      } catch (err) {
+        // Ring approved the grant but publishing the receiver marker failed.
+        // Without this the status line sits on "Waiting for Pubky Ring…".
+        setError(err instanceof Error ? err.message : "Authorization failed");
+        emitCoarseError("enable", err);
+      }
     },
     [setEnabled],
   );

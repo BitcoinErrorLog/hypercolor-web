@@ -1,29 +1,16 @@
-import type { Database, SAHPoolUtil, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
+import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
 
-export type WebSqliteVfs = "opfs-sahpool" | "idb-snapshot" | "kvvfs";
+export type WebSqliteVfs = "idb-snapshot" | "kvvfs";
 
-const SAHPOOL_DIRECTORY = "hypercolor-sahpool";
-const SAHPOOL_DB_PATH = "/hypercolor.db";
 const IDB_NAME = "hypercolor-sqlite";
 const IDB_STORE = "sqlite";
 const IDB_KEY = "hypercolor.db";
 
 let openedVfs: WebSqliteVfs | null = null;
-let sahPool: SAHPoolUtil | null = null;
 
 export function getOpenedVfs(): WebSqliteVfs | null {
   return openedVfs;
-}
-
-export function canUseOpfsSahPool(): boolean {
-  if (typeof navigator === "undefined") return false;
-  if (typeof navigator.storage?.getDirectory !== "function") return false;
-  if (typeof FileSystemFileHandle === "undefined") return false;
-  const proto = FileSystemFileHandle.prototype as FileSystemFileHandle & {
-    createSyncAccessHandle?: () => Promise<unknown>;
-  };
-  return typeof proto.createSyncAccessHandle === "function";
 }
 
 type SqliteInit = (config?: {
@@ -182,28 +169,6 @@ function hydrateMemoryDb(
   return db;
 }
 
-async function openSahPool(
-  sqlite3: Sqlite3Static,
-): Promise<ClosableSqlExecutor> {
-  const pool = await sqlite3.installOpfsSAHPoolVfs({
-    name: "opfs-sahpool",
-    directory: SAHPOOL_DIRECTORY,
-    initialCapacity: 8,
-  });
-  sahPool = pool;
-  const db = new pool.OpfsSAHPoolDb(SAHPOOL_DB_PATH);
-  // WAL on OPFS needs exclusive locking (official sqlite wasm docs).
-  db.exec("PRAGMA locking_mode = exclusive");
-  return wrapOo1Db(db, () => {
-    try {
-      if (sahPool && !sahPool.isPaused()) sahPool.pauseVfs();
-    } catch (err) {
-      console.error("hypercolor sahpool pause failed", err);
-    }
-    sahPool = null;
-  });
-}
-
 async function openIdbSnapshotVfs(
   sqlite3: Sqlite3Static,
 ): Promise<ClosableSqlExecutor> {
@@ -219,12 +184,15 @@ function openKvvfs(sqlite3: Sqlite3Static): ClosableSqlExecutor {
 
 /**
  * Opens official sqlite3 wasm with the P1 VFS policy:
- * 1. `opfs-sahpool` when OPFS SyncAccessHandle is available (no COOP/COEP).
- * 2. Official sqlite3 memory + IndexedDB snapshot when IDB exists. This is
+ * 1. Official sqlite3 memory + IndexedDB snapshot when IDB exists. This is
  *    the executeSync-compatible stand-in for wa-sqlite IDBBatchAtomicVFS
  *    (that VFS is async-only and cannot implement `SqlExecutor.executeSync`
  *    without SharedArrayBuffer).
- * 3. Official kvvfs (`localStorage`) last. Tiny (~5MB); only if IDB is gone.
+ * 2. Official kvvfs (`localStorage`) last. Tiny (~5MB); only if IDB is gone.
+ *
+ * `opfs-sahpool` is deliberately not used: its exclusive SyncAccessHandles
+ * survive the document that opened them, so the next document's `getDb()`
+ * blocks forever behind handles the previous page still holds.
  */
 export async function openWebSqlite(): Promise<ClosableSqlExecutor> {
   if (typeof window === "undefined") {
@@ -235,19 +203,10 @@ export async function openWebSqlite(): Promise<ClosableSqlExecutor> {
 
   const sqlite3 = await loadOfficialSqlite3();
 
-  if (canUseOpfsSahPool()) {
-    try {
-      const executor = await openSahPool(sqlite3);
-      openedVfs = "opfs-sahpool";
-      return executor;
-    } catch (err) {
-      console.warn(
-        "opfs-sahpool unavailable; falling back to IDB snapshot",
-        err,
-      );
-    }
-  }
-
+  // Do not use opfs-sahpool on web. Exclusive SyncAccessHandles from the
+  // previous document stay held across location.assign / reload, so the next
+  // page's getDb() never returns and SessionBootstrap never writes enable
+  // status (data-hc-enable stays empty; the Enable CTA comes back).
   if (typeof indexedDB !== "undefined") {
     const executor = await openIdbSnapshotVfs(sqlite3);
     openedVfs = "idb-snapshot";
@@ -264,13 +223,5 @@ export async function openWebSqlite(): Promise<ClosableSqlExecutor> {
 }
 
 export function clearOpenedVfs(): void {
-  if (sahPool) {
-    try {
-      if (!sahPool.isPaused()) sahPool.pauseVfs();
-    } catch {
-      // Already closed or not held.
-    }
-    sahPool = null;
-  }
   openedVfs = null;
 }

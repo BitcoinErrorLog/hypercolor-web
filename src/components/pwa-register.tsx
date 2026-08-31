@@ -13,6 +13,7 @@ export function PwaRegister() {
   const emitted = useRef(false);
 
   useEffect(() => {
+    if (process.env.NODE_ENV !== "production") return;
     if (pathname.startsWith("/e2e")) return;
     if (!("serviceWorker" in navigator)) return;
     void navigator.serviceWorker.register("/sw.js");
