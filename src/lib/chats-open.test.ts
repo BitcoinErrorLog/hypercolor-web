@@ -1,14 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  clearChatsRequested,
-  isChatsRequested,
-  markChatsRequested,
-  scheduleChatsOpen,
-} from "./chats-open";
+import { clearChatsRequested, isChatsRequested, markChatsRequested } from "./chats-open";
 
 afterEach(() => {
   clearChatsRequested();
-  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -45,15 +39,5 @@ describe("chats-open", () => {
     const second = await import("./chats-open");
     expect(second.isChatsRequested()).toBe(true);
     second.clearChatsRequested();
-  });
-
-  it("runs the Open chats reveal after the current turn", () => {
-    vi.useFakeTimers();
-    const fn = vi.fn();
-    scheduleChatsOpen(fn);
-    expect(fn).not.toHaveBeenCalled();
-    vi.runAllTimers();
-    expect(fn).toHaveBeenCalledTimes(1);
-    vi.useRealTimers();
   });
 });

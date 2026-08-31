@@ -42,13 +42,3 @@ export function clearChatsRequested(): void {
   writeStored(false);
   writeDataset(false);
 }
-
-/**
- * Run after the Open chats click stack returns. `requestAnimationFrame` is not
- * delivered in headless Chrome when the tab is not painting, so the chats tree
- * never mounted after the URL already showed `/chats`. A 0ms timer is a
- * macrotask that still fires there.
- */
-export function scheduleChatsOpen(fn: () => void): void {
-  setTimeout(fn, 0);
-}

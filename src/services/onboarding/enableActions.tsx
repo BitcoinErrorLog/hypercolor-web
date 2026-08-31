@@ -7,12 +7,7 @@ import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
-import {
-  clearChatsRequested,
-  isChatsRequested,
-  markChatsRequested,
-  scheduleChatsOpen,
-} from "@/lib/chats-open";
+import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
 import { stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
@@ -49,9 +44,9 @@ export function EnablePageHost() {
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
+  const [chatsVisible, setChatsVisible] = useState(isChatsRequested);
   const enabled = status.kind === "enabled";
-  const chatsMounted = enabled && (chatsOpen || isChatsRequested());
-  const chatsVisible = chatsMounted;
+  const chatsMounted = enabled && chatsVisible;
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -85,6 +80,16 @@ export function EnablePageHost() {
     if (!state) return;
     void emit("app.onboarding.state", { state });
   }, [status.kind]);
+
+  useEffect(() => {
+    const requested = chatsOpen || isChatsRequested();
+    const next = Boolean(enabled && requested);
+    if (next === chatsVisible) return;
+    // After the Open chats click returns. Hiding the button in the same turn
+    // leaves Playwright stuck in "performing click action".
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- visibility swap after click paint
+    setChatsVisible(next);
+  }, [enabled, chatsOpen, chatsVisible]);
 
   useLeaveOnce(
     "enable",
@@ -137,9 +142,7 @@ export function EnablePageHost() {
             ) {
               stampAppPath("/chats");
             }
-            scheduleChatsOpen(() => {
-              setChatsOpen(true);
-            });
+            setChatsOpen(true);
           }}
           showOpenChats={!chatsVisible}
         />
