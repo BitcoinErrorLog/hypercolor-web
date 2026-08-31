@@ -1245,17 +1245,20 @@ async function syncPeerLocked(peerPubky: PubkyKey): Promise<LinkMessage[]> {
   }
   try {
     const outcome = await ensureLinkLocked(peerPubky, false, false);
-    const priorMessageCount = await StorageService.countLinkMessagesForPeer(ownerPubky, peerPubky);
-    const hasEstablishedConversation = priorMessageCount > 0;
+    const priorRoutedConversationCount = await StorageService.countLinkMessagesForPeer(
+      ownerPubky,
+      peerPubky,
+    );
+    const hasPriorRoutedConversation = priorRoutedConversationCount > 0;
     const isNewInbound =
       prior === null &&
-      !hasEstablishedConversation &&
+      !hasPriorRoutedConversation &&
       (outcome === "ready" || outcome === "handshaking-responder");
 
     if (isNewInbound && existingRequest?.status !== "accepted") {
       const contact = await StorageService.getContact(peerPubky, ownerPubky);
       const decision = classifyInboundPeer(
-        wotInputFromContact(contact, hasEstablishedConversation),
+        wotInputFromContact(contact, hasPriorRoutedConversation),
       );
       if (decision === "request") {
         await holdAsMessageRequest(ownerPubky, peerPubky);

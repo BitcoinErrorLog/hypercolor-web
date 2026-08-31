@@ -12,6 +12,7 @@ const getLink = vi.fn();
 const getReceiver = vi.fn();
 const getMessageRequest = vi.fn();
 const getPubky = vi.fn();
+const receivePrivate = vi.fn();
 
 vi.mock("./PaykitLinkWeb", async () => {
   const actual = await vi.importActual<typeof import("./PaykitLinkWeb")>("./PaykitLinkWeb");
@@ -32,7 +33,7 @@ vi.mock("./PaykitLinkWeb", async () => {
       restoreHandshake: vi.fn(),
       restoreLink: (...args: unknown[]) => restoreLink(...args),
       sendPrivateMessageJson: (...args: unknown[]) => sendPrivate(...args),
-      receivePrivateMessages: vi.fn(),
+      receivePrivateMessages: (...args: unknown[]) => receivePrivate(...args),
       clearLinkOutbox: vi.fn(),
       closeLink: vi.fn(),
     },
@@ -304,5 +305,127 @@ describe("LinkService persist-then-send", () => {
       expect.anything(),
       "sent",
     );
+  });
+});
+
+const establishedLink = {
+  ownerPubky: OWNER,
+  peerPubky: PEER,
+  role: "responder" as const,
+  status: "established" as const,
+  snapshot: "HC1.opaque",
+  remoteNoisePublicKey: "peer-noise",
+  localReceiverPath: LINK_RECEIVER_PATH,
+  remoteReceiverPath: LINK_RECEIVER_PATH,
+  consecutiveFailures: 0,
+  updatedAt: NOW,
+};
+
+const followingContact = {
+  pubky: PEER,
+  ownerPubky: OWNER,
+  trustScore: 0.2,
+  isFollowing: true,
+  isFollower: false,
+  isMutual: false,
+  addedManually: false,
+  firstSeenAt: NOW,
+};
+
+describe("LinkService inbound accept gate", () => {
+  beforeEach(async () => {
+    resetLinkServiceHarnessState();
+    receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "recv-1" });
+    restoreLink.mockReset().mockResolvedValue({ linkId: "handle-1" });
+    probeInbound.mockReset().mockResolvedValue({
+      result: "established",
+      linkId: "inbound-1",
+      snapshot: "HC1.inbound",
+    });
+    getMarker.mockReset().mockResolvedValue({
+      noisePublicKey: "peer-noise",
+      capabilitiesJson: "{}",
+    });
+    getMessageRequest.mockReset().mockResolvedValue(null);
+    getPubky.mockReset().mockResolvedValue(OWNER);
+    getReceiver.mockReset().mockResolvedValue({
+      ownerPubky: OWNER,
+      receiverAlias: "recv",
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: true,
+    });
+    getLink.mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.getContact).mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockReset().mockResolvedValue(0);
+    vi.mocked(StorageService.upsertMessageRequest).mockReset();
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockReset().mockResolvedValue([]);
+    vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
+    await LinkService.adoptHarnessSession(handle() as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetLinkServiceHarnessState();
+  });
+
+  it("holds a follow-only new inbound as a message request", async () => {
+    vi.mocked(StorageService.getContact).mockResolvedValue(followingContact);
+
+    const received = await LinkService.syncInbox([PEER]);
+
+    expect(received).toEqual([]);
+    expect(StorageService.upsertMessageRequest).toHaveBeenCalledWith({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      createdAt: NOW,
+      updatedAt: NOW,
+      status: "pending",
+    });
+  });
+
+  it("holds a mutual-follow new inbound as a message request", async () => {
+    vi.mocked(StorageService.getContact).mockResolvedValue({
+      ...followingContact,
+      isFollowing: true,
+      isFollower: true,
+      isMutual: true,
+    });
+
+    await LinkService.syncInbox([PEER]);
+
+    expect(StorageService.upsertMessageRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "pending", peerPubky: PEER }),
+    );
+  });
+
+  it("holds a manually added new inbound as a message request", async () => {
+    vi.mocked(StorageService.getContact).mockResolvedValue({
+      ...followingContact,
+      isFollowing: false,
+      addedManually: true,
+    });
+
+    await LinkService.syncInbox([PEER]);
+
+    expect(StorageService.upsertMessageRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "pending", peerPubky: PEER }),
+    );
+  });
+
+  it("leaves an existing routed conversation accepted without a request row", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(3);
+    vi.mocked(StorageService.getContact).mockResolvedValue({
+      ...followingContact,
+      isMutual: true,
+      addedManually: true,
+    });
+
+    const received = await LinkService.syncInbox([PEER]);
+
+    expect(received).toEqual([]);
+    expect(StorageService.upsertMessageRequest).not.toHaveBeenCalled();
+    expect(receivePrivate).toHaveBeenCalledWith("handle-1");
   });
 });
