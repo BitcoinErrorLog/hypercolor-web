@@ -95,7 +95,17 @@ async function waitHarness(page: Page): Promise<void> {
   await expect(
     page.getByRole("heading", { name: "Homeserver migration harness" }),
   ).toBeVisible();
-  await page.waitForFunction(() => typeof window.runMigrationSignup === "function");
+  await page.waitForFunction(
+    () =>
+      typeof window.runMigrationSignup === "function" &&
+      typeof window.runMigrationTo === "function" &&
+      typeof window.runMigrationRebindPeer === "function" &&
+      typeof window.runMigrationRebindPeerLink === "function" &&
+      typeof window.runMigrationBustPeerHomeserver === "function" &&
+      typeof window.runDmEnsure === "function" &&
+      typeof window.runDmSend === "function" &&
+      typeof window.runDmSync === "function",
+  );
 }
 
 async function signup(page: Page, token: string): Promise<SignupResult> {
@@ -224,6 +234,8 @@ async function establishPair(
   return { a: signedA, b: signedB };
 }
 
+test.describe.configure({ mode: "serial" });
+
 test("A migrates homeserver; B keeps talking without re-adding A", async () => {
   test.setTimeout(90 * 60_000);
   const tokens = await resolveTokens();
@@ -318,13 +330,24 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     }
 
     await pageB.evaluate(
-      async (peer) => window.runMigrationBustPeerHomeserver!(peer),
+      async (peer) => window.runMigrationRebindPeer!(peer),
       signedA.pubky,
     );
-    await pageB.evaluate(
+    await pageA.evaluate(
       async (peer) => window.runMigrationRebindPeerLink!(peer),
+      signedB.pubky,
+    );
+    await waitHarness(pageA);
+    await waitHarness(pageB);
+
+    const markerOnNewHost = await pageB.evaluate(
+      async (peer) => window.runMigrationProbeMarker!(peer),
       signedA.pubky,
     );
+    expect(markerOnNewHost.found, "B must resolve A's receiver on the new host").toBe(true);
+
+    await ensureReady(pageA, pageB, signedA.pubky, signedB.pubky);
+
     const afterCacheBustMs = await pollUntil(
       "A→B after pkarr cache bust (required proof)",
       POST_MIGRATE_LINK_DEADLINE_MS,
