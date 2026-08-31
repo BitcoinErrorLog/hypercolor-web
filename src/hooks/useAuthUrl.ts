@@ -75,6 +75,11 @@ type TrackedAuthFlow = {
   canceled: boolean;
 };
 
+/** Survives Enable remount / Fast Refresh so a second fetch cannot start a
+ * replacement pubkyauth flow after `awaitApproval` has consumed the handle. */
+let sharedFlow: TrackedAuthFlow | null = null;
+let startInFlight: Promise<void> | null = null;
+
 async function signOutQuietly(session: SessionHandle): Promise<void> {
   try {
     await PaykitLinkWeb.signOutSession(session);
@@ -114,7 +119,6 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [isExpired, setIsExpired] = useState(false);
   const isMountedRef = useRef(true);
-  const flowRef = useRef<TrackedAuthFlow | null>(null);
   const onApprovedRef = useRef(options.onApproved);
   const onErrorRef = useRef(options.onError);
 
@@ -124,21 +128,33 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   }, [options.onApproved, options.onError]);
 
   const cancelCurrentFlow = useCallback(() => {
-    if (flowRef.current) {
-      flowRef.current.canceled = true;
+    if (sharedFlow) {
+      sharedFlow.canceled = true;
     }
   }, []);
 
   const fetchUrl = useCallback(async (): Promise<void> => {
-    const existing = flowRef.current;
-    if (existing && !existing.canceled) {
+    const reuse = (): boolean => {
+      const existing = sharedFlow;
+      if (!existing || existing.canceled) return false;
       if (isMountedRef.current) {
         setUrl(existing.url);
         setIsLoading(false);
         setIsExpired(false);
       }
-      return;
+      return true;
+    };
+    if (reuse()) return;
+    if (startInFlight) {
+      await startInFlight;
+      if (reuse()) return;
     }
+
+    let done!: () => void;
+    startInFlight = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+
     setIsLoading(true);
     setIsExpired(false);
     setUrl("");
@@ -152,7 +168,7 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
         url: authorizationUrl,
         canceled: false,
       };
-      flowRef.current = tracked;
+      sharedFlow = tracked;
 
       void PaykitLinkWeb.awaitAuthApproval(flow)
         .then(async (session: SessionHandle) => {
@@ -160,10 +176,13 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
             await signOutQuietly(session);
             return;
           }
+          console.info("[hypercolor enable] auth approved, adopting session");
           await withBudget(
             (async () => {
               const live = await adoptApprovedSession(session);
+              console.info("[hypercolor enable] session adopted, provisioning");
               await onApprovedRef.current?.(live.handle);
+              console.info("[hypercolor enable] onApproved finished");
             })(),
             ENABLE_AFTER_APPROVAL_BUDGET_MS,
             "enable after Ring approval",
@@ -186,6 +205,8 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
     } catch (error) {
       onErrorRef.current?.(error);
     } finally {
+      done();
+      startInFlight = null;
       if (isMountedRef.current) {
         setIsLoading(false);
       }

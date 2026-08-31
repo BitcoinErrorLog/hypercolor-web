@@ -214,12 +214,9 @@ export async function getPaykitClient(): Promise<PubkyClient> {
  */
 export function discardCachedPaykitClient(): void {
   if (testClient) return;
-  if (!client) return;
-  try {
-    client.free();
-  } catch {
-    // already consumed
-  }
+  // Do not `free()` — an in-flight `awaitApproval` / `/session` exchange may
+  // still hold this instance. Dropping the cache is enough so Enable constructs
+  // a fresh Pkarr resolver.
   client = null;
 }
 

@@ -473,7 +473,7 @@ describe("PaykitLinkWeb startAuthFlow client isolation", () => {
     expect(constructed).toBe(1);
     await PaykitLinkWeb.startAuthFlow("/pub/paykit/:rw");
     expect(constructed).toBe(2);
-    expect(free).toHaveBeenCalledTimes(1);
+    expect(free).not.toHaveBeenCalled();
     expect(startAuthFlow).toHaveBeenCalledTimes(2);
   });
 });

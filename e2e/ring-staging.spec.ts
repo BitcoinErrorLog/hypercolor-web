@@ -40,7 +40,7 @@ function attachRelayTrace(page: Page, label: string): string[] {
   });
   page.on("console", (msg) => {
     const text = msg.text();
-    if (text.includes("ring-trace") || msg.type() === "error") {
+    if (text.includes("ring-trace") || text.includes("hypercolor enable") || msg.type() === "error") {
       console.info(`[ring-trace ${label} console:${msg.type()}] ${text}`);
     }
   });
@@ -104,9 +104,21 @@ async function completeRingOnboarding(
       { timeout: 60_000 },
     );
   } catch (error) {
-    const errorText = await page.locator("p.text-red-400").textContent().catch(() => null);
-    const statusText = await page.getByTestId("enableMessagingStatus").textContent();
-    const dataset = await page.evaluate(() => ({ ...document.documentElement.dataset }));
+    const html = page.locator("html");
+    const errorText = await page
+      .locator("p.text-red-400")
+      .textContent({ timeout: 2_000 })
+      .catch(() => null);
+    const statusText = await page
+      .getByTestId("enableMessagingStatus")
+      .textContent({ timeout: 2_000 })
+      .catch(() => null);
+    const dataset = {
+      hcRestore: await html.getAttribute("data-hc-restore", { timeout: 2_000 }).catch(() => null),
+      hcEnable: await html.getAttribute("data-hc-enable", { timeout: 2_000 }).catch(() => null),
+      hcNote: await html.getAttribute("data-hc-note", { timeout: 2_000 }).catch(() => null),
+      hcIdentity: await html.getAttribute("data-hc-identity", { timeout: 2_000 }).catch(() => null),
+    };
     console.info(`[ring-trace ${label} enable-fail]`, { errorText, statusText, dataset });
     throw error;
   }

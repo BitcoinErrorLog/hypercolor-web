@@ -51,6 +51,7 @@ export function EnablePageHost() {
         setError(null);
         setProvisionedPath(result.receiverPath);
         setEnabled(result.pubky);
+        console.info("[hypercolor enable] setEnabled");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authorization failed");
         emitCoarseError("enable", err);
