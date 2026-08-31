@@ -1,13 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
 import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
-import { useEnableCompleted, useEnableCompletedPubky } from "@/lib/enable-done";
+import { markEnableCompleted, useEnableCompleted, useEnableCompletedPubky } from "@/lib/enable-done";
 import { stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
@@ -37,6 +38,7 @@ function buildAuthPanel(url: string): ReactNode {
 }
 
 export function EnablePageHost() {
+  "use no memo";
   const status = useSessionStatusStore((s) => s.status);
   const setEnabled = useSessionStatusStore((s) => s.setEnabled);
   const reset = useSessionStatusStore((s) => s.reset);
@@ -52,9 +54,12 @@ export function EnablePageHost() {
     async (session: SessionHandle) => {
       try {
         const result = await provisionReceiver(session, session.pubky());
-        setError(null);
-        setProvisionedPath(result.receiverPath);
-        setEnabled(result.pubky);
+        flushSync(() => {
+          markEnableCompleted(result.pubky);
+          setError(null);
+          setProvisionedPath(result.receiverPath);
+          setEnabled(result.pubky);
+        });
         console.info("[hypercolor enable] setEnabled");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authorization failed");

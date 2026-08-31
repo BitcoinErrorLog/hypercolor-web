@@ -39,6 +39,9 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("setError(err instanceof Error ? err.message : \"Authorization failed\")");
     expect(host).toContain("useEnableCompleted");
     expect(host).toContain("status.kind === \"enabled\" || enableDone");
+    expect(host).toContain('"use no memo"');
+    expect(host).toContain("flushSync");
+    expect(host).toContain("markEnableCompleted(result.pubky)");
     expect(host).toContain("setEnabled(result.pubky)");
     expect(host).toContain("inert: true");
     expect(host).toContain("stampAppPath(\"/chats\")");
