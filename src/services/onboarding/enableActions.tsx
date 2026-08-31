@@ -7,7 +7,12 @@ import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
-import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
+import {
+  clearChatsRequested,
+  isChatsRequested,
+  markChatsRequested,
+  scheduleChatsOpen,
+} from "@/lib/chats-open";
 import { stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
@@ -132,7 +137,7 @@ export function EnablePageHost() {
             ) {
               stampAppPath("/chats");
             }
-            requestAnimationFrame(() => {
+            scheduleChatsOpen(() => {
               setChatsOpen(true);
             });
           }}

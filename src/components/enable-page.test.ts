@@ -66,7 +66,8 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("ChatsPageHost");
     expect(host).toMatch(/\{enabled && chatsMounted \?\s*\([\s\S]*<ChatsPageHost \/>/);
     expect(host).toContain("setChatsOpen(true)");
-    expect(host).toContain("requestAnimationFrame");
+    expect(host).toContain("scheduleChatsOpen");
+    expect(host).not.toContain("requestAnimationFrame");
     expect(host).toContain("chatsMounted = enabled && (chatsOpen || isChatsRequested())");
     expect(host).not.toContain("queueMicrotask");
     expect(host).not.toContain("startTransition");
@@ -92,6 +93,8 @@ describe("enable-page Open chats", () => {
     expect(host).not.toContain("location.assign");
     expect(chatsOpen).toContain("sessionStorage");
     expect(chatsOpen).toContain("chatsRequested");
+    expect(chatsOpen).toContain("scheduleChatsOpen");
+    expect(chatsOpen).toContain("setTimeout");
     expect(pathId).toContain("export function stampAppPath");
     expect(pathId).toContain("__NA: true");
     expect(enableDone).not.toContain("querySelectorAll");
