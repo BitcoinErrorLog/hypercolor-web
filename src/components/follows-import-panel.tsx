@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { FollowsImporter } from "@/services/contacts/followsImport";
 import {
@@ -21,6 +21,13 @@ export function FollowsImportPanel({
   const [understood, setUnderstood] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const importGeneration = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      importGeneration.current += 1;
+    };
+  }, []);
 
   if (!ownerPubky) return null;
 
@@ -36,9 +43,12 @@ export function FollowsImportPanel({
         what anyone can already see. Acting on a suggestion (adding them, or messaging them)
         may tell others you use this messenger. This is not your contact list. People who
         follow you, but whom you do not follow, are not added. Hypercolor will not write a
-        follow. Inbound chats from people you follow may be accepted automatically. If the
-        homeserver listing is unavailable, the public index (Nexus) sees that you asked for
-        your following list.
+        follow. Inbound chats from people you follow may be accepted automatically. While
+        this is on, opening Contacts re-reads that homeserver listing. The public index
+        (Nexus) is asked for your following list only if the homeserver listing is
+        unavailable; each Nexus name is then re-checked against your homeserver. Hypercolor
+        does not ask Nexus who follows you. Stopping import clears follow recognition so it
+        cannot keep auto-accepting.
       </p>
       {enabled ? (
         <div className="space-y-2">
@@ -52,10 +62,12 @@ export function FollowsImportPanel({
               disabled={busy}
               data-testid="followsImportRefresh"
               onClick={() => {
+                const generation = importGeneration.current;
                 setBusy(true);
                 setNote(null);
                 void FollowsImporter.importFollows(ownerPubky)
                   .then((result) => {
+                    if (generation !== importGeneration.current) return;
                     if (!result.ok) {
                       setNote(result.message);
                       return;
@@ -68,7 +80,9 @@ export function FollowsImportPanel({
                     );
                     return onImported();
                   })
-                  .finally(() => setBusy(false));
+                  .finally(() => {
+                    if (generation === importGeneration.current) setBusy(false);
+                  });
               }}
             >
               {busy ? "Reading…" : "Refresh follows"}
@@ -80,10 +94,23 @@ export function FollowsImportPanel({
               disabled={busy}
               data-testid="followsImportDisable"
               onClick={() => {
+                const generation = ++importGeneration.current;
                 setFollowsImportEnabled(ownerPubky, false);
                 setEnabled(false);
                 setUnderstood(false);
-                setNote("Import is off. Existing badges were left as they are.");
+                setBusy(true);
+                setNote(null);
+                void FollowsImporter.clearImportedRelationshipFlags(ownerPubky)
+                  .then(() => {
+                    if (generation !== importGeneration.current) return;
+                    setNote(
+                      "Import is off. Follow recognition was cleared. Inbound chats from those follows need an explicit accept unless you added them or already have a conversation.",
+                    );
+                    return onImported();
+                  })
+                  .finally(() => {
+                    if (generation === importGeneration.current) setBusy(false);
+                  });
               }}
             >
               Stop using follows
@@ -108,12 +135,14 @@ export function FollowsImportPanel({
             disabled={!understood || busy}
             data-testid="followsImportEnable"
             onClick={() => {
+              const generation = importGeneration.current;
               setBusy(true);
               setNote(null);
               setFollowsImportEnabled(ownerPubky, true);
               setEnabled(true);
               void FollowsImporter.importFollows(ownerPubky)
                 .then((result) => {
+                  if (generation !== importGeneration.current) return;
                   if (!result.ok) {
                     setNote(result.message);
                     return;
@@ -126,7 +155,9 @@ export function FollowsImportPanel({
                   );
                   return onImported();
                 })
-                .finally(() => setBusy(false));
+                .finally(() => {
+                  if (generation === importGeneration.current) setBusy(false);
+                });
             }}
           >
             {busy ? "Reading…" : "Use my pubky.app follows to recognise people"}

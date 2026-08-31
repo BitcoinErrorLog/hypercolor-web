@@ -21,6 +21,11 @@ describe("follows import presentation", () => {
     expect(text).toContain("will not write a follow");
     expect(text).toContain("accepted automatically");
     expect(text).toContain("Use my pubky.app follows to recognise people");
+    expect(text).toContain("opening Contacts re-reads that homeserver listing");
+    expect(text).toContain("does not ask Nexus who follows you");
+    expect(text).toContain("Follow recognition was cleared");
+    expect(source).toContain("clearImportedRelationshipFlags");
+    expect(source).toContain("importGeneration");
   });
 
   it("does not write follows from the importer", () => {

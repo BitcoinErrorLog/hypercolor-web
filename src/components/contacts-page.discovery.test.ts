@@ -14,5 +14,8 @@ describe("contacts username search copy", () => {
     expect(source).toContain("A username is not an identity");
     expect(source).toContain("paste a pubky");
     expect(source).toContain("addManualContact");
+    expect(source).toContain("PubkyAnchors");
+    expect(source).toContain("contactSearchLookalike");
+    expect(source).toContain("key={ownerPubky ?? \"none\"}");
   });
 });

@@ -2,7 +2,11 @@ import { PROFILE_HYDRATE_CONCURRENCY } from "@/flags/config";
 import { mapPool } from "@/lib/map-pool";
 import { normalizeTagLabel } from "@/lib/tag-channel";
 import type { NexusDiscoveryApi, NexusHotTag, NexusPublicPost } from "./NexusDiscoveryClient";
-import { NexusDiscoveryClient } from "./NexusDiscoveryClient";
+import {
+  HOT_TAGS_DEFAULT_LIMIT,
+  NexusDiscoveryClient,
+  POSTS_BY_TAG_DEFAULT_LIMIT,
+} from "./NexusDiscoveryClient";
 
 export type TagChannelLoad =
   | { ok: true; tags: NexusHotTag[] }
@@ -19,7 +23,7 @@ export function createTagChannelReader(api: NexusDiscoveryApi) {
       if (!result.ok) {
         return { ok: false, kind: result.kind, message: result.message };
       }
-      return { ok: true, tags: result.value };
+      return { ok: true, tags: result.value.slice(0, HOT_TAGS_DEFAULT_LIMIT) };
     },
 
     async loadTimeline(rawTag: string): Promise<TagTimelineLoad> {
@@ -31,8 +35,10 @@ export function createTagChannelReader(api: NexusDiscoveryApi) {
       if (!keys.ok) {
         return { ok: false, kind: keys.kind, message: keys.message };
       }
-      const fetched = await mapPool(keys.value, PROFILE_HYDRATE_CONCURRENCY, (row) =>
-        api.post(row.author, row.postId),
+      const fetched = await mapPool(
+        keys.value.slice(0, POSTS_BY_TAG_DEFAULT_LIMIT),
+        PROFILE_HYDRATE_CONCURRENCY,
+        (row) => api.post(row.author, row.postId),
       );
       const posts: NexusPublicPost[] = [];
       let unavailable = 0;

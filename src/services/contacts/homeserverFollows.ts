@@ -85,10 +85,11 @@ export function createHomeserverFollows(io: HomeserverFollowsIo) {
     },
 
     async confirmFollow(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
-      if (peerPubky === ownerPubky) return false;
+      const peer = parsePubky(peerPubky);
+      if (!peer || peer === ownerPubky) return false;
       let bytes: Uint8Array | undefined;
       try {
-        bytes = await io.publicGet(ownerPubky, followDocumentPath(peerPubky));
+        bytes = await io.publicGet(ownerPubky, followDocumentPath(peer));
       } catch {
         return false;
       }

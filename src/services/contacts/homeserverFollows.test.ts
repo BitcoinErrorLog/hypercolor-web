@@ -70,4 +70,12 @@ describe("homeserverFollows", () => {
     expect(await hs.confirmFollow(OWNER, PEER)).toBe(false);
     expect(await hs.confirmFollow(OWNER, PEER)).toBe(false);
   });
+
+  it("does not GET a traversal-shaped peer path", async () => {
+    const publicGet = vi.fn();
+    const hs = createHomeserverFollows({ publicGet });
+    expect(await hs.confirmFollow(OWNER, "../secrets")).toBe(false);
+    expect(await hs.confirmFollow(OWNER, "not/a/pubky")).toBe(false);
+    expect(publicGet).not.toHaveBeenCalled();
+  });
 });

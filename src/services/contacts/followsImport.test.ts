@@ -24,7 +24,6 @@ function contact(pubky: PubkyKey, flags: Partial<Contact> = {}): Contact {
 function deps(overrides: Partial<FollowsImportDeps> = {}): FollowsImportDeps & {
   calls: {
     following: number;
-    followers: number;
     list: number;
     confirm: string[];
     upsert: Contact[];
@@ -33,7 +32,6 @@ function deps(overrides: Partial<FollowsImportDeps> = {}): FollowsImportDeps & {
 } {
   const calls = {
     following: 0,
-    followers: 0,
     list: 0,
     confirm: [] as string[],
     upsert: [] as Contact[],
@@ -64,12 +62,6 @@ function deps(overrides: Partial<FollowsImportDeps> = {}): FollowsImportDeps & {
         ? overrides.following(pubky, query)
         : { ok: true, value: [] };
     },
-    followers: async (pubky, query) => {
-      calls.followers += 1;
-      return overrides.followers
-        ? overrides.followers(pubky, query)
-        : { ok: true, value: [] };
-    },
     getAllContacts: overrides.getAllContacts ?? (async () => contacts),
     upsertContact: async (row) => {
       calls.upsert.push(row);
@@ -90,7 +82,6 @@ describe("followsImport", () => {
     expect(result).toEqual({ ok: true, skipped: true, reason: "opt-in-off" });
     expect(d.calls.list).toBe(0);
     expect(d.calls.following).toBe(0);
-    expect(d.calls.followers).toBe(0);
     expect(d.calls.upsert).toEqual([]);
     expect(d.calls.flags).toEqual([]);
   });
@@ -100,7 +91,6 @@ describe("followsImport", () => {
     const d = deps({
       getAllContacts: async () => existing,
       listOwnFollows: async () => ({ ok: true, pubkys: [PEER, OTHER] }),
-      followers: async () => ({ ok: true, value: [STRANGER] }),
     });
     const result = await createFollowsImporter(d).importFollows(OWNER);
     expect(result.ok && !result.skipped && result.source === "homeserver").toBe(true);
@@ -112,6 +102,8 @@ describe("followsImport", () => {
     expect(d.calls.upsert[0]?.pubky).toBe(OTHER);
     expect(d.calls.upsert[0]?.addedManually).toBe(false);
     expect(d.calls.upsert[0]?.isFollowing).toBe(true);
+    expect(d.calls.upsert[0]?.isFollower).toBe(false);
+    expect(d.calls.upsert[0]?.isMutual).toBe(false);
     expect(d.calls.upsert.map((row) => row.pubky)).not.toContain(STRANGER);
   });
 
@@ -176,6 +168,84 @@ describe("followsImport", () => {
     const result = await createFollowsImporter(d).importFollows(OWNER);
     expect(result.ok).toBe(false);
     expect(d.calls.upsert).toEqual([]);
+  });
+
+  it("does not confirm an unconfirmed peer when Nexus puts ownerPubky first (index misalignment)", async () => {
+    const existing = [contact(PEER)];
+    const d = deps({
+      getAllContacts: async () => existing,
+      listOwnFollows: async () => ({ ok: false, kind: "network", message: "denied" }),
+      following: async () => ({ ok: true, value: [OWNER, PEER, OTHER] }),
+      confirmFollow: async (_owner, peer) => peer === OTHER,
+    });
+    const result = await createFollowsImporter(d).importFollows(OWNER);
+    expect(result.ok && !result.skipped).toBe(true);
+    if (result.ok && !result.skipped) {
+      expect(result.source).toBe("nexus-confirmed");
+    }
+    expect(d.calls.confirm).toEqual([PEER, OTHER]);
+    expect(d.calls.flags).not.toContainEqual(
+      expect.objectContaining({ pubky: PEER, isFollowing: true }),
+    );
+    expect(d.calls.upsert.map((row) => row.pubky)).not.toContain(PEER);
+    expect(d.calls.upsert.map((row) => row.pubky)).toContain(OTHER);
+  });
+
+  it("drops Nexus strings that are not pubkys before confirm or upsert", async () => {
+    const traversal = `${PEER}/../secrets`;
+    const d = deps({
+      listOwnFollows: async () => ({ ok: false, kind: "network", message: "denied" }),
+      following: async () => ({
+        ok: true,
+        value: ["../etc/passwd", "not-a-pubky", traversal, PEER],
+      }),
+      confirmFollow: async () => true,
+    });
+    const result = await createFollowsImporter(d).importFollows(OWNER);
+    expect(result.ok && !result.skipped).toBe(true);
+    expect(d.calls.confirm).toEqual([PEER]);
+    expect(d.calls.upsert.map((row) => row.pubky)).toEqual([PEER]);
+    expect(d.calls.confirm.some((peer) => peer.includes("/") || peer.includes(".."))).toBe(false);
+  });
+
+  it("never writes isFollower or isMutual from a Nexus following list", async () => {
+    const existing = [contact(PEER, { isFollower: true, isMutual: true })];
+    const d = deps({
+      getAllContacts: async () => existing,
+      listOwnFollows: async () => ({ ok: true, pubkys: [PEER] }),
+    });
+    await createFollowsImporter(d).importFollows(OWNER);
+    expect(d.calls.flags).toEqual([
+      { pubky: PEER, isFollowing: true, isFollower: false, isMutual: false },
+    ]);
+  });
+
+  it("clears import-derived relationship flags", async () => {
+    const existing = [
+      contact(PEER, { isFollowing: true, isFollower: true, isMutual: true }),
+      contact(OTHER, { isFollowing: false, isFollower: false, isMutual: false }),
+    ];
+    const d = deps({ getAllContacts: async () => existing });
+    const result = await createFollowsImporter(d).clearImportedRelationshipFlags(OWNER);
+    expect(result).toEqual({ ok: true, clearedCount: 1 });
+    expect(d.calls.flags).toEqual([
+      { pubky: PEER, isFollowing: false, isFollower: false, isMutual: false },
+    ]);
+  });
+
+  it("does not apply an in-flight import after opt-in is turned off", async () => {
+    let enabled = true;
+    const d = deps({
+      isEnabled: () => enabled,
+      listOwnFollows: async () => {
+        enabled = false;
+        return { ok: true, pubkys: [PEER] };
+      },
+    });
+    const result = await createFollowsImporter(d).importFollows(OWNER);
+    expect(result).toEqual({ ok: true, skipped: true, reason: "opt-in-off" });
+    expect(d.calls.upsert).toEqual([]);
+    expect(d.calls.flags).toEqual([]);
   });
 
   it("treats Nexus 404 following as an empty list, not an error", async () => {

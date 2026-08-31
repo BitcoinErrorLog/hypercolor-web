@@ -19,6 +19,9 @@ describe("discover-page public surface", () => {
     expect(text).toContain("global public index");
     expect(text).toContain("Skip this page");
     expect(text).toContain("Private DMs and groups");
+    expect(source).toContain("data-testid=\"discoverLoadTopics\"");
+    expect(source).toContain("normalizeTagLabel");
+    expect(source).not.toMatch(/useEffect\s*\(/);
   });
 
   it("does not touch private groups, inbox, or follows", () => {

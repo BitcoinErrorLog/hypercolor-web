@@ -1,5 +1,7 @@
 import { PROFILE_HYDRATE_CONCURRENCY } from "@/flags/config";
+import { nameHasLookalikeCharacters } from "@/lib/confusable-name";
 import { mapPool } from "@/lib/map-pool";
+import { PUBLIC_BIO_DISPLAY_MAX_CHARS, PUBLIC_NAME_DISPLAY_MAX_CHARS } from "@/lib/public-text";
 import type { NexusDiscoveryApi } from "@/services/nexus/NexusDiscoveryClient";
 import { NexusDiscoveryClient } from "@/services/nexus/NexusDiscoveryClient";
 import type { PubkyKey } from "@/types";
@@ -13,7 +15,14 @@ export type UsernameSearchHit = {
   pubky: PubkyKey;
   name: string | null;
   bio: string | null;
+  lookalike: boolean;
 };
+
+function clipText(value: string, maxChars: number): string {
+  const chars = [...value];
+  if (chars.length <= maxChars) return value;
+  return chars.slice(0, maxChars).join("");
+}
 
 export type UsernameSearchResult =
   | { ok: true; kind: "pubky"; pubky: PubkyKey }
@@ -67,12 +76,15 @@ export function createUsernameSearch(deps: UsernameSearchDeps) {
 
       const hits = await mapPool(found.value, PROFILE_HYDRATE_CONCURRENCY, async (pubky) => {
         const profile = await deps.user(pubky);
-        const name = profile.ok ? profile.value?.details?.name?.trim() ?? null : null;
-        const bio = profile.ok ? profile.value?.details?.bio?.trim() ?? null : null;
+        const nameRaw = profile.ok ? profile.value?.details?.name?.trim() ?? null : null;
+        const bioRaw = profile.ok ? profile.value?.details?.bio?.trim() ?? null : null;
+        const name = nameRaw && nameRaw.length > 0 ? clipText(nameRaw, PUBLIC_NAME_DISPLAY_MAX_CHARS) : null;
+        const bio = bioRaw && bioRaw.length > 0 ? clipText(bioRaw, PUBLIC_BIO_DISPLAY_MAX_CHARS) : null;
         return {
           pubky,
-          name: name && name.length > 0 ? name : null,
-          bio: bio && bio.length > 0 ? bio : null,
+          name,
+          bio,
+          lookalike: name ? nameHasLookalikeCharacters(name, trimmed) : false,
         };
       });
 

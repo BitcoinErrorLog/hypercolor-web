@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ContactDetail } from "@/components/contact-detail";
 import { FollowsImportPanel } from "@/components/follows-import-panel";
+import { PubkyAnchors } from "@/components/pubky-anchors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePathSegment } from "@/hooks/usePathSegment";
@@ -117,7 +118,7 @@ export function ContactsPage() {
           </Link>
         </div>
 
-        <FollowsImportPanel ownerPubky={ownerPubky} onImported={reload} />
+        <FollowsImportPanel key={ownerPubky ?? "none"} ownerPubky={ownerPubky} onImported={reload} />
 
         <form
           className="mt-4 space-y-2"
@@ -207,7 +208,12 @@ export function ContactsPage() {
                 <p className="font-medium">
                   {hit.name ? sanitizePublicName(hit.name) : shortPubky(hit.pubky)}
                 </p>
-                <p className="break-all font-mono text-xs text-muted-foreground">{hit.pubky}</p>
+                <PubkyAnchors pubky={hit.pubky} />
+                {hit.lookalike ? (
+                  <p className="text-xs text-amber-400" data-testid="contactSearchLookalike">
+                    Name contains lookalike characters. Compare the full pubky.
+                  </p>
+                ) : null}
                 {hit.bio ? (
                   <p className="text-xs text-muted-foreground">{sanitizePublicBio(hit.bio)}</p>
                 ) : null}
@@ -241,9 +247,7 @@ export function ContactsPage() {
                       ? sanitizeDisplayName(contact.displayName)
                       : shortPubky(contact.pubky)}
                   </p>
-                  <p className="break-all font-mono text-xs text-muted-foreground">
-                    {contact.pubky}
-                  </p>
+                  <PubkyAnchors pubky={contact.pubky} />
                   <Button
                     type="button"
                     size="sm"

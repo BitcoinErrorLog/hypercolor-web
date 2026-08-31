@@ -91,4 +91,20 @@ describe("tagChannel reader", () => {
     });
     expect(searchPostsByTag).not.toHaveBeenCalled();
   });
+
+  it("does not hydrate more post keys than the client-side timeline cap", async () => {
+    const keys = Array.from({ length: 40 }, (_, index) => ({
+      author: AUTHOR,
+      postId: `p${index}`,
+      score: 1,
+    }));
+    const post = vi.fn().mockResolvedValue({ ok: true, value: null });
+    await createTagChannelReader(
+      api({
+        searchPostsByTag: vi.fn().mockResolvedValue({ ok: true, value: keys }),
+        post,
+      }),
+    ).loadTimeline("rust");
+    expect(post).toHaveBeenCalledTimes(20);
+  });
 });

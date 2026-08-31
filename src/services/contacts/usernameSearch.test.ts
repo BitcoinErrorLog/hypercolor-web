@@ -35,8 +35,8 @@ describe("usernameSearch", () => {
     expect(result.ok && result.kind === "matches").toBe(true);
     if (result.ok && result.kind === "matches") {
       expect(result.hits).toEqual([
-        { pubky: PEER, name: "Ada", bio: "dev" },
-        { pubky: OWNER, name: null, bio: null },
+        { pubky: PEER, name: "Ada", bio: "dev", lookalike: false },
+        { pubky: OWNER, name: null, bio: null, lookalike: false },
       ]);
     }
     expect(searchUsersByName).toHaveBeenCalledWith("Ada", { skip: 0, limit: 8 });
@@ -72,5 +72,20 @@ describe("usernameSearch", () => {
     expect(query).toEqual({ skip: 0, limit: 8 });
     expect(JSON.stringify(searchUsersByName.mock.calls)).not.toContain("hypercolor.app");
     expect(JSON.stringify(searchUsersByName.mock.calls)).not.toContain("/group/");
+  });
+
+  it("caps name and bio at the parse boundary and flags a lookalike name", async () => {
+    const searchUsersByName = vi.fn().mockResolvedValue({ ok: true, value: [PEER] });
+    const user = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { details: { name: `\u0430da${"x".repeat(80)}`, bio: "b".repeat(200) } },
+    });
+    const result = await createUsernameSearch({ searchUsersByName, user }).search("ada");
+    expect(result.ok && result.kind === "matches").toBe(true);
+    if (result.ok && result.kind === "matches") {
+      expect(result.hits[0]?.name?.length).toBe(64);
+      expect(result.hits[0]?.bio?.length).toBe(140);
+      expect(result.hits[0]?.lookalike).toBe(true);
+    }
   });
 });

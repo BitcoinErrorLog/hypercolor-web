@@ -1,5 +1,11 @@
 import { DEFAULT_NEXUS_BASE_URL } from "@/flags/config";
-import { parsePostKey } from "@/lib/tag-channel";
+import {
+  NEXUS_FETCH_INIT,
+  parseNexusJson,
+  readNexusResponseText,
+} from "@/lib/nexus-http";
+import { PUBLIC_POST_DISPLAY_MAX_CHARS } from "@/lib/public-text";
+import { normalizeTagLabel, parsePostKey } from "@/lib/tag-channel";
 import type { NexusFailure, NexusListQuery, NexusResult } from "@/services/NexusClient";
 import type { PubkyKey } from "@/types";
 import { parsePubky } from "@/utils/pubkyId";
@@ -45,9 +51,9 @@ export type NexusDiscoveryClientOptions = {
   fetchFn?: typeof fetch;
 };
 
-const HOT_TAGS_DEFAULT_LIMIT = 40;
-const POSTS_BY_TAG_DEFAULT_LIMIT = 20;
-const USER_SEARCH_DEFAULT_LIMIT = 8;
+export const HOT_TAGS_DEFAULT_LIMIT = 40;
+export const POSTS_BY_TAG_DEFAULT_LIMIT = 20;
+export const USER_SEARCH_DEFAULT_LIMIT = 8;
 
 function readConfiguredNexusBaseUrl(): string {
   try {
@@ -87,7 +93,7 @@ export function createNexusDiscoveryClient(
     const url = `${currentBaseUrl()}${path}`;
     let response: Response;
     try {
-      response = await fetchFn(url);
+      response = await fetchFn(url, NEXUS_FETCH_INIT);
     } catch (err) {
       return {
         ok: false,
@@ -106,8 +112,8 @@ export function createNexusDiscoveryClient(
     if (!response.ok) {
       let detail = response.statusText;
       try {
-        const text = await response.text();
-        if (text) detail = text.slice(0, 240);
+        const capped = await readNexusResponseText(response, 1024);
+        if (capped.ok && capped.text) detail = capped.text.slice(0, 240);
       } catch {
         // status text is enough
       }
@@ -119,17 +125,25 @@ export function createNexusDiscoveryClient(
       };
     }
 
-    let body: unknown;
-    try {
-      body = await response.json();
-    } catch (err) {
+    const capped = await readNexusResponseText(response);
+    if (!capped.ok) {
       return {
         ok: false,
         kind: "decode",
         status: response.status,
-        message: err instanceof Error ? err.message : "Nexus response was not JSON",
+        message: `Nexus ${path} returned a body larger than the allowed limit`,
       };
     }
+    const parsed = parseNexusJson(capped.text);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        kind: "decode",
+        status: response.status,
+        message: "Nexus response was not JSON",
+      };
+    }
+    const body = parsed.value;
 
     const value = parse(body);
     if (value === null) {
@@ -147,12 +161,16 @@ export function createNexusDiscoveryClient(
     hotTags(query) {
       // Global index only. Do not send user_id / reach — that would tell
       // Nexus who is browsing rooms.
-      return getJson(`/v0/tags/hot?${listQuery(query, HOT_TAGS_DEFAULT_LIMIT)}`, parseHotTags);
+      const limit = query?.limit ?? HOT_TAGS_DEFAULT_LIMIT;
+      return getJson(`/v0/tags/hot?${listQuery(query, HOT_TAGS_DEFAULT_LIMIT)}`, (body) =>
+        parseHotTags(body, limit),
+      );
     },
     searchPostsByTag(tag, query) {
+      const limit = query?.limit ?? POSTS_BY_TAG_DEFAULT_LIMIT;
       return getJson(
         `/v0/search/posts/by_tag/${encodeURIComponent(tag)}?${listQuery(query, POSTS_BY_TAG_DEFAULT_LIMIT)}`,
-        parsePostsByTag,
+        (body) => parsePostsByTag(body, limit),
       );
     },
     post(author, postId) {
@@ -163,34 +181,45 @@ export function createNexusDiscoveryClient(
       );
     },
     searchUsersByName(prefix, query) {
+      const limit = query?.limit ?? USER_SEARCH_DEFAULT_LIMIT;
       return getJson(
         `/v0/search/users/by_name/${encodeURIComponent(prefix)}?${listQuery(query, USER_SEARCH_DEFAULT_LIMIT)}`,
-        parsePubkyList,
+        (body) => parsePubkyList(body, limit),
         true,
       );
     },
   };
 }
 
-function parseHotTags(body: unknown): NexusHotTag[] | null {
+function clipText(value: string, maxChars: number): string {
+  const chars = [...value];
+  if (chars.length <= maxChars) return value;
+  return chars.slice(0, maxChars).join("");
+}
+
+function parseHotTags(body: unknown, maxItems: number): NexusHotTag[] | null {
   if (!Array.isArray(body)) return null;
   const out: NexusHotTag[] = [];
   for (const item of body) {
+    if (out.length >= maxItems) break;
     if (typeof item !== "object" || item === null) continue;
     const rec = item as { label?: unknown; tagged_count?: unknown; taggers_count?: unknown };
     if (typeof rec.label !== "string" || rec.label.length === 0) continue;
+    const label = normalizeTagLabel(rec.label);
+    if (!label) continue;
     const taggedCount = asNonNegativeInt(rec.tagged_count);
     const taggersCount = asNonNegativeInt(rec.taggers_count);
     if (taggedCount === null || taggersCount === null) continue;
-    out.push({ label: rec.label, taggedCount, taggersCount });
+    out.push({ label, taggedCount, taggersCount });
   }
   return out;
 }
 
-function parsePostsByTag(body: unknown): NexusPostByTag[] | null {
+function parsePostsByTag(body: unknown, maxItems: number): NexusPostByTag[] | null {
   if (!Array.isArray(body)) return null;
   const out: NexusPostByTag[] = [];
   for (const item of body) {
+    if (out.length >= maxItems) break;
     if (typeof item !== "object" || item === null) continue;
     const rec = item as { post_key?: unknown; score?: unknown };
     const key = parsePostKey(rec.post_key);
@@ -225,16 +254,17 @@ function parsePublicPost(body: unknown): NexusPublicPost | null {
   return {
     author,
     postId: rec.id,
-    content: rec.content,
+    content: clipText(rec.content, PUBLIC_POST_DISPLAY_MAX_CHARS),
     indexedAt,
     kind,
   };
 }
 
-function parsePubkyList(body: unknown): PubkyKey[] | null {
+function parsePubkyList(body: unknown, maxItems: number): PubkyKey[] | null {
   if (!Array.isArray(body)) return null;
   const out: PubkyKey[] = [];
   for (const item of body) {
+    if (out.length >= maxItems) break;
     if (typeof item !== "string") continue;
     const pubky = parsePubky(item);
     if (!pubky) continue;
