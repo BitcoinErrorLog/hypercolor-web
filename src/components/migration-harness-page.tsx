@@ -17,6 +17,8 @@ import {
   runMigrationTo,
   runMigrationRebindPeer,
   runMigrationRebindPeerLink,
+  runMigrationDropPeer,
+  runMigrationEnsurePeer,
   runMigrationBustPeerHomeserver,
 } from "@/services/link/migrationHarness";
 
@@ -26,6 +28,8 @@ declare global {
     runMigrationTo?: typeof runMigrationTo;
     runMigrationRebindPeer?: typeof runMigrationRebindPeer;
     runMigrationRebindPeerLink?: typeof runMigrationRebindPeerLink;
+    runMigrationDropPeer?: typeof runMigrationDropPeer;
+    runMigrationEnsurePeer?: typeof runMigrationEnsurePeer;
     runMigrationBustPeerHomeserver?: typeof runMigrationBustPeerHomeserver;
     runMigrationIdentity?: typeof runMigrationIdentity;
     runMigrationLocalBodies?: typeof runMigrationLocalBodies;
@@ -47,6 +51,8 @@ export function MigrationHarnessPage() {
     window.runMigrationTo = runMigrationTo;
     window.runMigrationRebindPeer = runMigrationRebindPeer;
     window.runMigrationRebindPeerLink = runMigrationRebindPeerLink;
+    window.runMigrationDropPeer = runMigrationDropPeer;
+    window.runMigrationEnsurePeer = runMigrationEnsurePeer;
     window.runMigrationBustPeerHomeserver = runMigrationBustPeerHomeserver;
     window.runMigrationIdentity = runMigrationIdentity;
     window.runMigrationLocalBodies = runMigrationLocalBodies;
@@ -64,6 +70,8 @@ export function MigrationHarnessPage() {
       delete window.runMigrationTo;
       delete window.runMigrationRebindPeer;
       delete window.runMigrationRebindPeerLink;
+      delete window.runMigrationDropPeer;
+      delete window.runMigrationEnsurePeer;
       delete window.runMigrationBustPeerHomeserver;
       delete window.runMigrationIdentity;
       delete window.runMigrationLocalBodies;

@@ -242,6 +242,21 @@ export const LinkService = {
     return LinkService.ensureLinkWith(peerPubky);
   },
 
+  /**
+   * Drop a peer's stale Encrypted Link row without starting a new handshake.
+   * Pair with pkarr cache bust + bilateral ensure on both sides.
+   */
+  async dropPeerLinkAfterHomeserverMigration(peerPubky: PubkyKey): Promise<void> {
+    const active = requireActiveSession();
+    const key = linkKey(active.pubky, peerPubky);
+    const live = liveHandles.get(key);
+    if (live) {
+      await closeQuietly(live.linkId);
+      liveHandles.delete(key);
+    }
+    await StorageService.deleteLink(active.pubky, peerPubky);
+  },
+
   async establishedLinkId(peerPubky: PubkyKey): Promise<string> {
     const ownerPubky = await requireOwner();
     return requireEstablishedHandle(ownerPubky, peerPubky);
@@ -287,9 +302,16 @@ export const LinkService = {
   },
 
   async ensureLinkWith(peerPubky: PubkyKey): Promise<LinkStatus> {
+    return LinkService.ensureLinkWithOptions(peerPubky, { allowInitiate: true });
+  },
+
+  async ensureLinkWithOptions(
+    peerPubky: PubkyKey,
+    options: { allowInitiate: boolean },
+  ): Promise<LinkStatus> {
     return withQueue(peerPubky, async () => {
       try {
-        const outcome = await ensureLinkLocked(peerPubky, true, false);
+        const outcome = await ensureLinkLocked(peerPubky, options.allowInitiate, false);
         return outcome === "idle" ? "error" : outcome;
       } catch (err) {
         if (isLinkNativeError(err) && err.code === "unavailable") return "native-missing";
@@ -879,7 +901,7 @@ async function advanceLiveHandshake(
 
     await StorageService.updateLinkSnapshot(ownerPubky, peerPubky, result.snapshot, "handshaking");
 
-    if (live.role === "initiator" && ownerPubky < peerPubky) {
+    if (live.role === "initiator") {
       const marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, LINK_RECEIVER_PATH);
       if (marker) {
         const inbound = await probeInbound(

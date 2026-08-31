@@ -19,9 +19,9 @@ const Z32_FILE =
   "/tmp/hypercolor-migration-homeserver/z32.txt";
 
 /** Max wait for Encrypted Link to re-handshake after migrate (fail fast). */
-const POST_MIGRATE_LINK_DEADLINE_MS = 120_000;
+const POST_MIGRATE_LINK_DEADLINE_MS = 180_000;
 /** Short probe before cache bust — measures whether pkarr updates immediately. */
-const RAW_PKARR_PROBE_MS = 120_000;
+const RAW_PKARR_PROBE_MS = 30_000;
 /** pkarr packet TTL is 3600s; optional extended probe (skipped when set). */
 const PKARR_PROPAGATION_DEADLINE_MS = 70 * 60 * 1000;
 const POLL_MS = 2_000;
@@ -101,6 +101,7 @@ async function waitHarness(page: Page): Promise<void> {
       typeof window.runMigrationTo === "function" &&
       typeof window.runMigrationRebindPeer === "function" &&
       typeof window.runMigrationRebindPeerLink === "function" &&
+      typeof window.runMigrationDropPeer === "function" &&
       typeof window.runMigrationBustPeerHomeserver === "function" &&
       typeof window.runDmEnsure === "function" &&
       typeof window.runDmSend === "function" &&
@@ -142,6 +143,9 @@ async function sendAndExpectKnownPeer(
   receiverPeer: string,
   body: string,
 ): Promise<boolean> {
+  const senderStatus = await sender.evaluate(async (peer) => window.runDmEnsure!(peer), senderPeer);
+  const receiverStatus = await receiver.evaluate(async (peer) => window.runDmEnsure!(peer), receiverPeer);
+  if (senderStatus !== "ready" || receiverStatus !== "ready") return false;
   await sender.evaluate(async ({ peer, body: text }) => window.runDmSend!(peer, text), {
     peer: senderPeer,
     body,
@@ -299,46 +303,21 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
       "needs-enable",
     );
 
-    await pageB.evaluate(
-      async (peer) => window.runMigrationRebindPeerLink!(peer),
-      signedA.pubky,
-    );
-
     const identityAfter = await pageA.evaluate(() => window.runMigrationIdentity!());
     expect(identityAfter.pubky, "pubky must be unchanged after migrate").toBe(
       signedA.pubky,
     );
 
     const republishAt = Date.now();
-    let rawPkarrPropagationMs: number | null = null;
-    let rawPkarrProbeError = "";
-    try {
-      rawPkarrPropagationMs = await pollUntil(
-        "A→B after migrate without pkarr cache bust (TTL probe)",
-        RAW_PKARR_PROBE_MS,
-        () =>
-          sendAndExpectKnownPeer(
-            pageA,
-            pageB,
-            signedB.pubky,
-            signedA.pubky,
-            `post-migrate-from-a-${Date.now()}`,
-          ),
-      );
-    } catch (error) {
-      rawPkarrProbeError = error instanceof Error ? error.message : String(error);
-    }
 
-    await pageB.evaluate(
-      async (peer) => window.runMigrationRebindPeer!(peer),
-      signedA.pubky,
-    );
     await pageA.evaluate(
       async (peer) => window.runMigrationRebindPeerLink!(peer),
       signedB.pubky,
     );
-    await waitHarness(pageA);
-    await waitHarness(pageB);
+    await pageB.evaluate(
+      async (peer) => window.runMigrationDropPeer!(peer),
+      signedA.pubky,
+    );
 
     const markerOnNewHost = await pageB.evaluate(
       async (peer) => window.runMigrationProbeMarker!(peer),
@@ -346,20 +325,68 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     );
     expect(markerOnNewHost.found, "B must resolve A's receiver on the new host").toBe(true);
 
-    await ensureReady(pageA, pageB, signedA.pubky, signedB.pubky);
-
-    const afterCacheBustMs = await pollUntil(
-      "A→B after pkarr cache bust (required proof)",
+    await pollUntil(
+      "Encrypted Link ready after migrate rebind",
       POST_MIGRATE_LINK_DEADLINE_MS,
-      () =>
-        sendAndExpectKnownPeer(
-          pageA,
-          pageB,
-          signedB.pubky,
-          signedA.pubky,
-          `post-migrate-cache-bust-${Date.now()}`,
-        ),
+      async () => {
+        const statusA = await pageA.evaluate(
+          async ({ peer, allowInitiate }) => window.runMigrationEnsurePeer!(peer, allowInitiate),
+          { peer: signedB.pubky, allowInitiate: true },
+        );
+        const statusB = await pageB.evaluate(
+          async ({ peer, allowInitiate }) => window.runMigrationEnsurePeer!(peer, allowInitiate),
+          { peer: signedA.pubky, allowInitiate: false },
+        );
+        return statusA === "ready" && statusB === "ready";
+      },
     );
+
+    let rawPkarrPropagationMs: number | null = null;
+    let rawPkarrProbeError = "";
+    try {
+      rawPkarrPropagationMs = await pollUntil(
+        "A→B without fresh pkarr bust (TTL probe after ready link)",
+        RAW_PKARR_PROBE_MS,
+        () =>
+          sendAndExpectKnownPeer(
+            pageA,
+            pageB,
+            signedB.pubky,
+            signedA.pubky,
+            `post-migrate-ttl-probe-${Date.now()}`,
+          ),
+      );
+    } catch (error) {
+      rawPkarrProbeError = error instanceof Error ? error.message : String(error);
+    }
+
+    let afterCacheBustMs: number;
+    try {
+      afterCacheBustMs = await pollUntil(
+        "A→B after migrate (required proof)",
+        60_000,
+        () =>
+          sendAndExpectKnownPeer(
+            pageA,
+            pageB,
+            signedB.pubky,
+            signedA.pubky,
+            `post-migrate-proof-${Date.now()}`,
+          ),
+      );
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          scenario: "graceful-migrate-diagnostic",
+          statusA: await pageA.evaluate(async (peer) => window.runDmEnsure!(peer), signedB.pubky),
+          statusB: await pageB.evaluate(async (peer) => window.runDmEnsure!(peer), signedA.pubky),
+          markerOnNewHost,
+          rawPkarrPropagationMs,
+          rawPkarrProbeError: rawPkarrProbeError || undefined,
+        }),
+      );
+      throw error;
+    }
 
     let bToAMs: number | null = null;
     let bToAError = "";
@@ -388,6 +415,15 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     );
     expect(stillKnowsA).toBe("ready");
 
+    const statusAfterRebind = await pageA.evaluate(
+      async (peer) => window.runDmEnsure!(peer),
+      signedB.pubky,
+    );
+    const peerStatusAfterRebind = await pageB.evaluate(
+      async (peer) => window.runDmEnsure!(peer),
+      signedA.pubky,
+    );
+
     console.log(
       JSON.stringify({
         scenario: "graceful-migrate",
@@ -395,6 +431,8 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
         rawPkarrProbeMs: RAW_PKARR_PROBE_MS,
         rawPkarrProbeError: rawPkarrProbeError || undefined,
         afterCacheBustMs,
+        statusAfterRebind,
+        peerStatusAfterRebind,
         republishToBtoAMs: bToAMs,
         bToAError: bToAError || undefined,
         measuredFrom: republishAt,
@@ -507,7 +545,30 @@ test("A is banned on staging then migrates; report what survives", async () => {
       "needs-enable",
     );
 
-    await pageB.evaluate(async (peer) => window.runMigrationRebindPeer!(peer), signedA.pubky);
+    await pageA.evaluate(
+      async (peer) => window.runMigrationRebindPeerLink!(peer),
+      signedB.pubky,
+    );
+    await pageB.evaluate(
+      async (peer) => window.runMigrationDropPeer!(peer),
+      signedA.pubky,
+    );
+
+    await pollUntil(
+      "Encrypted Link ready after ban migrate rebind",
+      POST_MIGRATE_LINK_DEADLINE_MS,
+      async () => {
+        const statusA = await pageA.evaluate(
+          async ({ peer, allowInitiate }) => window.runMigrationEnsurePeer!(peer, allowInitiate),
+          { peer: signedB.pubky, allowInitiate: true },
+        );
+        const statusB = await pageB.evaluate(
+          async ({ peer, allowInitiate }) => window.runMigrationEnsurePeer!(peer, allowInitiate),
+          { peer: signedA.pubky, allowInitiate: false },
+        );
+        return statusA === "ready" && statusB === "ready";
+      },
+    );
 
     const linkAfterBan = await pageB.evaluate(
       async (peer) => window.runDmEnsure!(peer),

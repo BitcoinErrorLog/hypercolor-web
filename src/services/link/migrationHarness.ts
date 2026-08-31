@@ -137,10 +137,21 @@ export async function runMigrationBustPeerHomeserver(peerPubky: string): Promise
   await PaykitLinkWeb.resolveMostRecentHomeserver(peerPubky.trim());
 }
 
+export async function runMigrationEnsurePeer(
+  peerPubky: string,
+  allowInitiate: boolean,
+): Promise<string> {
+  return LinkService.ensureLinkWithOptions(peerPubky.trim(), { allowInitiate });
+}
+
+export async function runMigrationDropPeer(peerPubky: string): Promise<void> {
+  await PaykitLinkWeb.resolveMostRecentHomeserver(peerPubky.trim());
+  await LinkService.dropPeerLinkAfterHomeserverMigration(peerPubky.trim());
+}
+
 export async function runMigrationRebindPeer(peerPubky: string): Promise<string> {
-  const peer = peerPubky.trim();
-  await PaykitLinkWeb.resolveMostRecentHomeserver(peer);
-  return LinkService.rebindPeerLinkAfterHomeserverMigration(peer);
+  await runMigrationDropPeer(peerPubky);
+  return LinkService.ensureLinkWith(peerPubky.trim());
 }
 
 export async function runMigrationIdentity(): Promise<MigrationIdentity> {
