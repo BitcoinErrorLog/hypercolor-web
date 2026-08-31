@@ -14,9 +14,19 @@ describe("chats-page empty state", () => {
     expect(source).toContain("No conversations yet.");
   });
 
-  it("has empty-state guidance copy", () => {
-    expect(source).toMatch(
-      /Start a new chat from the field above|Search for a contact to start chatting/,
-    );
+  it("keeps control copy as the default empty-state hint", () => {
+    expect(source).toContain("Start a new chat from the field above.");
+    expect(source).toContain("emptyStateHint");
+    expect(source).toContain("{emptyStateHint}");
+  });
+
+  it("owns the Mode A candidate empty-state hint for the host to pass", () => {
+    expect(source).toContain("Try the search field above to start a chat.");
+  });
+
+  it("does not fetch assignment or import vibeware", () => {
+    expect(source).not.toContain("vibeware");
+    expect(source).not.toMatch(/\bfetch\b/);
+    expect(source).not.toContain("fetchAssignment");
   });
 });

@@ -45,9 +45,9 @@ Sentry.
 
 This app is `output: "export"`. Next.js inlines every `NEXT_PUBLIC_*`
 value into the shipped client bundle, so a static export cannot hide
-`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`. The token is a **public write-only**
-credential: anyone who downloads the site can read it and POST to the
-ingest URL.
+`NEXT_PUBLIC_VIBEWARE_INGEST_TOKEN`. The token is a **public ingest**
+credential: anyone who downloads the site can read it and POST evidence
+or GET Mode A assignment.
 
 The ingest store MUST re-validate every event with the P0
 `validateEvidencePayload` in `scripts/vibeware-evidence.mjs` (already true
@@ -55,6 +55,20 @@ on the store). Client-side validation is not a trust boundary. Rate-limit
 and fail closed on the store. Do not put a real secret in `.env` or the
 build. A same-origin proxy that could hold a private token is out of
 scope for static export.
+
+## Mode A assignment
+
+`NEXT_PUBLIC_VIBEWARE_EXPERIMENT_ID` is optional; when it is unset the forbidden
+client in `src/services/vibeware/assignment.ts` does not fetch and treats the
+cohort as `control`. When it is set, the client derives
+`GET /v1/experiments/:id/assignment?cohort_key=` from
+`NEXT_PUBLIC_VIBEWARE_INGEST_URL` by stripping `/v1/evidence`, authorizes with
+the same public ingest token (write-only plus this read; never the dashboard
+or internal tokens), and fails closed to `control` on any missing config,
+network, HTTP, or parse error. Kill lives on the store: after kill the store
+returns `control` and the client only displays the bucket it received.
+Writable surfaces may render a host-supplied `emptyStateHint` (or similar)
+and must not import this client or fetch assignment themselves.
 
 ## Candidate PRs
 

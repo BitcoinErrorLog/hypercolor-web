@@ -17,6 +17,9 @@ export type ChatsPageRow = {
   unreadCount: number;
 };
 
+export const CHATS_EMPTY_STATE_CONTROL_HINT = "Start a new chat from the field above.";
+export const CHATS_EMPTY_STATE_CANDIDATE_HINT = "Try the search field above to start a chat.";
+
 export function ChatsPage({
   conversationId,
   enableCta,
@@ -29,6 +32,7 @@ export function ChatsPage({
   startError,
   onChangePeerDraft,
   onStartChat,
+  emptyStateHint = CHATS_EMPTY_STATE_CONTROL_HINT,
 }: {
   conversationId: string | null;
   enableCta: ReactNode;
@@ -41,6 +45,7 @@ export function ChatsPage({
   startError: string | null;
   onChangePeerDraft: (value: string) => void;
   onStartChat: () => void;
+  emptyStateHint?: string;
 }) {
   return (
     <div className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]" data-testid="chatsScreen">
@@ -83,7 +88,7 @@ export function ChatsPage({
           <div className="mt-8 space-y-2" data-testid="chatsEmpty">
             <p className="text-muted-foreground">No conversations yet.</p>
             <p className="text-sm text-muted-foreground">
-              Start a new chat from the field above.
+              {emptyStateHint}
             </p>
           </div>
         ) : (
