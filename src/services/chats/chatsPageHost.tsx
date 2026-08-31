@@ -97,7 +97,7 @@ export function ChatsPageHost() {
     <ChatsPage
       conversationId={conversationId}
       enableCta={<EnableMessagingCta testId="chatsEnableMessaging" />}
-      thread={<ThreadViewHost conversationId={conversationId} />}
+      thread={conversationId ? <ThreadViewHost conversationId={conversationId} /> : null}
       rows={mapInboxRowsToChatsPageRows(inbox.rows)}
       pendingRequests={inbox.pendingRequests}
       inboxError={inbox.error}

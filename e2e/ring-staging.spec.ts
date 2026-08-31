@@ -115,10 +115,12 @@ async function completeRingOnboarding(
     return { statusCount, statusTexts, storeKinds, openChatsCount };
   };
   await snap("after-approve");
+  console.info(`[ring-trace ${label}] waiting for enable paint`);
   try {
-    await expect(status.filter({ hasText: "Encrypted messaging enabled" })).toBeVisible({
+    await expect(status).toHaveAttribute("data-hc-store-kind", "enabled", {
       timeout: 60_000,
     });
+    await expect(status).toHaveText("Encrypted messaging enabled");
   } catch (error) {
     const html = page.locator("html");
     const failSnap = await snap("enable-fail");
@@ -142,15 +144,20 @@ async function completeRingOnboarding(
     });
     throw error;
   }
+  console.info(`[ring-trace ${label}] enable painted`);
   await expect(page.getByText(identity.pubky)).toBeVisible();
 }
 
 async function openChats(page: Page): Promise<void> {
   const open = page.getByTestId("enableOpenChats");
   await expect(open).toBeVisible({ timeout: 30_000 });
+  console.info("[ring-trace] Open chats visible");
   await open.click({ noWaitAfter: true, timeout: 15_000 });
-  await expect(page).toHaveURL(/\/chats/, { timeout: 15_000 });
+  console.info("[ring-trace] Open chats clicked", page.url());
+  expect(page.url()).toMatch(/\/chats(\/|\?|$)/);
   const chats = page.getByTestId("chatsScreen");
+  console.info("[ring-trace] waiting for chatsScreen");
+  page.setDefaultNavigationTimeout(100);
   try {
     await expect(chats).toBeVisible({ timeout: 30_000 });
   } catch (error) {
@@ -181,6 +188,8 @@ async function openChats(page: Page): Promise<void> {
       ancestorHiddenCount,
     });
     throw error;
+  } finally {
+    page.setDefaultNavigationTimeout(10_000);
   }
   await expect(page.getByTestId("chatsEnableMessaging")).toHaveCount(0, { timeout: 15_000 });
 }
