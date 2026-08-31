@@ -16,6 +16,7 @@ const COPY_NAMES = ["app", "public", "next.config.ts", "tsconfig.json"];
 const LINK_NAMES = [
   "src",
   "vendor",
+  "scripts",
   "node_modules",
   "package.json",
   "package-lock.json",
@@ -27,7 +28,7 @@ const LINK_NAMES = [
 export function prepareNextDistDir() {
   const project = process.cwd();
   rmSync(join(project, "tmp"), { recursive: true, force: true });
-  rmSync(LOCAL_APP, { recursive: true, force: true });
+  rmSync(LOCAL_APP, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   mkdirSync(LOCAL_APP, { recursive: true });
   for (const name of COPY_NAMES) {
     const from = join(project, name);

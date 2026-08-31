@@ -38,8 +38,12 @@ if (remote) {
 
 const port = process.env.PLAYWRIGHT_RING_PORT ?? "3010";
 const base = `http://127.0.0.1:${port}`;
+const useProduction = process.env.PROOF_USE_PRODUCTION === "1";
+const serverScript = useProduction
+  ? "e2e/support/run-next-production.mjs"
+  : "e2e/support/run-next-local.mjs";
 
-const server = spawn("node", ["e2e/support/run-next-local.mjs", "--port", port], {
+const server = spawn("node", [serverScript, "--port", port], {
   stdio: "inherit",
   env: { ...process.env, COPYFILE_DISABLE: "1", NEXT_PUBLIC_APP_ORIGIN: base },
 });

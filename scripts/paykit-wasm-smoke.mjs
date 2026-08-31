@@ -58,6 +58,7 @@ const requiredSnippets = [
   "export function sb2Sign(",
   "export function sb2VerifySignature(",
   "export function sb2Decrypt(",
+  "export function verifyAppCert(",
   "export class AuthFlowHandle",
   "authorizationUrl(): string;",
   "awaitApproval(): Promise<any>;",
