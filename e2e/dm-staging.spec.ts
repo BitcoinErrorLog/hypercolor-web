@@ -1,11 +1,12 @@
 import { chromium, expect, test, type Page } from "@playwright/test";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { stagingBaseUrl } from "./support/staging-base-url";
 
 const execFileAsync = promisify(execFile);
 const GENERATE =
   "/Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh";
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
+const BASE_URL = stagingBaseUrl();
 
 type SignupResult = { pubky: string; receiverPath: string };
 

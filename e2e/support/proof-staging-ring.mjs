@@ -45,7 +45,12 @@ const serverScript = useProduction
 
 const server = spawn("node", [serverScript, "--port", port], {
   stdio: "inherit",
-  env: { ...process.env, COPYFILE_DISABLE: "1", NEXT_PUBLIC_APP_ORIGIN: base },
+  env: {
+    ...process.env,
+    COPYFILE_DISABLE: "1",
+    NEXT_PUBLIC_APP_ORIGIN: base,
+    PLAYWRIGHT_RING_PORT: port,
+  },
 });
 
 function shutdown() {

@@ -9,7 +9,15 @@ import { cpSync, existsSync, mkdirSync, rmSync, symlinkSync, watch } from "node:
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-export const LOCAL_APP = "/tmp/hypercolor-ringsim-app";
+function shadowPort() {
+  return (
+    process.env.PLAYWRIGHT_STAGING_PORT ??
+    process.env.PLAYWRIGHT_RING_PORT ??
+    "3000"
+  );
+}
+
+export const LOCAL_APP = `/tmp/hypercolor-ringsim-app-${shadowPort()}`;
 export const LOCAL_NEXT_DIST = join(LOCAL_APP, ".next");
 
 const COPY_NAMES = ["app", "public", "next.config.ts", "tsconfig.json"];

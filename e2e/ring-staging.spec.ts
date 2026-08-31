@@ -4,12 +4,9 @@ import {
   extractAuthUrl,
   type RingSimulatorHandle,
 } from "./support/ring-simulator";
+import { stagingBaseUrl } from "./support/staging-base-url";
 
-const BASE_URL =
-  process.env.PLAYWRIGHT_BASE_URL ??
-  (process.env.RUN_STAGING_RING === "1"
-    ? `http://localhost:${process.env.PLAYWRIGHT_RING_PORT ?? "3010"}`
-    : "http://localhost:3000");
+const BASE_URL = stagingBaseUrl();
 
 async function waitForWelcomeReady(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Hypercolor" })).toBeVisible({
