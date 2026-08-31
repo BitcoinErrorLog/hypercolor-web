@@ -66,6 +66,7 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("ChatsPageHost");
     expect(host).toMatch(/\{enabled && chatsMounted \?\s*\([\s\S]*<ChatsPageHost \/>/);
     expect(host).toContain("setChatsMounted(true)");
+    expect(host.indexOf("setChatsMounted(true)")).toBeGreaterThan(host.indexOf("onOpenChats"));
     expect(host).toContain("setChatsOpen(true)");
     expect(host).toContain("markChatsRequested()");
     expect(host).toContain("isChatsRequested()");

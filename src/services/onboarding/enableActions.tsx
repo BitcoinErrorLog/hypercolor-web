@@ -57,7 +57,6 @@ export function EnablePageHost() {
           setProvisionedPath(result.receiverPath);
           setEnabled(result.pubky);
         });
-        setChatsMounted(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authorization failed");
         emitCoarseError("enable", err);
@@ -128,6 +127,7 @@ export function EnablePageHost() {
           }}
           onOpenChats={() => {
             markChatsRequested();
+            setChatsMounted(true);
             setChatsOpen(true);
             if (
               window.location.pathname !== "/chats" &&
