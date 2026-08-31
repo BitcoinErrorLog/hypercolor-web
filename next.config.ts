@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
     unoptimized: true,
   },
   webpack: (config, { isServer, webpack }) => {
+    config.plugins.push(new webpack.IgnorePlugin({ resourceRegExp: /\/\._[^/]+$/ }));
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,

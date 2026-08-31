@@ -35,6 +35,10 @@ const eslintConfig = defineConfig([
     "src/utils/jsonDuplicateKeys.ts",
     "src/utils/onchainAddress.ts",
     "src/utils/pubkyId.ts",
+    "e2e/support/vendor/**",
+    "e2e/support/.vendor/**",
+    ".next-playwright/**",
+    "tmp/**",
   ]),
 ]);
 

@@ -22,6 +22,8 @@
 
 # next.js
 /.next/
+/.next-playwright
+/tmp/
 /out/
 
 # production
@@ -53,3 +55,8 @@ next-env.d.ts
 
 # copied from @sqlite.org/sqlite-wasm on postinstall / prebuild
 /public/sqlite3.wasm
+
+# Ring simulator installs @synonymdev/pubky here (e2e/support/ensure-ring-deps.mjs).
+# Keep only the install spec; never commit the dependency tree.
+/e2e/support/.vendor/**
+!/e2e/support/.vendor/package.json
