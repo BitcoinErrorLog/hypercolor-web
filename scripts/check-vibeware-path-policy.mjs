@@ -39,7 +39,8 @@ export const REQUIRED_SHARED_FORBIDDEN = [
 
 export const MIN_SHARED_FORBIDDEN_PATHS = 40;
 
-const CI_UNIQUE_BASE = "vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}";
+const CI_UNIQUE_BASE_SHELL =
+  'VIBEWARE_BASE_DIR="${RUNNER_TEMP}/vibeware-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"';
 
 export function assertCiPrGateOrder(ciText) {
   if (/\bpull_request_target\b/.test(ciText)) {
@@ -56,8 +57,12 @@ export function assertCiPrGateOrder(ciText) {
   if (!(setup < extract && extract < gates && gates < npmCi && scriptGate < npmCi)) {
     throw new Error("ci.yml PR gate step must appear before npm ci");
   }
-  if (!ciText.includes(CI_UNIQUE_BASE)) {
-    throw new Error("ci.yml must extract to a run-id-scoped vibeware-base directory");
+  const uniqueBaseHits = ciText.split(CI_UNIQUE_BASE_SHELL).length - 1;
+  if (uniqueBaseHits < 2) {
+    throw new Error("ci.yml must set VIBEWARE_BASE_DIR from RUNNER_TEMP in extract and gate steps");
+  }
+  if (/\brunner\.temp\b/.test(ciText) || /\$\{\{\s*runner\./.test(ciText)) {
+    throw new Error("ci.yml must not interpolate runner context for VIBEWARE_BASE_DIR");
   }
   return true;
 }

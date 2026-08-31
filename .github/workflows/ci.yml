@@ -30,8 +30,8 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
-          VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
+          VIBEWARE_BASE_DIR="${RUNNER_TEMP}/vibeware-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$VIBEWARE_BASE_DIR"
           git archive "$VIBEWARE_BASE" | tar -x -C "$VIBEWARE_BASE_DIR"
           test -f "$VIBEWARE_BASE_DIR/scripts/check-vibeware-pr.mjs"
@@ -44,8 +44,8 @@ jobs:
           VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
           VIBEWARE_HEAD: ${{ github.event.pull_request.head.sha }}
           VIBEWARE_HEAD_REF: ${{ github.head_ref }}
-          VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
+          VIBEWARE_BASE_DIR="${RUNNER_TEMP}/vibeware-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-pr.mjs" \
             --repo "$GITHUB_WORKSPACE" \
             --base "$VIBEWARE_BASE" \
@@ -54,14 +54,6 @@ jobs:
           node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-selftest.mjs"
           node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-writable-imports.mjs" \
             --repo "$GITHUB_WORKSPACE"
-
-      - name: Checkout Hypercolor wire pin
-        uses: actions/checkout@v4
-        with:
-          repository: BitcoinErrorLog/hypercolor
-          ref: c7157aaa1b338dd1d8545e82f639007cba945631
-          path: .cache/hypercolor-pin
-          token: ${{ secrets.HYPERCOLOR_READ_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Install
         run: npm ci
@@ -84,5 +76,5 @@ jobs:
 
       - name: Wire-contract drift
         env:
-          HYPERCOLOR_REPO: ${{ github.workspace }}/.cache/hypercolor-pin
+          HYPERCOLOR_REPO: vendor/hypercolor-wire-pin
         run: bash scripts/check-wire-drift.sh

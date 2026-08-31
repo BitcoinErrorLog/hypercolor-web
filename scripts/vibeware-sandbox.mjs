@@ -33,8 +33,8 @@ import {
 } from "./check-vibeware-path-policy.mjs";
 
 export const EMPTY_STATE_FILE = "src/components/chats-page.tsx";
-export const EMPTY_STATE_FIND = "Search for a contact to start chatting.";
-export const EMPTY_STATE_REPLACE = "Start a new chat from the field above.";
+export const EMPTY_STATE_FIND = "Start a new chat from the field above.";
+export const EMPTY_STATE_REPLACE = "Use the field above to start a chat.";
 export const SESSION_FILE = "src/services/link/session.ts";
 export const SESSION_PROBE_EXPORT = "export const VIBEWARE_SANDBOX_PROBE = true;";
 
@@ -743,7 +743,7 @@ export function buildCandidate({
 
 export async function runSandbox(args, io = process) {
   const env = stripSecretsFromEnv(process.env);
-  const pin = path.join(DEFAULT_ROOT, ".cache/hypercolor-pin");
+  const pin = path.join(DEFAULT_ROOT, "vendor/hypercolor-wire-pin");
   if (existsSync(pin)) {
     env.HYPERCOLOR_REPO = pin;
   }

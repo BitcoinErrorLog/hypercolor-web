@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Compare copied Hypercolor wire files to pin c7157aaa1b338dd1d8545e82f639007cba945631.
 # The web copies may add a 2-line header (source path + pin); that header is ignored.
+# Default oracle is vendor/hypercolor-wire-pin (committed). Override with
+# HYPERCOLOR_REPO=/Users/johncarvalho/work/hypercolor for a local git checkout.
 set -euo pipefail
 
 PIN="c7157aaa1b338dd1d8545e82f639007cba945631"
-REPO_URL="https://github.com/BitcoinErrorLog/hypercolor.git"
 LOCAL_DEFAULT="/Users/johncarvalho/work/hypercolor"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENDOR_DEFAULT="${ROOT}/vendor/hypercolor-wire-pin"
 
 FILES=(
   src/db/sql.ts
@@ -34,42 +36,72 @@ FILES=(
   src/stores/contactStore.ts
 )
 
+resolve_repo_path() {
+  local raw="$1"
+  if [[ "${raw}" == /* ]]; then
+    printf '%s\n' "${raw}"
+  else
+    printf '%s\n' "${ROOT}/${raw}"
+  fi
+}
+
+vendor_tree_ok() {
+  local dir="$1"
+  [[ -d "${dir}" ]] || return 1
+  local rel
+  for rel in "${FILES[@]}"; do
+    [[ -f "${dir}/${rel}" ]] || return 1
+  done
+  return 0
+}
+
+resolve_git_candidate() {
+  local candidate="$1"
+  if [[ ! -d "${candidate}/.git" ]]; then
+    return 1
+  fi
+  local head
+  head="$(git -C "${candidate}" rev-parse HEAD)"
+  if [[ "${head}" == "${PIN}" ]]; then
+    printf 'workdir:%s\n' "${candidate}"
+    return 0
+  fi
+  if git -C "${candidate}" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
+    printf 'show:%s\n' "${candidate}"
+    return 0
+  fi
+  echo "HYPERCOLOR_REPO ${candidate} does not contain pin ${PIN}" >&2
+  exit 1
+}
+
 resolve_source() {
-  local candidate="${HYPERCOLOR_REPO:-$LOCAL_DEFAULT}"
-  if [[ -d "${candidate}/.git" ]]; then
-    local head
-    head="$(git -C "${candidate}" rev-parse HEAD)"
-    if [[ "${head}" == "${PIN}" ]]; then
+  if [[ -n "${HYPERCOLOR_REPO:-}" ]]; then
+    local candidate
+    candidate="$(resolve_repo_path "${HYPERCOLOR_REPO}")"
+    if [[ -d "${candidate}/.git" ]]; then
+      resolve_git_candidate "${candidate}"
+      return
+    fi
+    if vendor_tree_ok "${candidate}"; then
       printf 'workdir:%s\n' "${candidate}"
       return 0
     fi
-    if git -C "${candidate}" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
-      printf 'show:%s\n' "${candidate}"
-      return 0
-    fi
-  fi
-
-  local cache="${ROOT}/.cache/hypercolor-pin"
-  if [[ -d "${cache}/.git" ]]; then
-    if git -C "${cache}" cat-file -e "${PIN}^{commit}" 2>/dev/null; then
-      git -C "${cache}" checkout --detach "${PIN}" >/dev/null
-      printf 'workdir:%s\n' "${cache}"
-      return 0
-    fi
-  fi
-
-  mkdir -p "${ROOT}/.cache"
-  rm -rf "${cache}"
-  git clone --filter=blob:none --no-checkout "${REPO_URL}" "${cache}"
-  git -C "${cache}" fetch --depth 1 origin "${PIN}"
-  git -C "${cache}" checkout --detach FETCH_HEAD
-  local cloned_head
-  cloned_head="$(git -C "${cache}" rev-parse HEAD)"
-  if [[ "${cloned_head}" != "${PIN}" ]]; then
-    echo "cloned Hypercolor HEAD ${cloned_head} does not match pin ${PIN}" >&2
+    echo "HYPERCOLOR_REPO ${candidate} is not a pin checkout or vendor tree" >&2
     exit 1
   fi
-  printf 'workdir:%s\n' "${cache}"
+
+  if vendor_tree_ok "${VENDOR_DEFAULT}"; then
+    printf 'workdir:%s\n' "${VENDOR_DEFAULT}"
+    return 0
+  fi
+
+  if [[ -d "${LOCAL_DEFAULT}/.git" ]]; then
+    resolve_git_candidate "${LOCAL_DEFAULT}"
+    return
+  fi
+
+  echo "no Hypercolor wire pin found; expected ${VENDOR_DEFAULT} (or HYPERCOLOR_REPO)" >&2
+  exit 1
 }
 
 read_source() {

@@ -160,9 +160,10 @@ mobile Hypercolor at:
 except a 2-line header naming the source path and pin.
 
 `bash scripts/check-wire-drift.sh` diffs that list (header ignored) against
-the local checkout `/Users/johncarvalho/work/hypercolor` when its `HEAD`
-matches the pin, otherwise `git show <pin>:path`, otherwise a clone of
-`https://github.com/BitcoinErrorLog/hypercolor.git`.
+the committed oracle `vendor/hypercolor-wire-pin` (same pin). Override with
+`HYPERCOLOR_REPO=/Users/johncarvalho/work/hypercolor` to compare a local
+git checkout (`HEAD` at the pin, otherwise `git show <pin>:path`). CI does
+not clone `BitcoinErrorLog/hypercolor`.
 
 **Revisit trigger:** if this drift gate fails more than three times in a
 quarter, fold the web client into the Hypercolor monorepo instead of copying
@@ -234,10 +235,8 @@ npm run check:vibeware:pr -- --base <sha> --head <sha> --head-ref <branch>
 CI (`.github/workflows/ci.yml`) runs the base-tree vibeware PR gates on
 `pull_request` before `npm ci`, then typecheck, lint, tests, wasm, and
 wire. Push to main runs the in-tree vibeware self-test after `npm ci`.
-Checking out the private
-Hypercolor pin in Actions needs a token that can read
-`BitcoinErrorLog/hypercolor` (`HYPERCOLOR_READ_TOKEN` if the default
-`GITHUB_TOKEN` cannot).
+The wire gate reads `vendor/hypercolor-wire-pin`; it does not check out
+the private Hypercolor sibling.
 
 Require review from Code Owners on the CODEOWNERS paths is load-bearing;
 this tree cannot prove that GitHub setting.

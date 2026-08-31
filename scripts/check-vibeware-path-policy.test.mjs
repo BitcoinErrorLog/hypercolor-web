@@ -365,15 +365,45 @@ describe("CI PR gate order", () => {
   });
 
   it("rejects a workflow that runs npm ci before the PR gates", () => {
+    const unique =
+      'VIBEWARE_BASE_DIR="${RUNNER_TEMP}/vibeware-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"';
     const reversed = [
       "name: Setup Node",
       "run: npm ci",
       "name: Extract base vibeware gate outside workspace",
       "name: Vibeware PR gates from base tree",
       "check-vibeware-pr.mjs",
-      "vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}",
+      unique,
+      unique,
     ].join("\n");
     expect(() => assertCiPrGateOrder(reversed)).toThrow(/before npm ci/);
+  });
+
+  it("requires a shared RUNNER_TEMP VIBEWARE_BASE_DIR assignment in both gate steps", () => {
+    const missingDir = [
+      "name: Setup Node",
+      "name: Extract base vibeware gate outside workspace",
+      "name: Vibeware PR gates from base tree",
+      "check-vibeware-pr.mjs",
+      "run: npm ci",
+    ].join("\n");
+    expect(() => assertCiPrGateOrder(missingDir)).toThrow(/VIBEWARE_BASE_DIR/);
+  });
+
+  it("rejects runner.temp interpolation", () => {
+    const unique =
+      'VIBEWARE_BASE_DIR="${RUNNER_TEMP}/vibeware-base-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"';
+    const withRunner = [
+      "name: Setup Node",
+      "name: Extract base vibeware gate outside workspace",
+      "name: Vibeware PR gates from base tree",
+      "check-vibeware-pr.mjs",
+      "run: npm ci",
+      unique,
+      unique,
+      "VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base",
+    ].join("\n");
+    expect(() => assertCiPrGateOrder(withRunner)).toThrow(/runner/);
   });
 });
 
