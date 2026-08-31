@@ -1,0 +1,48 @@
+# Local second homeserver for e2e/migration-staging.spec.ts.
+# Copied to /tmp/hypercolor-migration-homeserver/config.toml by
+# scripts/start-local-homeserver.sh. Not used in production.
+#
+# Requires a dedicated Postgres, e.g.:
+#   docker run -d --name hypercolor-migration-postgres \
+#     -e POSTGRES_USER=pubky -e POSTGRES_PASSWORD=pubky \
+#     -e POSTGRES_DB=pubky_homeserver -p 15432:5432 postgres:16-alpine
+#
+# public_icann_http_port MUST match icann_listen_socket. The WASM client
+# cannot speak Pubky TLS; when icann_domain is localhost it reads HTTP_PORT
+# from the pkarr record and rewrites to http://localhost:<port>.
+# dht_relay_nodes must overlap pkarr::DEFAULT_RELAYS so the browser client
+# can resolve this host (relay.pkarr.org, pkarr.pubky.org).
+
+[general]
+signup_mode = "token_required"
+user_storage_quota_mb = 0
+database_url = "postgres://pubky:pubky@127.0.0.1:15432/pubky_homeserver"
+
+[drive]
+pubky_listen_socket = "127.0.0.1:6287"
+icann_listen_socket = "127.0.0.1:6286"
+rate_limits = []
+
+[storage]
+type = "file_system"
+
+[admin]
+enabled = true
+listen_socket = "127.0.0.1:6288"
+admin_password = "admin"
+
+[metrics]
+enabled = false
+listen_socket = "127.0.0.1:6289"
+
+[pkdns]
+public_ip = "127.0.0.1"
+public_pubky_tls_port = 6287
+public_icann_http_port = 6286
+icann_domain = "localhost"
+user_keys_republisher_interval = 14400
+dht_relay_nodes = ["https://pkarr.pubky.app", "https://pkarr.pubky.org", "https://relay.pkarr.org"]
+
+[logging]
+level = "info"
+module_levels = ["pubky_homeserver=debug", "tower_http=debug"]

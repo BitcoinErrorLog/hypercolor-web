@@ -177,6 +177,19 @@ export const LinkService = {
     session = adopted;
   },
 
+  /**
+   * Dev/e2e only. Drop in-memory Encrypted Link handles so the next
+   * `ensureLinkWith` restores from the stored snapshot against the
+   * current session. Used after a homeserver migrate swaps the
+   * SessionHandle; snapshots and local history are left intact.
+   */
+  async releaseLiveHandlesForHarness(): Promise<void> {
+    for (const live of liveHandles.values()) {
+      await closeQuietly(live.linkId);
+    }
+    liveHandles.clear();
+  },
+
   async provisionHarnessReceiver(): Promise<{
     pubky: string;
     receiverPath: string;
