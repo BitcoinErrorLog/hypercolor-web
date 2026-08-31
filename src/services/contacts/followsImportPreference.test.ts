@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  followsImportGeneration,
   isFollowsImportEnabled,
   setFollowsImportEnabled,
 } from "./followsImportPreference";
@@ -37,5 +38,17 @@ describe("followsImportPreference", () => {
     setFollowsImportEnabled(OWNER, false, store);
     expect(isFollowsImportEnabled(OWNER, store)).toBe(false);
     expect(store.data).toEqual({});
+  });
+
+  it("bumps import generation on disable so a stale import cannot write after re-enable", () => {
+    const store = memoryStore();
+    const before = followsImportGeneration(OWNER);
+    setFollowsImportEnabled(OWNER, true, store);
+    expect(followsImportGeneration(OWNER)).toBe(before);
+    setFollowsImportEnabled(OWNER, false, store);
+    const afterDisable = followsImportGeneration(OWNER);
+    expect(afterDisable).toBe(before + 1);
+    setFollowsImportEnabled(OWNER, true, store);
+    expect(followsImportGeneration(OWNER)).toBe(afterDisable);
   });
 });

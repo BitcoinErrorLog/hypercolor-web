@@ -3,6 +3,7 @@
 import { DEFAULT_NEXUS_BASE_URL } from '../flags/config';
 import { NEXUS_FETCH_INIT, parseNexusJson, readNexusResponseText } from '../lib/nexus-http';
 import type { PubkyKey } from '../types';
+import { parsePubky } from '../utils/pubkyId';
 
 /**
  * Nexus is a PUBLIC social-graph aggregator. Use it only for followers /
@@ -173,7 +174,9 @@ function parsePubkyList(body: unknown): PubkyKey[] | null {
   const out: PubkyKey[] = [];
   for (const item of body) {
     if (typeof item !== 'string' || item.length === 0) return null;
-    out.push(item);
+    const pubky = parsePubky(item);
+    if (!pubky) return null;
+    out.push(pubky);
   }
   return out;
 }

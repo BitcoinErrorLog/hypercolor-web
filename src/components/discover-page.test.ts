@@ -20,8 +20,11 @@ describe("discover-page public surface", () => {
     expect(text).toContain("Skip this page");
     expect(text).toContain("Private DMs and groups");
     expect(source).toContain("data-testid=\"discoverLoadTopics\"");
+    expect(source).toContain("Retry public topics");
+    expect(source).toContain("createDiscoverTopicsLoader");
     expect(source).toContain("normalizeTagLabel");
     expect(source).not.toMatch(/useEffect\s*\(/);
+    expect(source).toContain("onClick={() => void loadTopics()}");
   });
 
   it("does not touch private groups, inbox, or follows", () => {

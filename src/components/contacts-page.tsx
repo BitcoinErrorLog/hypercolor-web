@@ -73,7 +73,7 @@ export function ContactsPage() {
   const roster = rosterContacts(contacts);
   const suggestions = followSuggestionContacts(contacts);
 
-  async function addPeer(raw: string): Promise<void> {
+  async function addPeer(raw: string, displayName?: string): Promise<void> {
     if (!ownerPubky) {
       setError("Connect with Pubky Ring first.");
       void emit("app.error.coarse", { code: "auth", surface: "contacts" });
@@ -82,7 +82,11 @@ export function ContactsPage() {
     setBusy(true);
     setError(null);
     try {
-      const result = await addManualContact(ownerPubky, raw);
+      const result = await addManualContact(
+        ownerPubky,
+        raw,
+        displayName ? { displayName } : {},
+      );
       if (!result.ok) {
         setError(result.message);
         void emit("app.error.coarse", { code: "validation", surface: "contacts" });
@@ -166,9 +170,10 @@ export function ContactsPage() {
             autoCorrect="off"
           />
           <p className="text-xs text-muted-foreground" data-testid="contactSearchIdentityCopy">
-            A username is not an identity. The pubky is. Lookalike names are common — compare
-            the full key before adding. Searching asks the public index for this prefix; skip
-            search and paste a pubky if you do not want that query.
+            A username is not an identity. The pubky is. Lookalike names are common, and this
+            page cannot catch every trick — no warning is not an assurance. Compare the full
+            key before adding. Searching asks the public index for this prefix; skip search
+            and paste a pubky if you do not want that query. Adding by pubky does not ask the index.
           </p>
           <div className="flex flex-wrap gap-2">
             {parsePubky(draft) ? (
@@ -211,7 +216,7 @@ export function ContactsPage() {
                 <PubkyAnchors pubky={hit.pubky} />
                 {hit.lookalike ? (
                   <p className="text-xs text-amber-400" data-testid="contactSearchLookalike">
-                    Name contains lookalike characters. Compare the full pubky.
+                    This name mixes character sets that can look alike. The check is incomplete — compare the full pubky.
                   </p>
                 ) : null}
                 {hit.bio ? (
@@ -224,7 +229,7 @@ export function ContactsPage() {
                   type="button"
                   size="sm"
                   disabled={busy}
-                  onClick={() => void addPeer(hit.pubky)}
+                  onClick={() => void addPeer(hit.pubky, hit.name ?? undefined)}
                 >
                   Add this pubky
                 </Button>

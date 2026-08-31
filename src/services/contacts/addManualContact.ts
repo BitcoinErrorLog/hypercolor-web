@@ -1,4 +1,4 @@
-import { createNexusClient } from "@/services/NexusClient";
+import { PUBLIC_NAME_DISPLAY_MAX_CHARS } from "@/lib/public-text";
 import { StorageService } from "@/services/StorageService";
 import type { Contact, PubkyKey } from "@/types";
 import { parsePubky } from "@/utils/pubkyId";
@@ -7,9 +7,23 @@ export type AddManualContactResult =
   | { ok: true; contact: Contact }
   | { ok: false; reason: "invalid" | "self"; message: string };
 
+export type AddManualContactOptions = {
+  /** Label already obtained from an explicit public-search hit. Never fetched here. */
+  displayName?: string;
+};
+
+function clipDisplayName(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  const chars = [...trimmed];
+  if (chars.length <= PUBLIC_NAME_DISPLAY_MAX_CHARS) return trimmed;
+  return chars.slice(0, PUBLIC_NAME_DISPLAY_MAX_CHARS).join("");
+}
+
 export async function addManualContact(
   ownerPubky: PubkyKey,
   rawPeer: string,
+  options: AddManualContactOptions = {},
 ): Promise<AddManualContactResult> {
   const peerPubky = parsePubky(rawPeer);
   if (!peerPubky) {
@@ -25,15 +39,7 @@ export async function addManualContact(
 
   const existing = await StorageService.getContact(peerPubky, ownerPubky);
   const ts = Date.now();
-  let displayName = existing?.displayName;
-  if (!displayName) {
-    const nexus = createNexusClient();
-    const profile = await nexus.user(peerPubky);
-    if (profile.ok) {
-      const name = profile.value.details?.name?.trim();
-      if (name) displayName = name;
-    }
-  }
+  const displayName = clipDisplayName(options.displayName) ?? existing?.displayName;
 
   const contact: Contact = {
     pubky: peerPubky,

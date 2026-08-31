@@ -20,4 +20,35 @@ describe("NexusClient", () => {
       expect.objectContaining({ referrerPolicy: "no-referrer" }),
     );
   });
+
+  it("rejects graph lists that are not valid pubkys instead of typing them as PubkyKey", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify(["../etc/passwd", "not-a-pubky", OWNER]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const client = createNexusClient({
+      baseUrl: "https://nexus.example",
+      fetchFn,
+    });
+    const result = await client.following(OWNER);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.kind).toBe("decode");
+  });
+
+  it("accepts a list of valid pubkys", async () => {
+    const fetchFn = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([OWNER]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const client = createNexusClient({
+      baseUrl: "https://nexus.example",
+      fetchFn,
+    });
+    const result = await client.following(OWNER);
+    expect(result).toEqual({ ok: true, value: [OWNER] });
+  });
 });

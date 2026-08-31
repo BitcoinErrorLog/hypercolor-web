@@ -4,7 +4,10 @@ import type { NexusClientApi, NexusResult } from "@/services/NexusClient";
 import { StorageService } from "@/services/StorageService";
 import type { Contact, PubkyKey } from "@/types";
 import { parsePubky } from "@/utils/pubkyId";
-import { isFollowsImportEnabled } from "./followsImportPreference";
+import {
+  followsImportGeneration,
+  isFollowsImportEnabled,
+} from "./followsImportPreference";
 import { createHomeserverFollows, defaultHomeserverFollowsIo } from "./homeserverFollows";
 
 /**
@@ -44,6 +47,7 @@ export type FollowsImportClearResult =
 
 export type FollowsImportDeps = {
   isEnabled: (ownerPubky: PubkyKey) => boolean;
+  importGeneration: (ownerPubky: PubkyKey) => number;
   listOwnFollows: ReturnType<typeof createHomeserverFollows>["listOwnFollows"];
   confirmFollow: ReturnType<typeof createHomeserverFollows>["confirmFollow"];
   following: NexusClientApi["following"];
@@ -78,11 +82,34 @@ function validFollowPeers(raw: readonly string[], ownerPubky: PubkyKey): PubkyKe
 
 const CLEARED_FLAGS = { isFollowing: false, isFollower: false, isMutual: false } as const;
 
+function createOwnerSerialQueue() {
+  const tails = new Map<string, Promise<void>>();
+  return function runSerialized<T>(ownerPubky: string, fn: () => Promise<T>): Promise<T> {
+    const previous = tails.get(ownerPubky) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(fn);
+    tails.set(
+      ownerPubky,
+      run.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return run;
+  };
+}
+
 export function createFollowsImporter(deps: FollowsImportDeps) {
+  const runSerialized = createOwnerSerialQueue();
+
+  function stillCurrent(ownerPubky: PubkyKey, generation: number): boolean {
+    return deps.isEnabled(ownerPubky) && deps.importGeneration(ownerPubky) === generation;
+  }
+
   return {
     async importFollows(ownerPubky: PubkyKey | null): Promise<FollowsImportResult> {
       if (!ownerPubky) return { ok: true, skipped: true, reason: "no-owner" };
       if (!deps.isEnabled(ownerPubky)) return { ok: true, skipped: true, reason: "opt-in-off" };
+      const generation = deps.importGeneration(ownerPubky);
 
       const listed = await deps.listOwnFollows(ownerPubky);
       let confirmed: PubkyKey[] = [];
@@ -109,7 +136,9 @@ export function createFollowsImporter(deps: FollowsImportDeps) {
         confirmed = candidates.filter((_peer, index) => checks[index] === true);
       }
 
-      if (!deps.isEnabled(ownerPubky)) return { ok: true, skipped: true, reason: "opt-in-off" };
+      if (!stillCurrent(ownerPubky, generation)) {
+        return { ok: true, skipped: true, reason: "opt-in-off" };
+      }
 
       const confirmedSet = new Set(confirmed);
       const existing = await deps.getAllContacts(ownerPubky);
@@ -127,26 +156,40 @@ export function createFollowsImporter(deps: FollowsImportDeps) {
         ) {
           continue;
         }
-        await deps.setContactRelationshipFlags(ownerPubky, contact.pubky, {
-          isFollowing,
-          isFollower: false,
-          isMutual: false,
+        const wrote = await runSerialized(ownerPubky, async () => {
+          if (!stillCurrent(ownerPubky, generation)) return false;
+          await deps.setContactRelationshipFlags(ownerPubky, contact.pubky, {
+            isFollowing,
+            isFollower: false,
+            isMutual: false,
+          });
+          if (stillCurrent(ownerPubky, generation)) return true;
+          await deps.setContactRelationshipFlags(ownerPubky, contact.pubky, CLEARED_FLAGS);
+          return false;
         });
+        if (!wrote) return { ok: true, skipped: true, reason: "opt-in-off" };
         updatedCount += 1;
       }
 
       for (const peer of confirmed) {
         if (existingSet.has(peer) || peer === ownerPubky) continue;
-        await deps.upsertContact({
-          pubky: peer,
-          ownerPubky,
-          trustScore: 0,
-          isFollowing: true,
-          isFollower: false,
-          isMutual: false,
-          addedManually: false,
-          firstSeenAt: now,
+        const wrote = await runSerialized(ownerPubky, async () => {
+          if (!stillCurrent(ownerPubky, generation)) return false;
+          await deps.upsertContact({
+            pubky: peer,
+            ownerPubky,
+            trustScore: 0,
+            isFollowing: true,
+            isFollower: false,
+            isMutual: false,
+            addedManually: false,
+            firstSeenAt: now,
+          });
+          if (stillCurrent(ownerPubky, generation)) return true;
+          await deps.setContactRelationshipFlags(ownerPubky, peer, CLEARED_FLAGS);
+          return false;
         });
+        if (!wrote) return { ok: true, skipped: true, reason: "opt-in-off" };
         suggestionCount += 1;
       }
 
@@ -164,14 +207,16 @@ export function createFollowsImporter(deps: FollowsImportDeps) {
       ownerPubky: PubkyKey | null,
     ): Promise<FollowsImportClearResult> {
       if (!ownerPubky) return { ok: true, skipped: true, reason: "no-owner" };
-      const existing = await deps.getAllContacts(ownerPubky);
-      let clearedCount = 0;
-      for (const contact of existing) {
-        if (!contact.isFollowing && !contact.isFollower && !contact.isMutual) continue;
-        await deps.setContactRelationshipFlags(ownerPubky, contact.pubky, CLEARED_FLAGS);
-        clearedCount += 1;
-      }
-      return { ok: true, clearedCount };
+      return runSerialized(ownerPubky, async () => {
+        const existing = await deps.getAllContacts(ownerPubky);
+        let clearedCount = 0;
+        for (const contact of existing) {
+          if (!contact.isFollowing && !contact.isFollower && !contact.isMutual) continue;
+          await deps.setContactRelationshipFlags(ownerPubky, contact.pubky, CLEARED_FLAGS);
+          clearedCount += 1;
+        }
+        return { ok: true, clearedCount };
+      });
     },
   };
 }
@@ -180,6 +225,7 @@ export function defaultFollowsImporter(): ReturnType<typeof createFollowsImporte
   const hs = createHomeserverFollows(defaultHomeserverFollowsIo());
   return createFollowsImporter({
     isEnabled: isFollowsImportEnabled,
+    importGeneration: followsImportGeneration,
     listOwnFollows: (owner) => hs.listOwnFollows(owner),
     confirmFollow: (owner, peer) => hs.confirmFollow(owner, peer),
     following: (pubky, query) => {

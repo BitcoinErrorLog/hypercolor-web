@@ -46,6 +46,7 @@ function deps(overrides: Partial<FollowsImportDeps> = {}): FollowsImportDeps & {
   return {
     calls,
     isEnabled: overrides.isEnabled ?? (() => true),
+    importGeneration: overrides.importGeneration ?? (() => 0),
     listOwnFollows: async (owner) => {
       calls.list += 1;
       return overrides.listOwnFollows
@@ -246,6 +247,94 @@ describe("followsImport", () => {
     expect(result).toEqual({ ok: true, skipped: true, reason: "opt-in-off" });
     expect(d.calls.upsert).toEqual([]);
     expect(d.calls.flags).toEqual([]);
+  });
+
+  it("does not leave isFollowing set when opt-in is disabled mid-write", async () => {
+    let enabled = true;
+    let generation = 0;
+    const store = new Map<string, Contact>([
+      [PEER, contact(PEER)],
+      [OTHER, contact(OTHER)],
+    ]);
+    let releaseFirstWrite: (() => void) | undefined;
+    const firstWriteHeld = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteStarted: () => void = () => undefined;
+    const sawFirstWrite = new Promise<void>((resolve) => {
+      firstWriteStarted = resolve;
+    });
+
+    const d = deps({
+      isEnabled: () => enabled,
+      importGeneration: () => generation,
+      getAllContacts: async () => [...store.values()],
+      listOwnFollows: async () => ({ ok: true, pubkys: [PEER, OTHER] }),
+      setContactRelationshipFlags: async (_owner, pubky, flags) => {
+        if (flags.isFollowing && pubky === PEER) {
+          firstWriteStarted();
+          await firstWriteHeld;
+        }
+        const row = store.get(pubky);
+        if (row) Object.assign(row, flags);
+      },
+    });
+    const importer = createFollowsImporter(d);
+    const importPromise = importer.importFollows(OWNER);
+    await sawFirstWrite;
+    enabled = false;
+    generation += 1;
+    const clearPromise = importer.clearImportedRelationshipFlags(OWNER);
+    releaseFirstWrite?.();
+    const [importResult] = await Promise.all([importPromise, clearPromise]);
+    expect(importResult).toEqual({ ok: true, skipped: true, reason: "opt-in-off" });
+    expect([...store.values()].every((row) => !row.isFollowing && !row.isFollower && !row.isMutual)).toBe(
+      true,
+    );
+    expect(store.get(OTHER)?.isFollowing).toBe(false);
+    expect(d.calls.upsert).toEqual([]);
+  });
+
+  it("does not resume a stale import after disable-then-re-enable", async () => {
+    let enabled = true;
+    let generation = 0;
+    let releaseFirstWrite: (() => void) | undefined;
+    const firstWriteHeld = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    let firstWriteStarted: () => void = () => undefined;
+    const sawFirstWrite = new Promise<void>((resolve) => {
+      firstWriteStarted = resolve;
+    });
+
+    const d = deps({
+      isEnabled: () => enabled,
+      importGeneration: () => generation,
+      getAllContacts: async () => [contact(PEER), contact(OTHER)],
+      listOwnFollows: async () => ({ ok: true, pubkys: [PEER, OTHER] }),
+      setContactRelationshipFlags: async (_owner, pubky, flags) => {
+        if (flags.isFollowing && pubky === PEER) {
+          firstWriteStarted();
+          await firstWriteHeld;
+        }
+      },
+    });
+    const importPromise = createFollowsImporter(d).importFollows(OWNER);
+    await sawFirstWrite;
+    enabled = false;
+    generation += 1;
+    enabled = true;
+    releaseFirstWrite?.();
+    const result = await importPromise;
+    expect(result).toEqual({ ok: true, skipped: true, reason: "opt-in-off" });
+    expect(d.calls.flags.filter((row) => row.pubky === OTHER)).toEqual([]);
+    expect(d.calls.upsert).toEqual([]);
+    expect(d.calls.flags.at(-1)).toEqual({
+      pubky: PEER,
+      isFollowing: false,
+      isFollower: false,
+      isMutual: false,
+    });
   });
 
   it("treats Nexus 404 following as an empty list, not an error", async () => {

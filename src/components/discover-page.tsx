@@ -9,28 +9,29 @@ import { sanitizePublicTag } from "@/lib/public-text";
 import { encodeTagPath, normalizeTagLabel } from "@/lib/tag-channel";
 import { TagChannelReader } from "@/services/nexus/tagChannel";
 import type { NexusHotTag } from "@/services/nexus/NexusDiscoveryClient";
+import {
+  createDiscoverTopicsLoader,
+  initialDiscoverTopicsView,
+} from "./discover-topics";
 
 export function DiscoverPage() {
   const selected = usePathSegment("discover");
-  const [tags, setTags] = useState<NexusHotTag[]>([]);
+  const [loader] = useState(() =>
+    createDiscoverTopicsLoader(() => TagChannelReader.loadDirectory()),
+  );
+  const [tags, setTags] = useState<NexusHotTag[]>(initialDiscoverTopicsView().tags);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(initialDiscoverTopicsView().loaded);
+  const [error, setError] = useState<string | null>(initialDiscoverTopicsView().error);
 
   async function loadTopics(): Promise<void> {
     setLoading(true);
     setError(null);
-    const result = await TagChannelReader.loadDirectory();
+    const view = await loader.load();
     setLoading(false);
-    setLoaded(true);
-    if (!result.ok) {
-      setTags([]);
-      setError(
-        "The public index is unreachable or returned unusable data. Private chats are not listed here.",
-      );
-      return;
-    }
-    setTags(result.tags);
+    setTags(view.tags);
+    setLoaded(view.loaded);
+    setError(view.error);
   }
 
   return (
@@ -56,7 +57,7 @@ export function DiscoverPage() {
             data-testid="discoverLoadTopics"
             onClick={() => void loadTopics()}
           >
-            {loading ? "Loading topics…" : "Load public topics"}
+            {loading ? "Loading topics…" : error ? "Retry public topics" : "Load public topics"}
           </Button>
         ) : null}
         {error ? (

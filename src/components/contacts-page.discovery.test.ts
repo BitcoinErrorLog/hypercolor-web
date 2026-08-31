@@ -13,7 +13,11 @@ describe("contacts username search copy", () => {
     expect(source).toContain("data-testid=\"contactSearchIdentityCopy\"");
     expect(source).toContain("A username is not an identity");
     expect(source).toContain("paste a pubky");
+    expect(source).toContain("no warning is not an assurance");
+    expect(source).toContain("Adding by pubky does not ask the index");
+    expect(source).toContain("The check is incomplete");
     expect(source).toContain("addManualContact");
+    expect(source).toContain("hit.name");
     expect(source).toContain("PubkyAnchors");
     expect(source).toContain("contactSearchLookalike");
     expect(source).toContain("key={ownerPubky ?? \"none\"}");
