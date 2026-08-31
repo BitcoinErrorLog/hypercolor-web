@@ -44,6 +44,7 @@ export function EnablePageHost() {
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
+  const [chatsMounted, setChatsMounted] = useState(() => isChatsRequested());
   const chatsVisible = chatsOpen || isChatsRequested();
   const enabled = status.kind === "enabled";
 
@@ -56,6 +57,7 @@ export function EnablePageHost() {
           setProvisionedPath(result.receiverPath);
           setEnabled(result.pubky);
         });
+        setChatsMounted(true);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Authorization failed");
         emitCoarseError("enable", err);
@@ -119,6 +121,7 @@ export function EnablePageHost() {
             void signOut().then(() => {
               clearChatsRequested();
               setChatsOpen(false);
+              setChatsMounted(false);
               reset();
               void auth.fetchUrl();
             });
@@ -136,7 +139,7 @@ export function EnablePageHost() {
           showOpenChats={!chatsVisible}
         />
       </div>
-      {enabled ? (
+      {enabled && chatsMounted ? (
         <div
           {...(!chatsVisible
             ? { hidden: true, inert: true, "aria-hidden": true as const }

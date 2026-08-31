@@ -97,6 +97,10 @@ async function completeRingOnboarding(
   const authUrl = await extractTracedAuthUrl(page, "enableMessaging");
   console.info(`[ring-trace ${label}] approving ${describeAuthUrl(authUrl)}`);
   console.info(`[ring-trace ${label}] GETs before pubkyauth: ${relayHits.join(" | ") || "(none)"}`);
+  const onApprovedDone = page.waitForEvent("console", {
+    predicate: (msg) => msg.text().includes("[hypercolor enable] onApproved finished"),
+    timeout: 90_000,
+  });
   await identity.approvePubkyauth(authUrl);
   const status = page.getByTestId("enableMessagingStatus");
   const snap = async (tag: string) => {
@@ -115,6 +119,8 @@ async function completeRingOnboarding(
     return { statusCount, statusTexts, storeKinds, openChatsCount };
   };
   await snap("after-approve");
+  await onApprovedDone;
+  await snap("after-onApproved");
   try {
     await expect(status.filter({ hasText: "Encrypted messaging enabled" })).toBeVisible({
       timeout: 60_000,
