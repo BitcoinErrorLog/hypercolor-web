@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/flags/config.ts
-// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
+// pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
  * Compile-time defaults. This file must stay free of react-native-mmkv
  * (and any other native module) so unit tests can import it.

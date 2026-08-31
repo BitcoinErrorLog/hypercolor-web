@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/types/index.ts
-// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
+// pin 6185a6a8e6bf3a52831515cb85131a7020704396
 // ─── Core Identity Types ───────────────────────────────────────────────────
 
 export type PubkyKey = string; // z-base-32 encoded Ed25519 public key
@@ -42,7 +42,7 @@ export interface Contact {
   isFollower: boolean;
   /**
    * Mutual follow. Display / sort only from graph import.
-   * `wotGate` also reads this bit; import never sets it from Nexus.
+   * Unused by `wotGate` accept; import never sets it from Nexus.
    */
   isMutual: boolean;
   /** User added this pubky via paste/QR (eligible for inbox probing). */

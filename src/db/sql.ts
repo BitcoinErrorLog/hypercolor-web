@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/sql.ts
-// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
+// pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
  * Minimal SQLite executor surface shared by op-sqlite (production) and the
  * better-sqlite3 test adapter. StorageService and the migration runner only

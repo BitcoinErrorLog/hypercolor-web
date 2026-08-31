@@ -1,7 +1,7 @@
 # Security
 
 Hypercolor web speaks the same Encrypted Links protocol as mobile Hypercolor
-(`a0937be84efffe2a1be08aef3cbe2f541588a4ca`). The threat model is not the same.
+(`6185a6a8e6bf3a52831515cb85131a7020704396`). The threat model is not the same.
 
 ## Web key custody is weaker
 

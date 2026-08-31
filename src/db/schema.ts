@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/schema.ts
-// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
+// pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
  * Schema v13 — retire research-era DM/channel tables; keep the live
  * Encrypted-Link retry queue (`delivery_queue`). Add author scoping on

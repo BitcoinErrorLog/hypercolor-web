@@ -2,7 +2,7 @@
 
 Static web client for **Hypercolor Encrypted Links**. Same protocol as the
 mobile app at [`BitcoinErrorLog/hypercolor`](https://github.com/BitcoinErrorLog/hypercolor)
-commit `a0937be84efffe2a1be08aef3cbe2f541588a4ca`. BLE mesh is omitted.
+commit `6185a6a8e6bf3a52831515cb85131a7020704396`. BLE mesh is omitted.
 
 This repo is a Next.js App Router **static export** (`output: 'export'`). The
 Pubky homeserver is the backend. There are no Route Handlers that need a Node
@@ -155,7 +155,7 @@ Copied files under `src/db`, `src/types`, `src/flags`, `src/services`,
 `src/utils`, and `src/stores` (the P0 list) must stay byte-identical to
 mobile Hypercolor at:
 
-`a0937be84efffe2a1be08aef3cbe2f541588a4ca`
+`6185a6a8e6bf3a52831515cb85131a7020704396`
 
 except a 2-line header naming the source path and pin.
 

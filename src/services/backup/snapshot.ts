@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/services/backup/snapshot.ts
-// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
+// pin 6185a6a8e6bf3a52831515cb85131a7020704396
 import type { Contact, MessageRequest, PubkyKey } from '../../types';
 import type { AttachmentRecord } from '../../types/attachment';
 import type { GroupChannel, GroupMember, GroupMessage } from '../../types/group';
