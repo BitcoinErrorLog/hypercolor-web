@@ -23,3 +23,19 @@ export function relationshipBadges(contact: Contact): string[] {
   if (contact.addedManually) badges.push("Added");
   return badges;
 }
+
+/**
+ * Follow-derived rows are suggestions, not the roster.
+ * A follow import never sets addedManually; talking to them sets lastInteractionAt.
+ */
+export function isFollowSuggestion(contact: Contact): boolean {
+  return contact.isFollowing && !contact.addedManually && contact.lastInteractionAt == null;
+}
+
+export function rosterContacts(contacts: readonly Contact[]): Contact[] {
+  return sortContactsForDisplay(contacts.filter((row) => !isFollowSuggestion(row)));
+}
+
+export function followSuggestionContacts(contacts: readonly Contact[]): Contact[] {
+  return sortContactsForDisplay(contacts.filter(isFollowSuggestion));
+}

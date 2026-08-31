@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Contact } from "@/types";
-import { relationshipBadges, sortContactsForDisplay } from "./contacts-sort";
+import {
+  followSuggestionContacts,
+  relationshipBadges,
+  rosterContacts,
+  sortContactsForDisplay,
+} from "./contacts-sort";
 
 function contact(partial: Partial<Contact> & Pick<Contact, "pubky">): Contact {
   return {
@@ -31,5 +36,23 @@ describe("contacts-sort", () => {
         contact({ pubky: "x", isMutual: true, addedManually: true }),
       ),
     ).toEqual(["Mutual", "Added"]);
+  });
+
+  it("keeps follow-only rows out of the roster", () => {
+    const followOnly = contact({ pubky: "follow", isFollowing: true, addedManually: false });
+    const added = contact({ pubky: "added", isFollowing: true, addedManually: true });
+    const talked = contact({
+      pubky: "talked",
+      isFollowing: true,
+      addedManually: false,
+      lastInteractionAt: 9,
+    });
+    expect(rosterContacts([followOnly, added, talked]).map((row) => row.pubky).sort()).toEqual([
+      "added",
+      "talked",
+    ]);
+    expect(followSuggestionContacts([followOnly, added, talked]).map((row) => row.pubky)).toEqual([
+      "follow",
+    ]);
   });
 });

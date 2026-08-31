@@ -4,12 +4,24 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { ContactDetail } from "@/components/contact-detail";
+import { FollowsImportPanel } from "@/components/follows-import-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePathSegment } from "@/hooks/usePathSegment";
-import { relationshipBadges, sortContactsForDisplay } from "@/lib/contacts-sort";
+import {
+  followSuggestionContacts,
+  relationshipBadges,
+  rosterContacts,
+} from "@/lib/contacts-sort";
+import { sanitizePublicBio, sanitizePublicName } from "@/lib/public-text";
 import { shortPubky } from "@/lib/format";
 import { addManualContact } from "@/services/contacts/addManualContact";
+import {
+  isFollowsImportEnabled,
+} from "@/services/contacts/followsImportPreference";
+import { FollowsImporter } from "@/services/contacts/followsImport";
+import { UsernameSearch } from "@/services/contacts/usernameSearch";
+import type { UsernameSearchHit } from "@/services/contacts/usernameSearch";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
 import { sanitizeDisplayName } from "@/lib/display-name";
@@ -17,6 +29,7 @@ import { useContactStore } from "@/stores/contactStore";
 import type { Contact } from "@/types";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
+import { parsePubky } from "@/utils/pubkyId";
 
 export function ContactsPage() {
   const router = useRouter();
@@ -27,7 +40,9 @@ export function ContactsPage() {
   const [pending, setPending] = useState(0);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hits, setHits] = useState<UsernameSearchHit[] | null>(null);
 
   const reload = useCallback(async () => {
     if (!ownerPubky) {
@@ -40,15 +55,50 @@ export function ContactsPage() {
       StorageService.countPendingMessageRequests(ownerPubky),
     ]);
     rows.forEach(upsertContact);
-    setContacts(sortContactsForDisplay(rows));
+    setContacts(rows);
     setPending(count);
   }, [ownerPubky, upsertContact]);
 
   useEffect(() => {
     void (async () => {
       await reload();
+      if (ownerPubky && isFollowsImportEnabled(ownerPubky)) {
+        const result = await FollowsImporter.importFollows(ownerPubky);
+        if (result.ok && !result.skipped) await reload();
+      }
     })();
-  }, [reload]);
+  }, [reload, ownerPubky]);
+
+  const roster = rosterContacts(contacts);
+  const suggestions = followSuggestionContacts(contacts);
+
+  async function addPeer(raw: string): Promise<void> {
+    if (!ownerPubky) {
+      setError("Connect with Pubky Ring first.");
+      void emit("app.error.coarse", { code: "auth", surface: "contacts" });
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await addManualContact(ownerPubky, raw);
+      if (!result.ok) {
+        setError(result.message);
+        void emit("app.error.coarse", { code: "validation", surface: "contacts" });
+        return;
+      }
+      upsertContact(result.contact);
+      setDraft("");
+      setHits(null);
+      await reload();
+      router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not add contact");
+      emitCoarseError("contacts", err);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div
@@ -67,58 +117,155 @@ export function ContactsPage() {
           </Link>
         </div>
 
+        <FollowsImportPanel ownerPubky={ownerPubky} onImported={reload} />
+
         <form
-          className="space-y-2"
+          className="mt-4 space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            if (!ownerPubky) {
-              setError("Connect with Pubky Ring first.");
-              void emit("app.error.coarse", { code: "auth", surface: "contacts" });
+            const asPubky = parsePubky(draft);
+            if (asPubky) {
+              void addPeer(draft);
               return;
             }
-            setBusy(true);
+            setSearchBusy(true);
             setError(null);
-            void addManualContact(ownerPubky, draft)
+            setHits(null);
+            void UsernameSearch.search(draft)
               .then((result) => {
                 if (!result.ok) {
                   setError(result.message);
-                  void emit("app.error.coarse", { code: "validation", surface: "contacts" });
                   return;
                 }
-                upsertContact(result.contact);
-                setDraft("");
-                return reload().then(() => {
-                  router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
-                });
+                if (result.kind === "pubky") {
+                  void addPeer(result.pubky);
+                  return;
+                }
+                setHits(result.hits);
+                if (result.hits.length === 0) {
+                  setError("No usernames matched. A username is not an identity — paste the pubky.");
+                }
               })
               .catch((err) => {
-                setError(err instanceof Error ? err.message : "Could not add contact");
+                setError(err instanceof Error ? err.message : "Search failed");
                 emitCoarseError("contacts", err);
               })
-              .finally(() => setBusy(false));
+              .finally(() => setSearchBusy(false));
           }}
         >
           <Input
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Paste a pubky"
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setHits(null);
+            }}
+            placeholder="Paste a pubky or search a username"
             data-testid="contactSearchInput"
             autoCapitalize="none"
             autoCorrect="off"
           />
-          <Button type="submit" size="sm" disabled={busy} data-testid="contactSearchAdd">
-            {busy ? "Adding…" : "Add contact"}
-          </Button>
+          <p className="text-xs text-muted-foreground" data-testid="contactSearchIdentityCopy">
+            A username is not an identity. The pubky is. Lookalike names are common — compare
+            the full key before adding. Searching asks the public index for this prefix; skip
+            search and paste a pubky if you do not want that query.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {parsePubky(draft) ? (
+              <Button type="submit" size="sm" disabled={busy} data-testid="contactSearchAdd">
+                {busy ? "Adding…" : "Add contact"}
+              </Button>
+            ) : (
+              <>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={searchBusy}
+                  data-testid="contactSearchLookup"
+                >
+                  {searchBusy ? "Searching…" : "Search username"}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  data-testid="contactSearchAdd"
+                  onClick={() => void addPeer(draft)}
+                >
+                  {busy ? "Adding…" : "Add by pubky"}
+                </Button>
+              </>
+            )}
+          </div>
           {error ? <p className="text-sm text-red-400">{error}</p> : null}
         </form>
 
-        {contacts.length === 0 ? (
+        {hits && hits.length > 0 ? (
+          <ul className="mt-3 divide-y divide-border rounded-md border border-border" data-testid="contactSearchResults">
+            {hits.map((hit) => (
+              <li key={hit.pubky} className="space-y-1 p-3" data-testid="contactSearchResult">
+                <p className="font-medium">
+                  {hit.name ? sanitizePublicName(hit.name) : shortPubky(hit.pubky)}
+                </p>
+                <p className="break-all font-mono text-xs text-muted-foreground">{hit.pubky}</p>
+                {hit.bio ? (
+                  <p className="text-xs text-muted-foreground">{sanitizePublicBio(hit.bio)}</p>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  Name is a label. This pubky is the identity.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void addPeer(hit.pubky)}
+                >
+                  Add this pubky
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {suggestions.length > 0 ? (
+          <div className="mt-6" data-testid="followSuggestions">
+            <p className="text-sm font-medium">Suggestions from pubky.app follows</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Not your contact list. Add one to keep them. Hypercolor does not write a follow.
+            </p>
+            <ul className="mt-2 divide-y divide-border">
+              {suggestions.map((contact) => (
+                <li key={contact.pubky} className="py-3" data-testid="followSuggestion">
+                  <p className="font-medium">
+                    {contact.displayName
+                      ? sanitizeDisplayName(contact.displayName)
+                      : shortPubky(contact.pubky)}
+                  </p>
+                  <p className="break-all font-mono text-xs text-muted-foreground">
+                    {contact.pubky}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="mt-2"
+                    disabled={busy}
+                    onClick={() => void addPeer(contact.pubky)}
+                  >
+                    Add as contact
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {roster.length === 0 ? (
           <p className="mt-8 text-muted-foreground" data-testid="contactsEmpty">
             No contacts yet.
           </p>
         ) : (
           <ul className="mt-4 divide-y divide-border">
-            {contacts.map((contact) => (
+            {roster.map((contact) => (
               <li key={contact.pubky}>
                 <Link
                   href={`/contacts/${encodeURIComponent(contact.pubky)}`}

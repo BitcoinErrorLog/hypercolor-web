@@ -11,6 +11,7 @@ import { hasIdentity } from "@/lib/session-ui";
 const LINKS = [
   { href: "/chats", label: "Chats", prefix: "/chats" },
   { href: "/channels", label: "Channels", prefix: "/channels" },
+  { href: "/discover", label: "Discover", prefix: "/discover" },
   { href: "/contacts", label: "Contacts", prefix: "/contacts" },
   { href: "/requests", label: "Requests", prefix: "/requests" },
   { href: "/profile", label: "Profile", prefix: "/profile" },
