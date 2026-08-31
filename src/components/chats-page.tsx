@@ -54,6 +54,7 @@ export function ChatsPage({
           <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
           <Link
             href="/requests"
+            prefetch={false}
             className="text-sm text-brand underline-offset-4 hover:underline"
             data-testid="chatsRequests"
           >

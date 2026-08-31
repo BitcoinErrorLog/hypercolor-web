@@ -51,7 +51,12 @@ function firstCompleteJson(raw) {
     JSON.parse(text);
     return null;
   } catch (error) {
-    const match = /position (\d+)/.exec(error instanceof Error ? error.message : "");
+    const message = error instanceof Error ? error.message : "";
+    // Volume corruption appends junk after a complete value. An in-progress
+    // webpack write fails with "end of JSON input" — never truncate that,
+    // or HMR stays on BUILDING and App Router Flight never commits.
+    if (!/non-whitespace character after JSON/i.test(message)) return null;
+    const match = /position (\d+)/.exec(message);
     if (!match) return null;
     const candidate = text.slice(0, Number(match[1]));
     try {

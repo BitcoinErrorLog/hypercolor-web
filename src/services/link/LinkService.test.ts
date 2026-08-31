@@ -105,6 +105,7 @@ vi.mock("./session", () => ({
   restoreSessionOnLoad: vi.fn(async () => ({ status: "needs-enable" })),
   signOut: vi.fn(),
   getEnableStatus: vi.fn(async () => "enabled"),
+  persistReceiverPath: vi.fn(async () => undefined),
 }));
 
 vi.mock("../group/applyGroupInbound", () => ({

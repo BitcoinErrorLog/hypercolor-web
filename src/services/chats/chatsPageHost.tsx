@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { CHATS_EMPTY_STATE_CANDIDATE_HINT, ChatsPage, type ChatsPageRow } from "@/components/chats-page";
@@ -13,6 +12,7 @@ import { emit } from "@/services/vibeware/collector";
 import { useContactStore } from "@/stores/contactStore";
 import type { InboxRow } from "@/lib/inbox";
 import { buildDmConversationId } from "@/types/link";
+import { pushAppPath } from "@/lib/path-id";
 import { parsePubky } from "@/utils/pubkyId";
 
 export function mapInboxRowsToChatsPageRows(rows: InboxRow[]): ChatsPageRow[] {
@@ -29,7 +29,6 @@ export function mapInboxRowsToChatsPageRows(rows: InboxRow[]): ChatsPageRow[] {
 
 export function ChatsPageHost() {
   const conversationId = usePathSegment("chats");
-  const router = useRouter();
   const inbox = useInbox();
   const upsertContact = useContactStore((s) => s.upsertContact);
   const [peerDraft, setPeerDraft] = useState("");
@@ -86,7 +85,9 @@ export function ChatsPageHost() {
       }
       upsertContact(result.contact);
       setPeerDraft("");
-      router.push(`/chats/${encodeURIComponent(buildDmConversationId(result.contact.pubky))}`);
+      pushAppPath(
+        `/chats/${encodeURIComponent(buildDmConversationId(result.contact.pubky))}`,
+      );
     } finally {
       setStarting(false);
     }

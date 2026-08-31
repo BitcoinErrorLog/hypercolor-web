@@ -12,11 +12,22 @@ const nextConfig: NextConfig = {
   output: "export",
   distDir: resolveDistDir(),
   allowedDevOrigins: ["127.0.0.1"],
+  // next dev --webpack writes AGENTS.md/CLAUDE.md and retriggers HMR;
+  // a stuck BUILDING leaves waitForWebpackRuntimeHotUpdate pending so
+  // <Link> transitions never commit (Open chats stayed on /enable).
+  agentRules: false,
   images: {
     unoptimized: true,
   },
   webpack: (config, { isServer, webpack }) => {
     config.plugins.push(new webpack.IgnorePlugin({ resourceRegExp: /\/\._[^/]+$/ }));
+    // Do not merge Next's default ignored list — it can contain "".
+    // AppleDouble `._*` writes on this volume keep webpack BUILDING, so
+    // waitForWebpackRuntimeHotUpdate never resolves (Flight and hydrate hang).
+    config.watchOptions = {
+      aggregateTimeout: 300,
+      ignored: ["**/node_modules/**", "**/._*", "**/.DS_Store"],
+    };
     config.experiments = {
       ...config.experiments,
       asyncWebAssembly: true,

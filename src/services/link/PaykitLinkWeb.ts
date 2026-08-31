@@ -206,6 +206,11 @@ export async function getPaykitClient(): Promise<PubkyClient> {
   return client;
 }
 
+/** Compile wasm and construct the client before cookie resume's budget starts. */
+export async function warmPaykitClient(): Promise<void> {
+  await getPaykitClient();
+}
+
 export function resetPaykitClientForTests(): void {
   client = null;
 }

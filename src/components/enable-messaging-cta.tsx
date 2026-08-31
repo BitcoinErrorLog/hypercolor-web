@@ -20,6 +20,7 @@ export function EnableMessagingCta({ testId }: { testId: string }) {
     <div
       className="rounded-md border border-border bg-card px-4 py-3 text-sm"
       data-testid={testId}
+      data-session-kind={status.kind}
     >
       <p className="text-muted-foreground">
         Encrypted chats need a Ring-approved Paykit session on this device.

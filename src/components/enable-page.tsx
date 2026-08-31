@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 
@@ -16,6 +15,7 @@ export function EnablePage({
   onRegenerate,
   onRetry,
   onSignOut,
+  onOpenChats,
 }: {
   enabled: boolean;
   offline: boolean;
@@ -28,6 +28,7 @@ export function EnablePage({
   onRegenerate: () => void;
   onRetry: () => void;
   onSignOut: () => void;
+  onOpenChats: () => void;
 }) {
   return (
     <article className="space-y-6">
@@ -71,10 +72,15 @@ export function EnablePage({
 
       {enabled ? (
         <p className="text-sm text-muted-foreground">
-          Ring approved the grant and this device published a receiver marker.{" "}
-          <Link href="/chats" className="underline underline-offset-4">
+          Ring approved the grant and this device published a receiver marker.
+          <Button
+            type="button"
+            className="mt-3"
+            data-testid="enableOpenChats"
+            onClick={onOpenChats}
+          >
             Open chats
-          </Link>
+          </Button>
         </p>
       ) : null}
 

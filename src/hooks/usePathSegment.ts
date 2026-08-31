@@ -8,6 +8,14 @@ function subscribe(onStoreChange: () => void) {
   return () => window.removeEventListener("popstate", onStoreChange);
 }
 
+export function useWindowPathname(): string {
+  return useSyncExternalStore(
+    subscribe,
+    () => window.location.pathname,
+    () => "",
+  );
+}
+
 export function usePathSegment(segment: AppPathSegment): string | null {
   return useSyncExternalStore(
     subscribe,

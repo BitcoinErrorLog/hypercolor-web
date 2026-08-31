@@ -5,6 +5,8 @@ import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
+import { ChatsPageHost } from "@/services/chats/chatsPageHost";
+import { pushAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
 import { emit } from "@/services/vibeware/collector";
@@ -38,6 +40,7 @@ export function EnablePageHost() {
   const reset = useSessionStatusStore((s) => s.reset);
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
+  const [chatsOpen, setChatsOpen] = useState(false);
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -71,6 +74,18 @@ export function EnablePageHost() {
     },
   );
 
+  useEffect(() => {
+    if (!chatsOpen) return;
+    if (window.location.pathname === "/chats" || window.location.pathname.startsWith("/chats/")) {
+      return;
+    }
+    pushAppPath("/chats");
+  }, [chatsOpen]);
+
+  if (chatsOpen) {
+    return <ChatsPageHost />;
+  }
+
   const enabled = status.kind === "enabled";
   const offline = status.kind === "session-offline";
   const identityLabel =
@@ -98,6 +113,11 @@ export function EnablePageHost() {
           reset();
           void auth.fetchUrl();
         });
+      }}
+      onOpenChats={() => {
+        window.setTimeout(() => {
+          setChatsOpen(true);
+        }, 0);
       }}
     />
   );

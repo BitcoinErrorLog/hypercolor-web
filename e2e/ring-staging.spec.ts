@@ -30,13 +30,16 @@ async function completeRingOnboarding(
   page: Page,
   identity: RingSimulatorHandle,
 ): Promise<void> {
-  await page.goto(`${BASE_URL}/`);
+  await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
   await waitForWelcomeReady(page);
   const connectUrl = await extractAuthUrl(page, "welcome");
   await identity.approvePaykitConnect(connectUrl);
   await expect(page.getByTestId("welcomeAdopt")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId("welcomeAdopt")).toContainText(identity.pubky);
-  await page.getByTestId("welcomeAdopt").getByRole("button", { name: "Continue" }).click();
+  await page
+    .getByTestId("welcomeAdopt")
+    .getByRole("button", { name: "Continue" })
+    .click({ noWaitAfter: true });
   await expect(page).toHaveURL(/\/enable/, { timeout: 15_000 });
   await expect(page.getByRole("heading", { name: "Enable encrypted messaging" })).toBeVisible({
     timeout: 30_000,
@@ -52,11 +55,9 @@ async function completeRingOnboarding(
 }
 
 async function openChats(page: Page): Promise<void> {
-  // Client-side only: a full reload drops the in-memory Paykit session and
-  // the chats CTA comes back. Stay on the same JS context after Enable.
-  const open = page.getByRole("link", { name: "Open chats" });
+  const open = page.getByTestId("enableOpenChats");
   await expect(open).toBeVisible({ timeout: 30_000 });
-  await open.click();
+  await open.click({ noWaitAfter: true, timeout: 15_000 });
   await expect(page).toHaveURL(/\/chats/, { timeout: 15_000 });
   await expect(page.getByTestId("chatsScreen")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("chatsEnableMessaging")).toHaveCount(0, { timeout: 15_000 });
@@ -65,7 +66,7 @@ async function openChats(page: Page): Promise<void> {
 async function startDm(page: Page, peerPubky: string): Promise<void> {
   await openChats(page);
   await page.getByTestId("chatsNewInput").fill(peerPubky);
-  await page.getByTestId("chatsNew").click();
+  await page.getByTestId("chatsNew").click({ noWaitAfter: true });
   await expect(page.getByTestId("threadScreen")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("threadPeer")).toHaveText(peerPubky);
 }
@@ -112,9 +113,11 @@ test("Ring simulator completes Welcome + Enable and a staging A↔B Encrypted Li
   const browserB = await chromium.launch();
   try {
     const pageA = await (await browserA.newContext()).newPage();
+    pageA.setDefaultNavigationTimeout(10_000);
     await completeRingOnboarding(pageA, identityA);
     await startDm(pageA, identityB.pubky);
     const pageB = await (await browserB.newContext()).newPage();
+    pageB.setDefaultNavigationTimeout(10_000);
     await completeRingOnboarding(pageB, identityB);
     await startDm(pageB, identityA.pubky);
 

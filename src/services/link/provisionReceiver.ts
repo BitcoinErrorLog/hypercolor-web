@@ -7,7 +7,7 @@ import {
 } from "@/types/link";
 import type { PubkyKey } from "@/types";
 import { PaykitLinkWeb, type SessionHandle } from "./PaykitLinkWeb";
-import { getLiveSession } from "./session";
+import { getLiveSession, persistReceiverPath } from "./session";
 
 export const RECEIVER_NOISE_ALIAS = LINK_RECEIVER_PATH;
 
@@ -75,6 +75,7 @@ export async function provisionReceiver(
     receiverPath,
     markerPublished: true,
   });
+  await persistReceiverPath(pubky, receiverPath);
   return { pubky, receiverPath, noisePublicKey };
 }
 

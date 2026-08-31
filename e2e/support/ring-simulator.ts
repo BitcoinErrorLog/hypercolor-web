@@ -118,7 +118,11 @@ async function waitUntilHomeserverPublished(
   let last = "unresolved";
   while (Date.now() < deadline) {
     try {
-      const resolved = await client.getHomeserverOf(userPk);
+      const resolved = await withTimeout(
+        client.getHomeserverOf(userPk),
+        8_000,
+        "getHomeserverOf",
+      );
       const z32 = resolved?.z32() ?? "";
       if (z32 === STAGING_HOMESERVER) return;
       last = z32 || "unresolved";
