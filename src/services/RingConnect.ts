@@ -3,6 +3,7 @@ import { hexToBytes, isEvenHex, zeroizeBytes } from "@/lib/hex";
 import { isValidPubky } from "@/utils/pubkyId";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { KeyStore, type AppCert } from "@/services/KeyStore";
+import { verifyHandoffAppCert } from "@/services/appCertVerify";
 import { PaykitLinkWeb } from "@/services/link/PaykitLinkWeb";
 import { pollLink, postLink, RelayPollExhaustedError } from "@/services/relayChannel";
 import { deriveRingCallbackChannelId } from "@/services/ringChannelId";
@@ -303,13 +304,14 @@ export async function adoptHandoff(
   if (!payload.app_key) {
     throw new Error("Handoff is missing app_key");
   }
+  const appCert = await verifyHandoffAppCert(pubky, payload.app_key);
   await KeyStore.setPubky(pubky);
   await KeyStore.setHomeserver(homeserver);
   await KeyStore.setAppKeypair({
     secretKey: payload.app_key.ed25519_sk,
     publicKey: payload.app_key.ed25519_pk,
   });
-  await KeyStore.setAppCert(certFromHandoffAppKey(payload.app_key));
+  await KeyStore.setAppCert(appCert);
   await KeyStore.setInboxKeypair({
     secretKey: payload.inbox_keypair.secret_key,
     publicKey: payload.inbox_keypair.public_key,

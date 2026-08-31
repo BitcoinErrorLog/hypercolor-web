@@ -1,4 +1,5 @@
 import { base64urlnopad } from "@scure/base";
+import { isStoredAppCertValid } from "@/services/appCertVerify";
 
 /**
  * WebKeyStore for Hypercolor web.
@@ -795,9 +796,8 @@ export async function hasPersistedSession(): Promise<boolean> {
  */
 export async function isAppCertValid(): Promise<boolean> {
   const cert = await getAppCert();
-  if (!cert) return false;
-  if (cert.expiresAt == null) return true;
-  return Math.floor(Date.now() / 1000) < cert.expiresAt;
+  const pubky = await getPubky();
+  return isStoredAppCertValid(pubky, cert);
 }
 
 // ─── Clear all ────────────────────────────────────────────────────────────────

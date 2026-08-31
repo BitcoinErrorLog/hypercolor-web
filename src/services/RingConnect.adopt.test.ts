@@ -1,32 +1,41 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { KeyStore } from "@/services/KeyStore";
+import { verifyAppCert } from "@/test-support/issue-app-cert";
+import {
+  makeSignedAppCert,
+  type SignedAppCertFixture,
+} from "@/test-support/signed-app-cert";
 import { adoptHandoff, type HandoffPayload } from "./RingConnect";
 
-const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 const HOMESERVER = "ufibwbmed6jeq9k4p583go95wofakh9fwpp4k734trq79pd9u1uy";
 
-const PARAMS = {
-  pubky: OWNER,
-  requestId: "ab".repeat(32),
-  mode: "secure_handoff",
-  homeserver: HOMESERVER,
-} as const;
+function handoffParams(ownerPubky: string) {
+  return {
+    pubky: ownerPubky,
+    requestId: "ab".repeat(32),
+    mode: "secure_handoff" as const,
+    homeserver: HOMESERVER,
+  };
+}
 
-function validPayload(overrides: Partial<HandoffPayload> = {}): HandoffPayload {
+function handoffPayload(
+  signed: SignedAppCertFixture,
+  overrides: Partial<HandoffPayload> = {},
+): HandoffPayload {
   return {
     version: 3,
-    pubky: OWNER,
-    noise_keypairs: [{ epoch: 0, public_key: "tpk", secret_key: "tsk" }],
-    noise_seed: "seedhex",
-    inbox_keypair: { public_key: "ipk", secret_key: "isk" },
-    app_key: {
-      ed25519_sk: "ask",
-      ed25519_pk: "apk",
-      cert_id: "cid",
-      cert_body: "cbody",
-      cert_sig: "csig",
-    },
+    pubky: signed.ownerPubky,
+    noise_keypairs: [
+      {
+        epoch: 0,
+        public_key: signed.transportKeypair.public_key,
+        secret_key: signed.transportKeypair.secret_key,
+      },
+    ],
+    noise_seed: signed.noiseSeed,
+    inbox_keypair: signed.inboxKeypair,
+    app_key: signed.appKey,
     expires_at: Math.floor(Date.now() / 1000) + 60,
     ...overrides,
   };
@@ -39,36 +48,49 @@ describe("adoptHandoff", () => {
   });
 
   it("stores UKD keys and never writes session_secret", async () => {
+    const signed = makeSignedAppCert();
+    const params = handoffParams(signed.ownerPubky);
     const payload = {
-      ...validPayload(),
+      ...handoffPayload(signed),
       session_secret: "must-not-be-stored",
     } as HandoffPayload & { session_secret: string };
 
-    const result = await adoptHandoff(PARAMS, payload);
+    const result = await adoptHandoff(params, payload);
 
-    expect(result.pubky).toBe(OWNER);
-    expect(await KeyStore.getPubky()).toBe(OWNER);
+    expect(result.pubky).toBe(signed.ownerPubky);
+    expect(await KeyStore.getPubky()).toBe(signed.ownerPubky);
     expect(await KeyStore.getHomeserver()).toBe(HOMESERVER);
     expect(await KeyStore.getAppKeypair()).toEqual({
-      secretKey: "ask",
-      publicKey: "apk",
+      secretKey: signed.appKey.ed25519_sk,
+      publicKey: signed.appKey.ed25519_pk,
     });
-    // adoptHandoff stores AppCert hex verbatim. isAppCertValid only checks
-    // expiresAt (KeyStore.ts); there is no signature verification on web.
     expect(await KeyStore.getAppCert()).toEqual({
-      certBodyHex: "cbody",
-      sigHex: "csig",
-      certIdHex: "cid",
+      certBodyHex: signed.appKey.cert_body,
+      sigHex: signed.appKey.cert_sig,
+      certIdHex: signed.appKey.cert_id,
     });
+    expect(verifyAppCert(signed.ownerPeerid, signed.cert)).toBe(true);
     expect(await KeyStore.isAppCertValid()).toBe(true);
     expect(KeyStore).not.toHaveProperty("setSessionSecret");
     expect(KeyStore).not.toHaveProperty("getSessionSecret");
-    expect(await KeyStore.getNoiseSeed()).toBe("seedhex");
+    expect(await KeyStore.getNoiseSeed()).toBe(signed.noiseSeed);
+  });
+
+  it("rejects an AppCert with an invalid signature", () => {
+    const signed = makeSignedAppCert();
+    expect(verifyAppCert(signed.ownerPeerid, signed.cert)).toBe(true);
+    const tampered = {
+      ...signed.cert,
+      sigHex: `${signed.cert.sigHex.slice(0, -2)}ff`,
+    };
+    expect(verifyAppCert(signed.ownerPeerid, tampered)).toBe(false);
   });
 
   it("rejects a payload pubky that does not match public params", async () => {
-    const payload = validPayload({ pubky: HOMESERVER });
-    await expect(adoptHandoff(PARAMS, payload)).rejects.toThrow(
+    const signed = makeSignedAppCert();
+    const params = handoffParams(signed.ownerPubky);
+    const payload = handoffPayload(signed, { pubky: HOMESERVER });
+    await expect(adoptHandoff(params, payload)).rejects.toThrow(
       "Handoff payload pubky does not match public params",
     );
     expect(await KeyStore.getPubky()).toBeNull();
@@ -76,10 +98,12 @@ describe("adoptHandoff", () => {
   });
 
   it("adopts the public-params pubky when the payload omits pubky", async () => {
-    const payload = validPayload();
+    const signed = makeSignedAppCert();
+    const params = handoffParams(signed.ownerPubky);
+    const payload = handoffPayload(signed);
     delete (payload as { pubky?: string }).pubky;
-    const result = await adoptHandoff(PARAMS, payload);
-    expect(result.pubky).toBe(OWNER);
-    expect(await KeyStore.getPubky()).toBe(OWNER);
+    const result = await adoptHandoff(params, payload);
+    expect(result.pubky).toBe(signed.ownerPubky);
+    expect(await KeyStore.getPubky()).toBe(signed.ownerPubky);
   });
 });

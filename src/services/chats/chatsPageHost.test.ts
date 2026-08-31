@@ -6,16 +6,16 @@ import { describe, expect, it } from "vitest";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 describe("chats route split", () => {
-  it("owns /chats as a static page, not the optional catch-all", () => {
-    const index = path.join(here, "../../../app/chats/page.tsx");
-    const conversation = path.join(
+  it("uses optional catch-all with empty conversationId static param", () => {
+    const page = path.join(
       here,
-      "../../../app/chats/[conversationId]/page.tsx",
+      "../../../app/chats/[[...conversationId]]/page.tsx",
     );
-    expect(existsSync(index)).toBe(true);
-    expect(existsSync(conversation)).toBe(true);
-    expect(readFileSync(index, "utf8")).toContain("ChatsPageHost");
-    expect(readFileSync(conversation, "utf8")).toContain("generateStaticParams");
+    expect(existsSync(page)).toBe(true);
+    const source = readFileSync(page, "utf8");
+    expect(source).toContain("ChatsPageHost");
+    expect(source).toContain("generateStaticParams");
+    expect(source).toContain("conversationId: []");
   });
 
   it("opens a thread with pushAppPath instead of a document navigation", () => {

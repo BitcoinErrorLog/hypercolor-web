@@ -1,5 +1,6 @@
 import "fake-indexeddb/auto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { makeSignedAppCert } from "@/test-support/signed-app-cert";
 import {
   AppCert,
   AppKeyPair,
@@ -109,10 +110,11 @@ describe("KeyStore", () => {
 
   it("wraps and unwraps the AppCert and reports validity", async () => {
     await KeyStore.setPubky(owner);
+    const signed = makeSignedAppCert();
     const cert: AppCert = {
-      certBodyHex: "body",
-      sigHex: "sig",
-      certIdHex: "id",
+      certBodyHex: signed.cert.certBodyHex,
+      sigHex: signed.cert.sigHex,
+      certIdHex: signed.cert.certIdHex,
       expiresAt: Math.floor(Date.now() / 1000) + 1000,
     };
     await KeyStore.setAppCert(cert);
@@ -120,9 +122,9 @@ describe("KeyStore", () => {
     expect(await KeyStore.isAppCertValid()).toBe(true);
 
     const expired: AppCert = {
-      certBodyHex: "body",
-      sigHex: "sig",
-      certIdHex: "id2",
+      certBodyHex: signed.cert.certBodyHex,
+      sigHex: signed.cert.sigHex,
+      certIdHex: signed.cert.certIdHex,
       expiresAt: Math.floor(Date.now() / 1000) - 1,
     };
     await KeyStore.setAppCert(expired);
