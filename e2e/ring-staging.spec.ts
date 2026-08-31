@@ -98,17 +98,30 @@ async function completeRingOnboarding(
   console.info(`[ring-trace ${label}] approving ${describeAuthUrl(authUrl)}`);
   console.info(`[ring-trace ${label}] GETs before pubkyauth: ${relayHits.join(" | ") || "(none)"}`);
   await identity.approvePubkyauth(authUrl);
-  try {
-    await expect(page.getByTestId("enableMessagingStatus")).toContainText(
-      "Encrypted messaging enabled",
-      { timeout: 60_000 },
-    );
-  } catch (error) {
-    const html = page.locator("html");
-    const status = page.getByTestId("enableMessagingStatus");
+  const status = page.getByTestId("enableMessagingStatus");
+  const snap = async (tag: string) => {
     const statusCount = await status.count();
     const statusTexts = await status.allTextContents();
+    const storeKinds = await Promise.all(
+      Array.from({ length: statusCount }, (_, i) => status.nth(i).getAttribute("data-hc-store-kind")),
+    );
     const openChatsCount = await page.getByTestId("enableOpenChats").count();
+    console.info(`[ring-trace ${label} ${tag}]`, {
+      statusCount,
+      statusTexts,
+      storeKinds,
+      openChatsCount,
+    });
+    return { statusCount, statusTexts, storeKinds, openChatsCount };
+  };
+  await snap("after-approve");
+  try {
+    await expect(status.filter({ hasText: "Encrypted messaging enabled" })).toBeVisible({
+      timeout: 60_000,
+    });
+  } catch (error) {
+    const html = page.locator("html");
+    const failSnap = await snap("enable-fail");
     const errorText = await page
       .locator("p.text-red-400")
       .textContent({ timeout: 2_000 })
@@ -121,9 +134,10 @@ async function completeRingOnboarding(
     };
     console.info(`[ring-trace ${label} enable-fail]`, {
       errorText,
-      statusCount,
-      statusTexts,
-      openChatsCount,
+      statusCount: failSnap.statusCount,
+      statusTexts: failSnap.statusTexts,
+      storeKinds: failSnap.storeKinds,
+      openChatsCount: failSnap.openChatsCount,
       dataset,
     });
     throw error;

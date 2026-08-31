@@ -68,7 +68,9 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("setChatsOpen(true)");
     expect(host).toContain("markChatsRequested()");
     expect(host).toContain("isChatsRequested()");
-    expect(host).toContain("showOpenChats={enabled && !chatsVisible}");
+    expect(host).toContain("showOpenChats={!chatsVisible}");
+    expect(source).toContain("useSessionStatusStore");
+    expect(source).toContain("storeKind === \"enabled\" || enabledProp");
     expect(host).toContain("setError(err instanceof Error ? err.message : \"Authorization failed\")");
     expect(host).toContain("const enabled = status.kind === \"enabled\"");
     expect(host).not.toContain("useEnableCompleted");

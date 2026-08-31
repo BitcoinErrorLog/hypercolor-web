@@ -2,9 +2,10 @@
 
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
 export function EnablePage({
-  enabled,
+  enabled: enabledProp,
   offline,
   isLoading,
   isExpired,
@@ -32,6 +33,8 @@ export function EnablePage({
   onOpenChats: () => void;
   showOpenChats: boolean;
 }) {
+  const storeKind = useSessionStatusStore((s) => s.status.kind);
+  const enabled = storeKind === "enabled" || enabledProp;
   return (
     <article className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">
@@ -49,7 +52,11 @@ export function EnablePage({
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Status
         </p>
-        <p data-testid="enableMessagingStatus" className="mt-1">
+        <p
+          data-testid="enableMessagingStatus"
+          data-hc-store-kind={storeKind}
+          className="mt-1"
+        >
           {enabled
             ? "Encrypted messaging enabled"
             : error

@@ -133,7 +133,7 @@ export function EnablePageHost() {
               stampAppPath("/chats");
             }
           }}
-          showOpenChats={enabled && !chatsVisible}
+          showOpenChats={!chatsVisible}
         />
       </div>
       {enabled ? (
