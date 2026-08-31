@@ -36,7 +36,17 @@ export type EnableStatus = "needs-enable" | "session-offline" | "enabled";
 
 type LiveSession = { pubky: string; handle: SessionHandle };
 
-let live: LiveSession | null = null;
+const LIVE_KEY = "__hypercolorLiveSession";
+type LiveGlobal = typeof globalThis & { [LIVE_KEY]?: LiveSession | null };
+
+let live: LiveSession | null = (globalThis as LiveGlobal)[LIVE_KEY] ?? null;
+
+function bindLive(next: LiveSession | null): LiveSession | null {
+  live = next;
+  (globalThis as LiveGlobal)[LIVE_KEY] = next;
+  return next;
+}
+
 let restoreInFlight: Promise<SessionRestoreResult> | null = null;
 let sessionDb: IDBDatabase | null = null;
 let writeEpoch = 0;
@@ -261,9 +271,9 @@ export async function adoptLiveHandle(handle: SessionHandle): Promise<LiveSessio
   if (live && live.handle !== handle) {
     closeHandleQuietly(live.handle);
   }
-  live = { pubky, handle };
+  const adopted = bindLive({ pubky, handle })!;
   await KeyStore.setPubky(pubky);
-  return live;
+  return adopted;
 }
 
 export function classifyResumeError(error: unknown): "auth-revoked" | "session-offline" {
@@ -292,14 +302,14 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
   if (live && live.handle !== handle) {
     closeHandleQuietly(live.handle);
   }
-  live = { pubky, handle };
+  const adopted = bindLive({ pubky, handle })!;
   const previous = await readSessionMetadata();
   await persistSessionMetadata(
     await metadataWithPreservedReceiver(pubky, exported, previous),
   );
   await KeyStore.setPubky(pubky);
   useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
-  return live;
+  return adopted;
 }
 
 async function adoptRestoredHandle(
@@ -311,7 +321,7 @@ async function adoptRestoredHandle(
   if (pubky !== stored.pubky) {
     closeHandleQuietly(handle);
     await wipeSessionMetadata();
-    live = null;
+    bindLive(null);
     return { status: "needs-enable" };
   }
   const exported = handle.exportSession();
@@ -322,25 +332,25 @@ async function adoptRestoredHandle(
       closeHandleQuietly(handle);
     }
     await wipeSessionMetadata();
-    live = null;
+    bindLive(null);
     return { status: "needs-enable" };
   }
   if (epoch !== writeEpoch) {
     closeHandleQuietly(handle);
     return { status: "needs-enable" };
   }
-  live = { pubky, handle };
+  bindLive({ pubky, handle });
   await persistSessionMetadata(
     await metadataWithPreservedReceiver(pubky, exported, stored),
   );
   if (epoch !== writeEpoch) {
-    if (live?.handle === handle) live = null;
+    if (live?.handle === handle) bindLive(null);
     closeHandleQuietly(handle);
     return { status: "needs-enable" };
   }
   await KeyStore.setPubky(pubky);
   if (epoch !== writeEpoch) {
-    if (live?.handle === handle) live = null;
+    if (live?.handle === handle) bindLive(null);
     return { status: "needs-enable" };
   }
   return { status: "live", pubky, handle };
@@ -377,7 +387,7 @@ async function restoreFromPersisted(): Promise<SessionRestoreResult> {
         return { status: "session-offline", pubky: stored.pubky };
       }
       await wipeSessionMetadata();
-      live = null;
+      bindLive(null);
       noteRestore(`${resumeNote("cookie", error)}:wiped`);
       return { status: "needs-enable" };
     }
@@ -398,7 +408,7 @@ async function restoreFromPersisted(): Promise<SessionRestoreResult> {
           return { status: "session-offline", pubky: stored.pubky };
         }
         await wipeSessionMetadata();
-        live = null;
+        bindLive(null);
         noteRestore(`${resumeNote("export", exportError)}:wiped`);
         return { status: "needs-enable" };
       }
@@ -458,7 +468,7 @@ export async function getEnableStatus(): Promise<EnableStatus> {
 export async function signOut(): Promise<void> {
   bumpWriteEpoch();
   const previous = live;
-  live = null;
+  bindLive(null);
   const owner =
     previous?.pubky ??
     (await readSessionMetadata())?.pubky ??
@@ -504,7 +514,7 @@ export async function signOut(): Promise<void> {
 export function resetSessionStateForTests(): void {
   bumpWriteEpoch();
   closeHandleQuietly(live?.handle);
-  live = null;
+  bindLive(null);
   restoreInFlight = null;
   sessionDb = null;
   lastRestoreDebug = "";

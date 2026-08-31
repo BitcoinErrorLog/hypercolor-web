@@ -7,6 +7,7 @@ import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
 import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
+import { useEnableCompleted, useEnableCompletedPubky } from "@/lib/enable-done";
 import { stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
@@ -39,10 +40,13 @@ export function EnablePageHost() {
   const status = useSessionStatusStore((s) => s.status);
   const setEnabled = useSessionStatusStore((s) => s.setEnabled);
   const reset = useSessionStatusStore((s) => s.reset);
+  const enableDone = useEnableCompleted();
+  const enableDonePubky = useEnableCompletedPubky();
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const chatsVisible = chatsOpen || isChatsRequested();
+  const enabled = status.kind === "enabled" || enableDone;
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -61,7 +65,8 @@ export function EnablePageHost() {
   );
 
   const auth = useAuthUrl({
-    autoFetch: status.kind === "needs-enable" || status.kind === "live",
+    autoFetch:
+      !enabled && (status.kind === "needs-enable" || status.kind === "live"),
     onApproved,
     onError: (err) => {
       setError(err instanceof Error ? err.message : "Authorization failed");
@@ -83,12 +88,11 @@ export function EnablePageHost() {
     },
   );
 
-  const enabled = status.kind === "enabled";
   const offline = status.kind === "session-offline";
   const identityLabel =
     status.kind === "enabled" || status.kind === "live" || status.kind === "session-offline"
       ? status.pubky
-      : null;
+      : enableDonePubky;
 
   return (
     <>

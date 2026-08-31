@@ -13,6 +13,7 @@ import {
 import { hydratePersistedAuth } from "@/stores/hydrateAuthSession";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { isEnableCompleted } from "@/lib/enable-done";
 
 let bootstrapRun = 0;
 
@@ -24,7 +25,7 @@ export function SessionBootstrap() {
     const runId = ++bootstrapRun;
     void (async () => {
       try {
-        if (typeof document !== "undefined") {
+        if (typeof document !== "undefined" && !isEnableCompleted()) {
           document.documentElement.dataset.hcEnable = "pending";
         }
         await KeyStore.initKeyStore();
@@ -67,7 +68,9 @@ export function SessionBootstrap() {
         setFromRestore(restoreNow, enableNow, { hasIdentity });
         if (typeof document !== "undefined") {
           document.documentElement.dataset.hcRestore = restoreNow.status;
-          document.documentElement.dataset.hcEnable = enableNow ?? "";
+          document.documentElement.dataset.hcEnable = isEnableCompleted()
+            ? "enabled"
+            : (enableNow ?? "");
           document.documentElement.dataset.hcNote = getLastRestoreDebug();
           document.documentElement.dataset.hcIdentity = hasIdentity ? "1" : "0";
           void readSessionMetadata().then((meta) => {

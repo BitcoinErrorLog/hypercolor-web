@@ -14,7 +14,9 @@ describe("SessionBootstrap apply-time re-read", () => {
     expect(source).toContain("enableNow = await getEnableStatus()");
     expect(source).toContain("setFromRestore(restoreNow, enableNow, { hasIdentity })");
     expect(source).toContain("dataset.hcRestore = restoreNow.status");
-    expect(source).toContain("dataset.hcEnable = enableNow ?? \"\"");
+    expect(source).toContain("dataset.hcEnable = isEnableCompleted()");
+    expect(source).toContain("isEnableCompleted()");
+    expect(source).not.toContain('dataset.hcEnable = enableNow ?? \"\"');
     const applyIndex = source.indexOf("restoreNow = await restoreSessionOnLoad()");
     const setIndex = source.indexOf("setFromRestore(restoreNow, enableNow");
     expect(applyIndex).toBeGreaterThan(0);

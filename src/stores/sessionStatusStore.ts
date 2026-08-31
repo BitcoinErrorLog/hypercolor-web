@@ -1,4 +1,12 @@
+"use client";
+
 import { create } from "zustand";
+import {
+  clearEnableCompleted,
+  getEnableCompletedPubky,
+  isEnableCompleted,
+  markEnableCompleted,
+} from "@/lib/enable-done";
 import type { EnableStatus } from "@/services/link/session";
 
 export type SessionUiStatus =
@@ -45,9 +53,14 @@ function createSessionStatusStore() {
             },
           };
         }
-        // A slow first-load restore must not undo Enable or Welcome progress.
-        if (state.status.kind === "enabled") {
-          return state;
+        const completedPubky = getEnableCompletedPubky();
+        if (completedPubky || state.status.kind === "enabled") {
+          return {
+            status: {
+              kind: "enabled",
+              pubky: completedPubky || pubkyOf(state.status),
+            },
+          };
         }
         if (restore.status !== "live" || !restore.pubky) {
           if (state.status.kind === "needs-enable" || state.status.kind === "live") {
@@ -57,20 +70,21 @@ function createSessionStatusStore() {
             status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
           };
         }
-        if (enable === "enabled") {
+        if (enable === "enabled" || isEnableCompleted()) {
           return { status: { kind: "enabled", pubky: restore.pubky } };
         }
         return { status: { kind: "live", pubky: restore.pubky } };
       });
     },
     setEnabled: (pubky) => {
-      if (typeof document !== "undefined") {
-        document.documentElement.dataset.hcEnable = "enabled";
-      }
+      markEnableCompleted(pubky);
       set({ status: { kind: "enabled", pubky } });
     },
     setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),
-    reset: () => set({ status: { kind: "no-identity" } }),
+    reset: () => {
+      clearEnableCompleted();
+      set({ status: { kind: "no-identity" } });
+    },
   }));
 }
 

@@ -75,10 +75,28 @@ type TrackedAuthFlow = {
   canceled: boolean;
 };
 
-/** Survives Enable remount / Fast Refresh so a second fetch cannot start a
- * replacement pubkyauth flow after `awaitApproval` has consumed the handle. */
-let sharedFlow: TrackedAuthFlow | null = null;
-let startInFlight: Promise<void> | null = null;
+const AUTH_FLOW_KEY = "__hypercolorAuthSharedFlow";
+const AUTH_START_KEY = "__hypercolorAuthStartInFlight";
+type AuthFlowGlobal = typeof globalThis & {
+  [AUTH_FLOW_KEY]?: TrackedAuthFlow | null;
+  [AUTH_START_KEY]?: Promise<void> | null;
+};
+
+function readSharedFlow(): TrackedAuthFlow | null {
+  return (globalThis as AuthFlowGlobal)[AUTH_FLOW_KEY] ?? null;
+}
+
+function writeSharedFlow(next: TrackedAuthFlow | null): void {
+  (globalThis as AuthFlowGlobal)[AUTH_FLOW_KEY] = next;
+}
+
+function readStartInFlight(): Promise<void> | null {
+  return (globalThis as AuthFlowGlobal)[AUTH_START_KEY] ?? null;
+}
+
+function writeStartInFlight(next: Promise<void> | null): void {
+  (globalThis as AuthFlowGlobal)[AUTH_START_KEY] = next;
+}
 
 async function signOutQuietly(session: SessionHandle): Promise<void> {
   try {
@@ -128,14 +146,15 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   }, [options.onApproved, options.onError]);
 
   const cancelCurrentFlow = useCallback(() => {
-    if (sharedFlow) {
-      sharedFlow.canceled = true;
+    if (readSharedFlow()) {
+      const current = readSharedFlow();
+      if (current) current.canceled = true;
     }
   }, []);
 
   const fetchUrl = useCallback(async (): Promise<void> => {
     const reuse = (): boolean => {
-      const existing = sharedFlow;
+      const existing = readSharedFlow();
       if (!existing || existing.canceled) return false;
       if (isMountedRef.current) {
         setUrl(existing.url);
@@ -145,15 +164,17 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
       return true;
     };
     if (reuse()) return;
-    if (startInFlight) {
-      await startInFlight;
+    if (readStartInFlight()) {
+      await readStartInFlight();
       if (reuse()) return;
     }
 
     let done!: () => void;
-    startInFlight = new Promise<void>((resolve) => {
-      done = resolve;
-    });
+    writeStartInFlight(
+      new Promise<void>((resolve) => {
+        done = resolve;
+      }),
+    );
 
     setIsLoading(true);
     setIsExpired(false);
@@ -168,7 +189,7 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
         url: authorizationUrl,
         canceled: false,
       };
-      sharedFlow = tracked;
+      writeSharedFlow(tracked);
 
       void PaykitLinkWeb.awaitAuthApproval(flow)
         .then(async (session: SessionHandle) => {
@@ -206,7 +227,7 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
       onErrorRef.current?.(error);
     } finally {
       done();
-      startInFlight = null;
+      writeStartInFlight(null);
       if (isMountedRef.current) {
         setIsLoading(false);
       }

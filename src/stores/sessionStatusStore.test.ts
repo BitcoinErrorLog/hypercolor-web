@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { clearEnableCompleted, isEnableCompleted } from "@/lib/enable-done";
 import { useSessionStatusStore } from "./sessionStatusStore";
 
 describe("sessionStatusStore", () => {
   beforeEach(() => {
+    clearEnableCompleted();
     useSessionStatusStore.setState({ status: { kind: "unknown" } });
   });
 
@@ -42,6 +44,7 @@ describe("sessionStatusStore", () => {
     useSessionStatusStore.getState().setEnabled("abc");
     useSessionStatusStore.getState().reset();
     expect(useSessionStatusStore.getState().status).toEqual({ kind: "no-identity" });
+    expect(isEnableCompleted()).toBe(false);
   });
 
   it("does not let a stale bootstrap clobber enabled back to needs-enable", () => {
@@ -49,6 +52,19 @@ describe("sessionStatusStore", () => {
     useSessionStatusStore
       .getState()
       .setFromRestore({ status: "needs-enable" }, "needs-enable", { hasIdentity: true });
+    expect(useSessionStatusStore.getState().status).toEqual({
+      kind: "enabled",
+      pubky: "abc",
+    });
+    expect(isEnableCompleted()).toBe(true);
+  });
+
+  it("heals a fresh store instance from the durable Enable flag", () => {
+    useSessionStatusStore.getState().setEnabled("abc");
+    useSessionStatusStore.setState({ status: { kind: "unknown" } });
+    useSessionStatusStore
+      .getState()
+      .setFromRestore({ status: "live", pubky: "abc" }, "needs-enable");
     expect(useSessionStatusStore.getState().status).toEqual({
       kind: "enabled",
       pubky: "abc",

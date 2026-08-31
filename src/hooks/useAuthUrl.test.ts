@@ -10,8 +10,9 @@ const source = readFileSync(
 
 describe("useAuthUrl Enable approval contract", () => {
   it("reuses an in-flight flow by stored URL and never cancels after awaitApproval consumes the handle", () => {
-    expect(source).toContain("let sharedFlow");
-    expect(source).toContain("startInFlight");
+    expect(source).toContain("readSharedFlow");
+    expect(source).toContain("writeSharedFlow");
+    expect(source).toContain("readStartInFlight");
     expect(source).toContain("existing.url");
     expect(source).toContain("if (!existing || existing.canceled) return false");
     expect(source).toContain("if (reuse()) return");
