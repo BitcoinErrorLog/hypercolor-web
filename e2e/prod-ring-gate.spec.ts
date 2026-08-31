@@ -58,20 +58,38 @@ function attachDiagnostics(page: Page, label: string): FailedRequest[] {
 async function attachInitiatorTrace(page: Page, label: string): Promise<void> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
-  const initiators = new Map<string, string>();
+  const requests = new Map<string, { url: string; method: string; initiator: string }>();
   cdp.on("Network.requestWillBeSent", (event) => {
     const frames = event.initiator?.stack?.callFrames ?? [];
     const top = frames
-      .slice(0, 3)
+      .slice(0, 4)
       .map((f) => `${f.functionName || "<anon>"}@${f.url.split("/").pop()}:${f.lineNumber}`)
       .join(" < ");
-    initiators.set(event.requestId, `${event.initiator?.type ?? "?"} ${top}`);
+    requests.set(event.requestId, {
+      url: event.request.url,
+      method: event.request.method,
+      initiator: `${event.initiator?.type ?? "?"} ${top}`,
+    });
   });
   cdp.on("Network.responseReceived", (event) => {
     if (event.response.status < 400) return;
     trace(
       label,
-      `INITIATOR ${event.response.status} ${event.response.url} :: ${initiators.get(event.requestId) ?? "unknown"}`,
+      `INITIATOR ${event.response.status} ${event.response.url} :: ${requests.get(event.requestId)?.initiator ?? "unknown"}`,
+    );
+  });
+  // The decisive signal for an aborted request: `canceled` marks a requester
+  // -initiated cancel, `blockedReason` marks a policy block, and anything else
+  // points at the transport.
+  cdp.on("Network.loadingFailed", (event) => {
+    const request = requests.get(event.requestId);
+    trace(
+      label,
+      `LOADINGFAILED ${request?.method ?? "?"} ${request?.url ?? "?"} ` +
+        `errorText=${event.errorText} canceled=${String(event.canceled)} ` +
+        `blockedReason=${event.blockedReason ?? "none"} type=${event.type} ` +
+        `corsError=${event.corsErrorStatus?.corsError ?? "none"} ` +
+        `initiator=${request?.initiator ?? "unknown"}`,
     );
   });
 }
@@ -166,7 +184,24 @@ async function sendMessage(page: Page, body: string, label: string): Promise<voi
   let lastError = "";
   for (let attempt = 1; Date.now() < deadline; attempt += 1) {
     await page.getByPlaceholder("Message").fill(body);
-    await page.getByRole("button", { name: "Send" }).click();
+    // Bounded: a stuck send leaves the composer disabled, and an unbounded
+    // click would wait on it forever instead of reporting.
+    const clicked = await page
+      .getByRole("button", { name: "Send", exact: true })
+      .click({ timeout: 10_000 })
+      .then(
+        () => true,
+        (error: Error) => {
+          trace(label, `send button not actionable: ${error.message.split("\n")[0]}`);
+          return false;
+        },
+      );
+    if (!clicked) {
+      const labels = await page.getByText(/·\s*\w+$/).allTextContents();
+      throw new Error(
+        `composer stayed disabled after a send; delivery labels ${JSON.stringify(labels)}`,
+      );
+    }
     // The body renders immediately from the optimistic local row, so it proves
     // nothing. The visible delivery label is the only signal that the payload
     // actually left this device.
@@ -270,6 +305,7 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
     const failuresA = attachDiagnostics(pageA, "A");
     const failuresB = attachDiagnostics(pageB, "B");
     await attachInitiatorTrace(pageA, "A");
+    await attachInitiatorTrace(pageB, "B");
     summarize = () => {
       for (const [label, failures] of [
         ["A", failuresA],
