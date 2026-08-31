@@ -5,9 +5,17 @@ export type AppPathSegment = "chats" | "channels" | "contacts";
  * `data.__NA` is set, dispatches ACTION_RESTORE — which starts Flight and
  * waits on webpack HMR (`app-router.js` pushState patch). After Enable that
  * Flight never commits, so Open chats stayed on `/enable`.
+ *
+ * `stampAppPath` writes history only. A synthetic `popstate` can still re-enter
+ * Next restore; Enable uses this after chats are already mounted in-place.
+ * `pushAppPath` also dispatches `popstate` so `usePathSegment` updates.
  */
-export function pushAppPath(href: string): void {
+export function stampAppPath(href: string): void {
   window.history.pushState({ __NA: true }, "", href);
+}
+
+export function pushAppPath(href: string): void {
+  stampAppPath(href);
   window.dispatchEvent(new Event("popstate"));
 }
 

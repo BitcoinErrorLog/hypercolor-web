@@ -18,6 +18,10 @@ const pathId = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "../lib/path-id.ts"),
   "utf8",
 );
+const chatsOpen = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "../lib/chats-open.ts"),
+  "utf8",
+);
 
 describe("enable-page Open chats", () => {
   it("opens chats in the live Enable module and stamps __NA so Next does not start Flight", () => {
@@ -28,10 +32,20 @@ describe("enable-page Open chats", () => {
     expect(source).not.toContain("router.push");
     expect(host).toContain("ChatsPageHost");
     expect(host).toContain("setChatsOpen(true)");
-    expect(host).toContain("setTimeout");
-    expect(host).toContain("pushAppPath(\"/chats\")");
-    expect(host).toContain("[chatsOpen]");
+    expect(host).toContain("markChatsRequested()");
+    expect(host).toContain("isChatsRequested()");
+    expect(host).toContain("enabled || chatsVisible");
+    expect(host).toContain("hidden={chatsVisible}");
+    expect(host).toContain("hidden={!chatsVisible}");
+    expect(host).toContain("inert={chatsVisible}");
+    expect(host).toContain("stampAppPath(\"/chats\")");
+    expect(host).not.toContain("setTimeout");
+    expect(host).not.toContain("pushAppPath");
     expect(host).not.toContain("router.push");
+    expect(host).not.toContain("location.assign");
+    expect(chatsOpen).toContain("sessionStorage");
+    expect(chatsOpen).toContain("chatsRequested");
+    expect(pathId).toContain("export function stampAppPath");
     expect(pathId).toContain("__NA: true");
   });
 });

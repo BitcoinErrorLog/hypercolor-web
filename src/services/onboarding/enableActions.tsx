@@ -6,7 +6,8 @@ import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
-import { pushAppPath } from "@/lib/path-id";
+import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
+import { stampAppPath } from "@/lib/path-id";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus, signOut } from "@/services/link/session";
 import { emit } from "@/services/vibeware/collector";
@@ -40,7 +41,8 @@ export function EnablePageHost() {
   const reset = useSessionStatusStore((s) => s.reset);
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
-  const [chatsOpen, setChatsOpen] = useState(false);
+  const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
+  const chatsVisible = chatsOpen || isChatsRequested();
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -74,51 +76,56 @@ export function EnablePageHost() {
     },
   );
 
-  useEffect(() => {
-    if (!chatsOpen) return;
-    if (window.location.pathname === "/chats" || window.location.pathname.startsWith("/chats/")) {
-      return;
-    }
-    pushAppPath("/chats");
-  }, [chatsOpen]);
-
-  if (chatsOpen) {
-    return <ChatsPageHost />;
-  }
-
   const enabled = status.kind === "enabled";
   const offline = status.kind === "session-offline";
   const identityLabel =
     status.kind === "enabled" || status.kind === "live" || status.kind === "session-offline"
       ? status.pubky
       : null;
+  const mountChats = enabled || chatsVisible;
 
   return (
-    <EnablePage
-      enabled={enabled}
-      offline={offline}
-      isLoading={auth.isLoading}
-      isExpired={auth.isExpired}
-      error={error}
-      identityLabel={identityLabel}
-      provisionedPath={provisionedPath}
-      authPanel={!enabled && !auth.isExpired ? buildAuthPanel(auth.url) : null}
-      onRegenerate={() => void auth.fetchUrl()}
-      onRetry={() => {
-        void getEnableStatus();
-        void auth.fetchUrl();
-      }}
-      onSignOut={() => {
-        void signOut().then(() => {
-          reset();
-          void auth.fetchUrl();
-        });
-      }}
-      onOpenChats={() => {
-        window.setTimeout(() => {
-          setChatsOpen(true);
-        }, 0);
-      }}
-    />
+    <>
+      <div hidden={chatsVisible} inert={chatsVisible} aria-hidden={chatsVisible || undefined}>
+        <EnablePage
+          enabled={enabled}
+          offline={offline}
+          isLoading={auth.isLoading}
+          isExpired={auth.isExpired}
+          error={error}
+          identityLabel={identityLabel}
+          provisionedPath={provisionedPath}
+          authPanel={!enabled && !auth.isExpired ? buildAuthPanel(auth.url) : null}
+          onRegenerate={() => void auth.fetchUrl()}
+          onRetry={() => {
+            void getEnableStatus();
+            void auth.fetchUrl();
+          }}
+          onSignOut={() => {
+            void signOut().then(() => {
+              clearChatsRequested();
+              setChatsOpen(false);
+              reset();
+              void auth.fetchUrl();
+            });
+          }}
+          onOpenChats={() => {
+            markChatsRequested();
+            setChatsOpen(true);
+            if (
+              window.location.pathname !== "/chats" &&
+              !window.location.pathname.startsWith("/chats/")
+            ) {
+              stampAppPath("/chats");
+            }
+          }}
+        />
+      </div>
+      {mountChats ? (
+        <div hidden={!chatsVisible} inert={!chatsVisible} aria-hidden={!chatsVisible || undefined}>
+          <ChatsPageHost />
+        </div>
+      ) : null}
+    </>
   );
 }
