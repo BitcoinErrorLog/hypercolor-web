@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 
 const STORAGE_KEY = "hc-enable-done";
 const GLOBAL_KEY = "__hypercolorEnableDone";
@@ -90,9 +90,21 @@ function subscribeEnableCompleted(listener: () => void): () => void {
 }
 
 export function useEnableCompleted(): boolean {
-  return useSyncExternalStore(subscribeEnableCompleted, () => currentPubky() !== null);
+  const [done, setDone] = useState(false);
+  useEffect(() => {
+    const sync = () => setDone(currentPubky() !== null);
+    sync();
+    return subscribeEnableCompleted(sync);
+  }, []);
+  return done;
 }
 
 export function useEnableCompletedPubky(): string | null {
-  return useSyncExternalStore(subscribeEnableCompleted, currentPubky);
+  const [pubky, setPubky] = useState<string | null>(null);
+  useEffect(() => {
+    const sync = () => setPubky(currentPubky());
+    sync();
+    return subscribeEnableCompleted(sync);
+  }, []);
+  return pubky;
 }
