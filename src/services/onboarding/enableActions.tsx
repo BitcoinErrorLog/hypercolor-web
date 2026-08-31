@@ -44,9 +44,9 @@ export function EnablePageHost() {
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
-  const [chatsMounted, setChatsMounted] = useState(() => isChatsRequested());
-  const chatsVisible = chatsMounted && (chatsOpen || isChatsRequested());
   const enabled = status.kind === "enabled";
+  const chatsMounted = enabled && (chatsOpen || isChatsRequested());
+  const chatsVisible = chatsMounted;
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -120,7 +120,6 @@ export function EnablePageHost() {
             void signOut().then(() => {
               clearChatsRequested();
               setChatsOpen(false);
-              setChatsMounted(false);
               reset();
               void auth.fetchUrl();
             });
@@ -133,8 +132,7 @@ export function EnablePageHost() {
             ) {
               stampAppPath("/chats");
             }
-            queueMicrotask(() => {
-              setChatsMounted(true);
+            requestAnimationFrame(() => {
               setChatsOpen(true);
             });
           }}

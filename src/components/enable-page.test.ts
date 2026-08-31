@@ -65,12 +65,11 @@ describe("enable-page Open chats", () => {
     expect(source).not.toContain("router.push");
     expect(host).toContain("ChatsPageHost");
     expect(host).toMatch(/\{enabled && chatsMounted \?\s*\([\s\S]*<ChatsPageHost \/>/);
-    expect(host).toContain("setChatsMounted(true)");
-    expect(host.indexOf("setChatsMounted(true)")).toBeGreaterThan(host.indexOf("onOpenChats"));
     expect(host).toContain("setChatsOpen(true)");
-    expect(host).toContain("queueMicrotask");
-    expect(host).toContain("setChatsMounted(true)");
-    expect(host).toContain("chatsMounted && (chatsOpen || isChatsRequested())");
+    expect(host).toContain("requestAnimationFrame");
+    expect(host).toContain("chatsMounted = enabled && (chatsOpen || isChatsRequested())");
+    expect(host).not.toContain("queueMicrotask");
+    expect(host).not.toContain("startTransition");
     expect(host).toContain("markChatsRequested()");
     expect(host).toContain("isChatsRequested()");
     expect(host).toContain("showOpenChats={!chatsVisible}");
