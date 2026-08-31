@@ -261,6 +261,11 @@ export const PaykitLinkWeb = {
     )) as SessionHandle;
   },
 
+  async resolveMostRecentHomeserver(pubkyZ32: string): Promise<void> {
+    const wasmClient = await getPaykitClient();
+    await wasmClient.resolveMostRecentHomeserver(pubkyZ32.trim());
+  },
+
   async restoreSession(exported: string): Promise<SessionHandle> {
     const wasmClient = await getPaykitClient();
     return (await wasmClient.restoreSession(exported)) as SessionHandle;

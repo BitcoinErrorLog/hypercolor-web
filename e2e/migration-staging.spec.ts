@@ -285,7 +285,10 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
       "needs-enable",
     );
 
-    await pageB.evaluate(async (peer) => window.runMigrationRebindPeer!(peer), signedA.pubky);
+    await pageB.evaluate(
+      async (peer) => window.runMigrationRebindPeerLink!(peer),
+      signedA.pubky,
+    );
 
     const identityAfter = await pageA.evaluate(() => window.runMigrationIdentity!());
     expect(identityAfter.pubky, "pubky must be unchanged after migrate").toBe(
@@ -293,8 +296,8 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     );
 
     const republishAt = Date.now();
-    const aToBMs = await pollUntil(
-      "A→B after migrate (required)",
+    const rawPkarrPropagationMs = await pollUntil(
+      "A→B after migrate without pkarr cache bust (TTL measurement)",
       PKARR_PROPAGATION_DEADLINE_MS,
       () =>
         sendAndExpectKnownPeer(
@@ -303,6 +306,23 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
           signedB.pubky,
           signedA.pubky,
           `post-migrate-from-a-${Date.now()}`,
+        ),
+    );
+
+    await pageB.evaluate(
+      async (peer) => window.runMigrationBustPeerHomeserver!(peer),
+      signedA.pubky,
+    );
+    const afterCacheBustMs = await pollUntil(
+      "A→B after pkarr cache bust (verification)",
+      POST_MIGRATE_LINK_DEADLINE_MS,
+      () =>
+        sendAndExpectKnownPeer(
+          pageA,
+          pageB,
+          signedB.pubky,
+          signedA.pubky,
+          `post-migrate-cache-bust-${Date.now()}`,
         ),
     );
 
@@ -336,7 +356,8 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     console.log(
       JSON.stringify({
         scenario: "graceful-migrate",
-        republishToAtoBMs: aToBMs,
+        rawPkarrPropagationMs,
+        afterCacheBustMs,
         republishToBtoAMs: bToAMs,
         bToAError: bToAError || undefined,
         measuredFrom: republishAt,

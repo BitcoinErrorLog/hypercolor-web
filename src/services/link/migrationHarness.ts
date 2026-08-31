@@ -129,8 +129,18 @@ export async function runMigrationTo(
   };
 }
 
-export async function runMigrationRebindPeer(peerPubky: string): Promise<string> {
+export async function runMigrationRebindPeerLink(peerPubky: string): Promise<string> {
   return LinkService.rebindPeerLinkAfterHomeserverMigration(peerPubky.trim());
+}
+
+export async function runMigrationBustPeerHomeserver(peerPubky: string): Promise<void> {
+  await PaykitLinkWeb.resolveMostRecentHomeserver(peerPubky.trim());
+}
+
+export async function runMigrationRebindPeer(peerPubky: string): Promise<string> {
+  const peer = peerPubky.trim();
+  await PaykitLinkWeb.resolveMostRecentHomeserver(peer);
+  return LinkService.rebindPeerLinkAfterHomeserverMigration(peer);
 }
 
 export async function runMigrationIdentity(): Promise<MigrationIdentity> {

@@ -11,7 +11,7 @@ on `feat/homeserver-migration`. Not rebuilt inside this web tree.
 | --- | --- |
 | Repository | `https://github.com/BitcoinErrorLog/paykit-rs-official` |
 | Branch | `feat/homeserver-migration` |
-| Commit | `2ff7d44e5cc97480a8a75348606d6167ba832de4` (local, unpushed) |
+| Commit | `6a58d269fecdaa058c527890a3c39b0518e7cade` (local, unpushed) |
 | Base | `feat/sb2-encrypt-export` @ `4c0b7a1` |
 | Upstream | `https://github.com/pubky/paykit-rs` |
 | `pubky` | crates.io `0.8.0` vendored at `vendor/pubky` with CAS retry, last-attempt If-Match omit, WASM backoff, `migrate_homeserver`, and ICANN/HTTP endpoint selection (see `vendor/pubky/PATCHES.md`) |
@@ -28,6 +28,9 @@ surface and adds:
   new host, then force-publish `_pubky`. Host-local data is not copied.
 - Force-publish last CAS attempt omits If-Match; WASM retries sleep via
   `setTimeout`; `/signup` and `/session` retry on transport errors.
+- `PubkyClient.resolveMostRecentHomeserver` — force fresh `_pubky` lookup
+  after a counterparty migrates (bypasses stale pkarr cache).
+- pkarr force-publish retries `UnexpectedResponses` with re-resolve (6 attempts).
 
 ## Toolchain (recorded at the source build)
 
@@ -45,9 +48,9 @@ Computed with `shasum -a 256` against the files copied into this directory.
 
 | File | SHA-256 |
 | --- | --- |
-| `paykit_wasm_bg.wasm` | `f1171fcfd68a7ad37283143ea029e032b0d92e9dcfdb29dc998a3a669692c190` |
-| `paykit_wasm.js` | `c4cba1fc1b481d1d1ce450f813ab6ca51cb34abac8e46f971c8c49516abbe561` |
-| `paykit_wasm.d.ts` | `635e64ca5145e4228455cb9d1fb9f723d6de82b020feb8bba111a277178a5ac2` |
+| `paykit_wasm_bg.wasm` | `d83ea2e0626151931448bb4929cba214f50236084e32252921ce9fcd548dd492` |
+| `paykit_wasm.js` | `56a991159847382456bad25f136c8287ff6b3fdcf07505f423a7d01eee3b9be5` |
+| `paykit_wasm.d.ts` | `5974284a8b5573fa5e0088e7809fa6f19b67bed12f5266ec6ea285852b5a3e5a` |
 | `paykit_wasm_bg.wasm.d.ts` | `da8369fc7b6f279d4212c3c36ea575bc4e52c67e32ea205537cd9232b3b4114d` |
 | `package.json` | `65e7d4a03984a38686323ac32cd2cf886a73538ae7a1c74f6f1f47cd6e27e7bf` |
 
