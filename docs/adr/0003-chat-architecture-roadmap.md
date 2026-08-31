@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed — 2026-08-31
+Proposed — 2026-08-31. Amended 2026-08-31 by [ADR 0004](0004-open-inbox-drop-point.md): items **3a–3d** inserted, item **1's** stated value corrected, rejected-increments table extended.
 
-This is the single ordered sequence that replaces the phase lists in the first draft of ADR 0001 and in the graph-utilisation review. It does not add protocol. It sequences the two domains decided in [ADR 0001](0001-group-as-pubky.md) (private) and [ADR 0002](0002-public-chat-as-graph.md) (public).
+This is the single ordered sequence that replaces the phase lists in the first draft of ADR 0001 and in the graph-utilisation review. It does not add protocol. It sequences the two domains decided in [ADR 0001](0001-group-as-pubky.md) (private) and [ADR 0002](0002-public-chat-as-graph.md) (public), plus first contact from a stranger (ADR 0004).
 
 Supporting analysis: [graph-utilisation-review.md](../graph-utilisation-review.md).
 
@@ -26,10 +26,11 @@ After item 3, later items may be prepared in parallel *implementation* as long a
 
 ### 1. Opt-in read-only follows import
 
-- **User-visible value:** Contacts gain Following / Mutual / Follower badges that `relationshipBadges` / `contactRank` already render (`src/lib/contacts-sort.ts`). Inbound Encrypted Links from people the user follows auto-accept, as `classifyInboundPeer` already specifies (`src/services/link/wotGate.ts`). Today those flags are never set (`addManualContact` preserves them; `NexusClient.following` / `.followers` / `.friends` and `StorageService.setContactRelationshipFlags` have no production caller).
+- **User-visible value:** Contacts gain Following / Mutual / Follower badges that `relationshipBadges` / `contactRank` already render (`src/lib/contacts-sort.ts`), and contact ranking improves. Today those flags are never set (`addManualContact` preserves them; `NexusClient.following` / `.followers` / `.friends` and `StorageService.setContactRelationshipFlags` have no production caller).
+- **Amended by ADR 0004:** the first draft of this item also claimed inbound Encrypted Links from people the user follows auto-accept "as `classifyInboundPeer` already specifies." That is no longer true. Upstream pin `a373cd1` narrowed auto-accept to `hasPriorRoutedConversation` and states that `isMutual` / `isFollowing` / `addedManually` "MUST NOT be re-introduced as accept conditions." This tree's copied `wotGate.ts` is the older pin `c7157aaa` and still shows the wider table. Item 1 therefore delivers badges and ranking only. It is **not** an inbox-enumeration workaround; that is items 3a–3c.
 - **Effort:** S. Types, Nexus wrappers, and the flag writer already exist. Toggle + hydration + homeserver confirm.
 - **Protocol change:** No.
-- **Privacy-sensitive:** Yes. Changes who is auto-accepted. Copies a world-readable follow list into the messenger.
+- **Privacy-sensitive:** Yes. Copies a world-readable follow list into the messenger. It no longer changes who is auto-accepted (see the amendment above).
 - **Publicly visible:** The follow files were already world-readable at `/pub/pubky.app/follows/:user_id` (`PubkyAppFollow`). Import does not publish them. If hydration goes through Nexus, the indexer sees `GET /v0/user/{self}/following` (and followers/friends) — IP, time, user id. Prefer listing own homeserver follows when a session can (`publicGet` / directory GET). Do **not** PUT follows. Do **not** add strangers who merely follow the user. Default **off**. Copy: “Use my pubky.app follows to recognise people.”
 - **Bad design if:** Enable Messaging silently turns a public social graph into a DM allow-list, or writes the Hypercolor contact book back out as follows.
 
@@ -50,6 +51,42 @@ After item 3, later items may be prepared in parallel *implementation* as long a
 - **Privacy-sensitive:** Yes. The prefix is intent.
 - **Publicly visible:** Nexus sees the prefix, IP, time. Adding locally is not a public write.
 - **Bad design if:** Search-as-you-type runs from a private thread composer, or select writes a follow.
+
+### 3a. Open-inbox descriptor (ADR 0004 Phase A)
+
+- **User-visible value:** A settings toggle, default **off**, that publishes `hypercolor.inbox.descriptor.v1` at `/pub/hypercolor.app/v1/inbox/v1.json` with an InboxKey X25519 public key. Nothing is received yet, but the send path stops lying: messaging a pubky with no descriptor now reports **inbox closed** instead of showing a delivered message that the recipient will never see. That silent failure is the defect ADR 0004 exists to fix.
+- **Effort:** M. New secret class (InboxKey custody), new object + validators, send-path descriptor fetch. Needs the vendored `paykit-wasm` rebuilt for `sb2Encrypt` / `sb2Sign` / `computeInboxKid`.
+- **Protocol change:** Yes (additive Hypercolor object; no new Ring grant — inside `/pub/hypercolor.app/v1/:rw`).
+- **Privacy-sensitive:** Yes. New key class, new world-readable address.
+- **Publicly visible:** The descriptor itself — an X25519 public key, an `inbox_kid`, a relay list, and a PoW/ticket policy. Deliberately world-readable: a stranger must be able to find it. Its presence says "this account accepts requests." Not a Nexus object; no pkarr write.
+- **Bad design if:** Enable Messaging turns it on silently, or the InboxKey secret is materialised into JS on web without that being an explicit, documented decision.
+
+### 3b. Sealed drop relay, end to end (ADR 0004 Phase B)
+
+- **User-visible value:** A stranger with no follow, no manual add, and no prior link lands in the message-request queue. `collectInboxCandidates` gains a third source: pubkys named by sealed drop hints. Accepting opens an ordinary Encrypted Link.
+- **Effort:** L. New service (`BitcoinErrorLog/hypercolor-drop`), shared PoW primitive in `pubky-crypto` with wasm + UniFFI bindings, client submit/challenge/fetch/ack.
+- **Protocol change:** Yes (`hypercolor.inbox.hint.v1`, the SB2 unlinkable profile, the PoW domain). Additive. `chat.message.v0` and the PAM transport are untouched.
+- **Privacy-sensitive:** Yes. New third party, new abuse surface, new crypto profile.
+- **Publicly visible:** To the relay operator: an `inbox_kid`, drop counts, timing, constant blob size, submitter and fetcher IPs. **Not** the sender's pubky (sealed) and **not** any message content (the drop carries a pointer, never a body). The `inbox_kid` → pubky map is public in descriptors, so treat recipient identity as exposed to the relay.
+- **Bad design if:** The drop carries a message body or preview, a drop auto-accepts, the relay exposes any per-drop fetch/ack state (a presence oracle), or the queue evicts instead of rejecting when full.
+
+### 3c. Open-inbox hardening (ADR 0004 Phase C)
+
+- **User-visible value:** Multi-relay fan-out so one operator cannot silently censor; InboxKey epoch rotation; introduction tickets from accepted contacts, so a user under attack can set `require_ticket` instead of closing the inbox; the honest sender-feedback set (`queued` / `rejected` / `rate limited` / `inbox closed`, and never `delivered` or `read`).
+- **Effort:** M after 3b.
+- **Protocol change:** Yes (ticket object; descriptor `retired` handling).
+- **Privacy-sensitive:** Yes. Tickets name a voucher; rotation changes an address.
+- **Publicly visible:** Descriptor epoch changes and the relay list. The ticket travels sealed.
+- **Bad design if:** A "delivered" state for drops appears anywhere, or a heartbeat/health signal is added that reveals recipient online status.
+
+### 3d. Append-only capability upstream (ADR 0004 Phase D)
+
+- **User-visible value:** None directly. It is the exit from relay dependence: with `Action::Append` plus anonymous per-path limits in the homeserver, the descriptor can point at the recipient's own homeserver and the relay becomes one optional mirror.
+- **Effort:** L, and **deployment-gated** — it only helps if the operators we actually talk to run the fork. Same posture ADR 0001 takes on session revocation: do not let v1 depend on it.
+- **Protocol change:** Yes, in `BitcoinErrorLog/pubky-core` (`pubky-common/src/capabilities.rs`, `client_server/layers/authz.rs`, `data_directory/quota_config/`).
+- **Privacy-sensitive:** Yes. A new anonymous write path into a user's tenant.
+- **Publicly visible:** An open-append prefix on the recipient's homeserver, and its byte cap.
+- **Bad design if:** `Action::Write` is reused for this. Write is PUT/POST/**DELETE**, so a public write grant is a public delete grant.
 
 ### 4. Request-row graph hints (labels only)
 
@@ -164,6 +201,13 @@ After item 3, later items may be prepared in parallel *implementation* as long a
 | Mute-via-Nexus as a room filter | Watcher ignores mute PUTs in this fork. |
 | Scout-as-default rooms directory | Item 2 uses REST; item 12 is opt-in. |
 | Mapping private attachments to `PubkyAppFile` | Item 5 forbids it. |
+| Auto-accept for open-inbox drops | ADR 0004. The accept gate is the spam defense. PoW, payment, tickets, tags, and follows are all forgeable or purchasable. |
+| A message body or preview inside a drop | ADR 0004. The drop is authenticated only by a throwaway key; rendering that text is unaccountable phishing. Bodies stay on the pairwise DH-derived path. |
+| A public write-only session on the recipient's inbox prefix | ADR 0004. `Action::Write` is PUT/POST/**DELETE** — a public write grant is a public delete grant, and the recipient's own quota becomes the attacker's budget. Needs item 3d first. |
+| `pubky-core` `http-relay` as the drop point | ADR 0004. It is the httprelay.io *link* rendezvous: `get_handler` blocks for `request_timeout` and retains nothing. Both parties must be online. |
+| Payment (Paykit) as baseline postage | ADR 0004. Offline proof needs a `payment_hash` the recipient issued (`proofVerify.ts`), which a stranger cannot have; and requiring money to say hello excludes users and links a payment to a contact attempt. Optional priority tier only. |
+| Nexus or nexus-scout as the inbox enumerator | ADR 0004. DMs are unmodeled, delivery would depend on a third party, and the query would tell the operator who is contacting whom. |
+| A DM-shaped `Resource` variant in `pubky-app-specs` | ADR 0004. That is teaching the public social indexer to model direct messages. |
 
 ## Proof bar
 
@@ -172,6 +216,10 @@ A skipped test is not a green live proof. Item-level proofs:
 1. Toggle off: no Nexus following fetch, flags unchanged. Toggle on: fake Nexus follow does not set `isFollowing` without a homeserver confirm (or a documented Nexus-only fallback if own-list is denied — then the UI says “unverified”). Disable Nexus: own follows still import if homeserver list works.
 2. Open Discover, see posts that already exist on pubky.app for a known tag. Composer disabled. Private inbox does not fire those GETs.
 3. Type a known staging name, select, contact appears with `addedManually`; no follows PUT.
+3a. Toggle on: an unauthenticated `publicGet` from a second browser profile returns the descriptor and `computeInboxKid(inbox_x25519_pub)` equals the published `inbox_kid`. Toggle off: 404. In both states `collectInboxCandidates` output is byte-identical to before and no new peer appears. Sending to a descriptor-less pubky shows **inbox closed**, not a delivered message.
+3b. A stranger account with no follow, no manual add, and no prior link sends a message; the recipient's next sync shows a **pending request**, not an accepted conversation. Kill the relay before accept — accepting still completes and the first body arrives from the sender's own homeserver path. A drop one bit under `min_pow_bits` returns 400 and never enters the queue. The 65th drop to one KID returns `503 queue-full` with the first 64 intact. A hint naming an uninvolved third party leaves no request row and no contact row.
+3c. With two relays listed, kill relay 1: the drop still lands via relay 2 and is not double-surfaced. Rotate the epoch: drops to the retired KID are discarded locally. With `require_ticket: true`, an unticketed drop is refused and a ticket from an accepted contact is accepted at `min_pow_bits = 0`. Grep the relay: no route or field exposes per-drop fetch or delete state.
+3d. On a `pubky-testnet` homeserver built from the fork: an unauthenticated PUT into an append-scoped prefix succeeds, a DELETE in that prefix returns 403, a second PUT to the same key returns 409, and the per-prefix byte cap refuses writes without consuming the owner's remaining quota.
 4. Open one request row, see tags; a second pending row is not fetched until opened. Accept still follows `wotGate` only.
 5. Upload, delete sender replica, re-seed from a second member, decrypt.
 6. Grant screen shows pubky.app publish separately from Paykit. Session without that grant cannot PUT a post.
@@ -188,4 +236,5 @@ A skipped test is not a green live proof. Item-level proofs:
 
 - [ADR 0001](0001-group-as-pubky.md)
 - [ADR 0002](0002-public-chat-as-graph.md)
+- [ADR 0004](0004-open-inbox-drop-point.md) — open inbox; source of items 3a–3d and of the item 1 correction.
 - [README](README.md)
