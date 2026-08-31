@@ -179,11 +179,14 @@ async function postRelayPublicParams(
     mode: "secure_handoff",
     homeserver: params.homeserver,
   });
-  const response = await fetch(relayChannelUrl(channelId, getHttpRelayBase()), {
+  const url = relayChannelUrl(channelId, getHttpRelayBase());
+  console.info(`[ring-trace simulator] POST ${url}`);
+  const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body,
   });
+  console.info(`[ring-trace simulator] POST done status=${response.status}`);
   if (!response.ok) {
     throw new Error(`httprelay POST ${response.status}`);
   }
@@ -204,9 +207,12 @@ export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
       await signer.signup(homeserverPk, token);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      // Signup publishes PKDNS; a concurrent newer packet is not fatal if
-      // the homeserver later resolves for this key.
-      if (!/more recent SignedPacket/i.test(message)) {
+      // Signup publishes PKDNS. A concurrent packet or a one-shot DHT
+      // miss is not fatal if the homeserver later resolves for this key.
+      if (
+        !/more recent SignedPacket/i.test(message) &&
+        !/Failed to publish record to the DHT/i.test(message)
+      ) {
         throw error;
       }
     }
@@ -306,7 +312,14 @@ export async function createStagingIdentity(): Promise<RingSimulatorHandle> {
 
   async function approvePubkyauth(url: string): Promise<void> {
     parsePubkyauth(url);
+    const parsed = new URL(url.replace(/^pubkyauth:/i, "https:"));
+    const relay = parsed.searchParams.get("relay") ?? "";
+    const secret = parsed.searchParams.get("secret") ?? "";
+    console.info(
+      `[ring-trace simulator] pubkyauth relay=${relay} secretLen=${secret.length}`,
+    );
     await withTimeout(signer.approveAuthRequest(url), 30_000, "approveAuthRequest");
+    console.info("[ring-trace simulator] approveAuthRequest done");
   }
 
   async function approveRingUrl(url: string): Promise<"paykit-connect" | "pubkyauth"> {

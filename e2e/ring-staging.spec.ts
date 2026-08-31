@@ -8,6 +8,54 @@ import { stagingBaseUrl } from "./support/staging-base-url";
 
 const BASE_URL = stagingBaseUrl();
 
+function describeAuthUrl(url: string): string {
+  try {
+    if (url.startsWith("pubkyring:") || url.includes("paykit-connect")) {
+      const parsed = new URL(url.replace(/^pubkyring:/i, "https:"));
+      const callback = parsed.searchParams.get("callback") ?? "";
+      const ch = callback ? (new URL(callback).searchParams.get("ch") ?? "") : "";
+      return `paykit-connect ch=${ch}`;
+    }
+    if (url.startsWith("pubkyauth:")) {
+      const parsed = new URL(url.replace(/^pubkyauth:/i, "https:"));
+      const relay = parsed.searchParams.get("relay") ?? "";
+      const secret = parsed.searchParams.get("secret") ?? "";
+      const caps = parsed.searchParams.get("caps") ?? "";
+      return `pubkyauth relay=${relay} caps=${caps} secretLen=${secret.length}`;
+    }
+  } catch (error) {
+    return `unparseable: ${error instanceof Error ? error.message : "error"}`;
+  }
+  return `other ${url.slice(0, 48)}`;
+}
+
+function attachRelayTrace(page: Page, label: string): string[] {
+  const hits: string[] = [];
+  page.on("request", (req) => {
+    const url = req.url();
+    if (!url.includes("httprelay")) return;
+    const line = `${req.method()} ${url}`;
+    hits.push(line);
+    console.info(`[ring-trace ${label}] ${line}`);
+  });
+  page.on("console", (msg) => {
+    const text = msg.text();
+    if (text.includes("ring-trace") || msg.type() === "error") {
+      console.info(`[ring-trace ${label} console:${msg.type()}] ${text}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    console.info(`[ring-trace ${label} pageerror] ${error.message}`);
+  });
+  return hits;
+}
+
+async function extractTracedAuthUrl(page: Page, testIdPrefix: string): Promise<string> {
+  const url = await extractAuthUrl(page, testIdPrefix);
+  console.info(`[ring-trace extract ${testIdPrefix}] ${describeAuthUrl(url)}`);
+  return url;
+}
+
 async function waitForWelcomeReady(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { name: "Hypercolor" })).toBeVisible({
     timeout: 30_000,
@@ -26,10 +74,14 @@ async function waitForWelcomeReady(page: Page): Promise<void> {
 async function completeRingOnboarding(
   page: Page,
   identity: RingSimulatorHandle,
+  label: string,
 ): Promise<void> {
+  const relayHits = attachRelayTrace(page, label);
   await page.goto(`${BASE_URL}/`, { waitUntil: "domcontentloaded" });
   await waitForWelcomeReady(page);
-  const connectUrl = await extractAuthUrl(page, "welcome");
+  const connectUrl = await extractTracedAuthUrl(page, "welcome");
+  console.info(`[ring-trace ${label}] approving ${describeAuthUrl(connectUrl)}`);
+  console.info(`[ring-trace ${label}] GETs before paykit POST: ${relayHits.join(" | ") || "(none)"}`);
   await identity.approvePaykitConnect(connectUrl);
   await expect(page.getByTestId("welcomeAdopt")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByTestId("welcomeAdopt")).toContainText(identity.pubky);
@@ -42,12 +94,22 @@ async function completeRingOnboarding(
     timeout: 30_000,
   });
   await expect(page.getByTestId("enableMessagingOpenRing")).toBeVisible({ timeout: 30_000 });
-  const authUrl = await extractAuthUrl(page, "enableMessaging");
+  const authUrl = await extractTracedAuthUrl(page, "enableMessaging");
+  console.info(`[ring-trace ${label}] approving ${describeAuthUrl(authUrl)}`);
+  console.info(`[ring-trace ${label}] GETs before pubkyauth: ${relayHits.join(" | ") || "(none)"}`);
   await identity.approvePubkyauth(authUrl);
-  await expect(page.getByTestId("enableMessagingStatus")).toContainText(
-    "Encrypted messaging enabled",
-    { timeout: 60_000 },
-  );
+  try {
+    await expect(page.getByTestId("enableMessagingStatus")).toContainText(
+      "Encrypted messaging enabled",
+      { timeout: 60_000 },
+    );
+  } catch (error) {
+    const errorText = await page.locator("p.text-red-400").textContent().catch(() => null);
+    const statusText = await page.getByTestId("enableMessagingStatus").textContent();
+    const dataset = await page.evaluate(() => ({ ...document.documentElement.dataset }));
+    console.info(`[ring-trace ${label} enable-fail]`, { errorText, statusText, dataset });
+    throw error;
+  }
   await expect(page.getByText(identity.pubky)).toBeVisible();
 }
 
@@ -111,11 +173,11 @@ test("Ring simulator completes Welcome + Enable and a staging A↔B Encrypted Li
   try {
     const pageA = await (await browserA.newContext()).newPage();
     pageA.setDefaultNavigationTimeout(10_000);
-    await completeRingOnboarding(pageA, identityA);
+    await completeRingOnboarding(pageA, identityA, "A");
     await startDm(pageA, identityB.pubky);
     const pageB = await (await browserB.newContext()).newPage();
     pageB.setDefaultNavigationTimeout(10_000);
-    await completeRingOnboarding(pageB, identityB);
+    await completeRingOnboarding(pageB, identityB, "B");
     await startDm(pageB, identityA.pubky);
 
     await sendAndSee(pageA, pageB, "ring-hello-from-a");

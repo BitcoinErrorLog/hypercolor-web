@@ -52,13 +52,15 @@ export function EnablePage({
         <p data-testid="enableMessagingStatus" className="mt-1">
           {enabled
             ? "Encrypted messaging enabled"
-            : offline
-              ? "Session offline"
-              : isLoading
-                ? "Checking messaging status…"
-                : isExpired
-                  ? "Authorization expired"
-                  : "Waiting for Pubky Ring…"}
+            : error
+              ? error
+              : offline
+                ? "Session offline"
+                : isLoading
+                  ? "Checking messaging status…"
+                  : isExpired
+                    ? "Authorization expired"
+                    : "Waiting for Pubky Ring…"}
         </p>
         {identityLabel ? (
           <p className="mt-2 break-all font-mono text-xs text-muted-foreground">

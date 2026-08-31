@@ -46,9 +46,15 @@ export function EnablePageHost() {
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
-      const result = await provisionReceiver(session, session.pubky());
-      setProvisionedPath(result.receiverPath);
-      setEnabled(result.pubky);
+      try {
+        const result = await provisionReceiver(session, session.pubky());
+        setError(null);
+        setProvisionedPath(result.receiverPath);
+        setEnabled(result.pubky);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Authorization failed");
+        emitCoarseError("enable", err);
+      }
     },
     [setEnabled],
   );

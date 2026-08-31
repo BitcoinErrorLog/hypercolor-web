@@ -21,26 +21,46 @@ interface SessionStatusState {
   reset: () => void;
 }
 
+function pubkyOf(status: SessionUiStatus): string {
+  if (
+    status.kind === "session-offline" ||
+    status.kind === "live" ||
+    status.kind === "enabled"
+  ) {
+    return status.pubky;
+  }
+  return "";
+}
+
 export const useSessionStatusStore = create<SessionStatusState>((set) => ({
   status: { kind: "unknown" },
   setFromRestore: (restore, enable, opts) => {
-    if (restore.status === "session-offline") {
-      set({
-        status: { kind: "session-offline", pubky: restore.pubky ?? "" },
-      });
-      return;
-    }
-    if (restore.status !== "live" || !restore.pubky) {
-      set({
-        status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
-      });
-      return;
-    }
-    if (enable === "enabled") {
-      set({ status: { kind: "enabled", pubky: restore.pubky } });
-      return;
-    }
-    set({ status: { kind: "live", pubky: restore.pubky } });
+    set((state) => {
+      if (restore.status === "session-offline") {
+        return {
+          status: {
+            kind: "session-offline",
+            pubky: restore.pubky || pubkyOf(state.status),
+          },
+        };
+      }
+      // A slow first-load restore must not undo Enable or Welcome progress.
+      if (state.status.kind === "enabled") {
+        return state;
+      }
+      if (restore.status !== "live" || !restore.pubky) {
+        if (state.status.kind === "needs-enable" || state.status.kind === "live") {
+          return state;
+        }
+        return {
+          status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
+        };
+      }
+      if (enable === "enabled") {
+        return { status: { kind: "enabled", pubky: restore.pubky } };
+      }
+      return { status: { kind: "live", pubky: restore.pubky } };
+    });
   },
   setEnabled: (pubky) => set({ status: { kind: "enabled", pubky } }),
   setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),

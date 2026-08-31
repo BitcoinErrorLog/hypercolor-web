@@ -73,6 +73,22 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   }, []);
 
   const fetchUrl = useCallback(async (): Promise<void> => {
+    const existing = flowRef.current;
+    if (existing && !existing.canceled) {
+      try {
+        const currentUrl = existing.handle.authorizationUrl();
+        if (currentUrl) {
+          if (isMountedRef.current) {
+            setUrl(currentUrl);
+            setIsLoading(false);
+            setIsExpired(false);
+          }
+          return;
+        }
+      } catch {
+        // Handle was consumed; start a replacement flow below.
+      }
+    }
     setIsLoading(true);
     setIsExpired(false);
     setUrl("");
