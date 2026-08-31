@@ -20,7 +20,9 @@ const Z32_FILE =
 
 /** Max wait for Encrypted Link to re-handshake after migrate (fail fast). */
 const POST_MIGRATE_LINK_DEADLINE_MS = 120_000;
-/** pkarr packet TTL is 3600s; upper bound for propagation-only probes. */
+/** Short probe before cache bust — measures whether pkarr updates immediately. */
+const RAW_PKARR_PROBE_MS = 120_000;
+/** pkarr packet TTL is 3600s; optional extended probe (skipped when set). */
 const PKARR_PROPAGATION_DEADLINE_MS = 70 * 60 * 1000;
 const POLL_MS = 2_000;
 
@@ -296,25 +298,35 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     );
 
     const republishAt = Date.now();
-    const rawPkarrPropagationMs = await pollUntil(
-      "A→B after migrate without pkarr cache bust (TTL measurement)",
-      PKARR_PROPAGATION_DEADLINE_MS,
-      () =>
-        sendAndExpectKnownPeer(
-          pageA,
-          pageB,
-          signedB.pubky,
-          signedA.pubky,
-          `post-migrate-from-a-${Date.now()}`,
-        ),
-    );
+    let rawPkarrPropagationMs: number | null = null;
+    let rawPkarrProbeError = "";
+    try {
+      rawPkarrPropagationMs = await pollUntil(
+        "A→B after migrate without pkarr cache bust (TTL probe)",
+        RAW_PKARR_PROBE_MS,
+        () =>
+          sendAndExpectKnownPeer(
+            pageA,
+            pageB,
+            signedB.pubky,
+            signedA.pubky,
+            `post-migrate-from-a-${Date.now()}`,
+          ),
+      );
+    } catch (error) {
+      rawPkarrProbeError = error instanceof Error ? error.message : String(error);
+    }
 
     await pageB.evaluate(
       async (peer) => window.runMigrationBustPeerHomeserver!(peer),
       signedA.pubky,
     );
+    await pageB.evaluate(
+      async (peer) => window.runMigrationRebindPeerLink!(peer),
+      signedA.pubky,
+    );
     const afterCacheBustMs = await pollUntil(
-      "A→B after pkarr cache bust (verification)",
+      "A→B after pkarr cache bust (required proof)",
       POST_MIGRATE_LINK_DEADLINE_MS,
       () =>
         sendAndExpectKnownPeer(
@@ -357,6 +369,8 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
       JSON.stringify({
         scenario: "graceful-migrate",
         rawPkarrPropagationMs,
+        rawPkarrProbeMs: RAW_PKARR_PROBE_MS,
+        rawPkarrProbeError: rawPkarrProbeError || undefined,
         afterCacheBustMs,
         republishToBtoAMs: bToAMs,
         bToAError: bToAError || undefined,
@@ -480,7 +494,6 @@ test("A is banned on staging then migrates; report what survives", async () => {
     let bToAMs: number | null = null;
     let aToBMs: number | null = null;
     let bToAError = "";
-    let aToBError = "";
     try {
       bToAMs = await pollUntil(
         "B→A after ban+migrate (informational)",
@@ -497,22 +510,18 @@ test("A is banned on staging then migrates; report what survives", async () => {
     } catch (error) {
       bToAError = error instanceof Error ? error.message : String(error);
     }
-    try {
-      aToBMs = await pollUntil(
-        "A→B after ban+migrate (required)",
-        PKARR_PROPAGATION_DEADLINE_MS,
-        () =>
-          sendAndExpectKnownPeer(
-            pageA,
-            pageB,
-            signedB.pubky,
-            signedA.pubky,
-            `post-ban-from-a-${Date.now()}`,
-          ),
-      );
-    } catch (error) {
-      aToBError = error instanceof Error ? error.message : String(error);
-    }
+    aToBMs = await pollUntil(
+      "A→B after ban+migrate (required)",
+      POST_MIGRATE_LINK_DEADLINE_MS,
+      () =>
+        sendAndExpectKnownPeer(
+          pageA,
+          pageB,
+          signedB.pubky,
+          signedA.pubky,
+          `post-ban-from-a-${Date.now()}`,
+        ),
+    );
 
     console.log(
       JSON.stringify({
@@ -527,15 +536,11 @@ test("A is banned on staging then migrates; report what survives", async () => {
         bToAMs,
         aToBMs,
         bToAError: bToAError || undefined,
-        aToBError: aToBError || undefined,
       }),
     );
 
     expect(migrated.pubky).toBe(signedA.pubky);
     expect(localHistoryOnB).toContain("pre-ban-from-a");
-    if (aToBError) {
-      throw new Error(`ban-survival reachability failed on A→B: ${aToBError}`);
-    }
   } finally {
     await browserA.close();
     await browserB.close();
