@@ -12,7 +12,7 @@ describe("app-meta", () => {
 
   it("pins the mobile Encrypted Links contract", () => {
     expect(HYPERCOLOR_WIRE_PIN).toBe(
-      "c7157aaa1b338dd1d8545e82f639007cba945631",
+      "a0937be84efffe2a1be08aef3cbe2f541588a4ca",
     );
     expect(HYPERCOLOR_WIRE_REPO).toContain("BitcoinErrorLog/hypercolor");
   });

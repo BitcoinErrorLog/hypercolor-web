@@ -4,7 +4,7 @@ Drift oracle for `scripts/check-wire-drift.sh`. These files are not product
 runtime.
 
 Source: `BitcoinErrorLog/hypercolor` at
-`c7157aaa1b338dd1d8545e82f639007cba945631`.
+`a0937be84efffe2a1be08aef3cbe2f541588a4ca`.
 
 Do not import this tree from the Next.js app. Copied wire files under `src/`
 remain the runtime copies (2-line header + pin body).

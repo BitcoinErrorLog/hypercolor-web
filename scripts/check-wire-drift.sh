@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Compare copied Hypercolor wire files to pin c7157aaa1b338dd1d8545e82f639007cba945631.
+# Compare copied Hypercolor wire files to pin a0937be84efffe2a1be08aef3cbe2f541588a4ca.
 # The web copies may add a 2-line header (source path + pin); that header is ignored.
 # Default oracle is vendor/hypercolor-wire-pin (committed). Override with
 # HYPERCOLOR_REPO=/Users/johncarvalho/work/hypercolor for a local git checkout.
 set -euo pipefail
 
-PIN="c7157aaa1b338dd1d8545e82f639007cba945631"
+PIN="a0937be84efffe2a1be08aef3cbe2f541588a4ca"
 LOCAL_DEFAULT="/Users/johncarvalho/work/hypercolor"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

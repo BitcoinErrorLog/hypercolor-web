@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/types/index.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 // ─── Core Identity Types ───────────────────────────────────────────────────
 
 export type PubkyKey = string; // z-base-32 encoded Ed25519 public key

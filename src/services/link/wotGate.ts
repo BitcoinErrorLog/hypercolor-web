@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/services/link/wotGate.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 import { WOT_AUTO_ACCEPT_TRUST_THRESHOLD } from '../../flags/config';
 
 /**
@@ -24,6 +24,11 @@ import { WOT_AUTO_ACCEPT_TRUST_THRESHOLD } from '../../flags/config';
  * |------------------------------|-------------------|--------------|
  * | *                            | > 0               | auto-accept  |
  * | *                            | 0                 | request      |
+ *
+ * `isMutual`, `isFollowing`, and `addedManually` stay on `WotInput` because
+ * callers still pass the same contact bag (`wotInputFromContact`) and those
+ * bits remain ranking inputs elsewhere. They are unused by
+ * `classifyInboundPeer` and MUST NOT be re-introduced as accept conditions.
  *
  * AppConfig.getWotAutoAcceptTrustThreshold() remains wired so a stored
  * override is read; it is NOT used to auto-accept anyone.
