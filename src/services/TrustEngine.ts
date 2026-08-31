@@ -111,8 +111,5 @@ function socialGraphScore(contact: Contact): { score: number; code: string; labe
   if (contact.isFollowing) {
     return { score: 0.15, code: "following", label: "You follow them" };
   }
-  if (contact.isFollower) {
-    return { score: 0.05, code: "follower", label: "They follow you" };
-  }
   return { score: 0, code: "none", label: "No relationship" };
 }

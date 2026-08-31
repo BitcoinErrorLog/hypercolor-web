@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getContact = vi.fn();
@@ -29,26 +32,44 @@ describe("addManualContact", () => {
     user.mockReset();
     getContact.mockResolvedValue(null);
     upsertContact.mockResolvedValue(undefined);
-    user.mockResolvedValue({ ok: false, kind: "http", status: 404, message: "missing" });
+    user.mockResolvedValue({ ok: true, value: { details: { name: "Ada" } } });
   });
 
   it("rejects an invalid pubky", async () => {
     const result = await addManualContact(OWNER, "not-a-pubky");
     expect(result.ok).toBe(false);
     expect(upsertContact).not.toHaveBeenCalled();
+    expect(user).not.toHaveBeenCalled();
   });
 
   it("rejects adding yourself", async () => {
     const result = await addManualContact(OWNER, OWNER);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("self");
+    expect(user).not.toHaveBeenCalled();
   });
 
-  it("persists a manual contact and uses Nexus display name when present", async () => {
-    user.mockResolvedValue({
-      ok: true,
-      value: { details: { name: "Ada" } },
+  it("adds a raw pubky with no Nexus request", async () => {
+    getContact.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      pubky: PEER,
+      ownerPubky: OWNER,
+      trustScore: 0,
+      isFollowing: false,
+      isFollower: false,
+      isMutual: false,
+      addedManually: true,
+      firstSeenAt: 1,
     });
+    const result = await addManualContact(OWNER, `pubky://${PEER}`);
+    expect(result.ok).toBe(true);
+    expect(user).not.toHaveBeenCalled();
+    expect(upsertContact).toHaveBeenCalledOnce();
+    const written = upsertContact.mock.calls[0]?.[0] as { addedManually: boolean; displayName?: string };
+    expect(written.addedManually).toBe(true);
+    expect(written.displayName).toBeUndefined();
+  });
+
+  it("reuses a display name from the search hit and still does not call Nexus", async () => {
     getContact.mockResolvedValueOnce(null).mockResolvedValueOnce({
       pubky: PEER,
       ownerPubky: OWNER,
@@ -60,11 +81,20 @@ describe("addManualContact", () => {
       addedManually: true,
       firstSeenAt: 1,
     });
-    const result = await addManualContact(OWNER, `pubky://${PEER}`);
+    const result = await addManualContact(OWNER, PEER, { displayName: "Ada" });
     expect(result.ok).toBe(true);
-    expect(upsertContact).toHaveBeenCalledOnce();
-    const written = upsertContact.mock.calls[0]?.[0] as { addedManually: boolean; displayName?: string };
-    expect(written.addedManually).toBe(true);
+    expect(user).not.toHaveBeenCalled();
+    const written = upsertContact.mock.calls[0]?.[0] as { displayName?: string };
     expect(written.displayName).toBe("Ada");
+  });
+
+  it("contains no Nexus client import", () => {
+    const source = readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "addManualContact.ts"),
+      "utf8",
+    );
+    expect(source).not.toContain("NexusClient");
+    expect(source).not.toContain("createNexusClient");
+    expect(source).not.toContain("nexus.user");
   });
 });

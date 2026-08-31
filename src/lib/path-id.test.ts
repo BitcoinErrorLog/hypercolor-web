@@ -6,5 +6,7 @@ describe("path-id", () => {
     expect(readPathId("chats", "/chats/dm%3Aabc")).toBe("dm:abc");
     expect(readPathId("chats", "/chats")).toBeNull();
     expect(readPathId("channels", "/chats/x")).toBeNull();
+    expect(readPathId("discover", "/discover/rust")).toBe("rust");
+    expect(readPathId("discover", "/discover")).toBeNull();
   });
 });

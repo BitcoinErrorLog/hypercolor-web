@@ -10,6 +10,11 @@ describe("displaySanitize", () => {
     expect(stripBidiAndC1("ab\u202Ecd\u007F")).toBe("abcd");
   });
 
+  it("strips zero-width characters and the tag block", () => {
+    expect(stripBidiAndC1("ab\u200Bcd\u200Cef\u200Dgh\uFEFFij")).toBe("abcdefghij");
+    expect(stripBidiAndC1(`ab${String.fromCodePoint(0xe0061)}cd`)).toBe("abcd");
+  });
+
   it("truncates with an ellipsis", () => {
     expect(truncateWithEllipsis("abcdef", 3)).toBe("abc…");
     expect(truncateWithEllipsis("ab", 3)).toBe("ab");

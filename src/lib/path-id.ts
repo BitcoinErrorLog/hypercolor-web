@@ -1,4 +1,4 @@
-export type AppPathSegment = "chats" | "channels" | "contacts";
+export type AppPathSegment = "chats" | "channels" | "contacts" | "discover";
 
 export function readPathId(segment: AppPathSegment, pathname: string): string | null {
   const parts = pathname.split("/").filter(Boolean);
