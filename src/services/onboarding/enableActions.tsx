@@ -91,6 +91,16 @@ export function EnablePageHost() {
     setChatsVisible(next);
   }, [enabled, chatsOpen, chatsVisible]);
 
+  useEffect(() => {
+    if (!chatsVisible) return;
+    if (
+      window.location.pathname !== "/chats" &&
+      !window.location.pathname.startsWith("/chats/")
+    ) {
+      stampAppPath("/chats");
+    }
+  }, [chatsVisible]);
+
   useLeaveOnce(
     "enable",
     () => status.kind === "needs-enable" || status.kind === "live",
@@ -136,15 +146,7 @@ export function EnablePageHost() {
           }}
           onOpenChats={() => {
             markChatsRequested();
-            if (
-              window.location.pathname !== "/chats" &&
-              !window.location.pathname.startsWith("/chats/")
-            ) {
-              stampAppPath("/chats");
-            }
-            flushSync(() => {
-              setChatsOpen(true);
-            });
+            setChatsOpen(true);
           }}
           showOpenChats={!chatsVisible}
         />

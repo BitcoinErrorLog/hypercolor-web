@@ -148,20 +148,39 @@ async function completeRingOnboarding(
   await expect(page.getByText(identity.pubky)).toBeVisible();
 }
 
+async function waitForCount(
+  locator: { count: () => Promise<number> },
+  min: number,
+  ms: number,
+  label: string,
+): Promise<number> {
+  const deadline = Date.now() + ms;
+  let n = await locator.count();
+  while (n < min && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    n = await locator.count();
+  }
+  if (n < min) throw new Error(`${label}: count ${n} < ${min}`);
+  return n;
+}
+
 async function openChats(page: Page): Promise<void> {
   const open = page.getByTestId("enableOpenChats");
   await expect(open).toBeVisible({ timeout: 30_000 });
   console.info("[ring-trace] Open chats visible");
   await open.click({ noWaitAfter: true, timeout: 15_000 });
   console.info("[ring-trace] Open chats clicked", page.url());
-  expect(page.url()).toMatch(/\/chats(\/|\?|$)/);
   const chats = page.getByTestId("chatsScreen");
-  const chatsCount = await chats.count();
+  const chatsCount = await waitForCount(chats, 1, 30_000, "chatsScreen");
+  const urlDeadline = Date.now() + 15_000;
+  while (!/\/chats(\/|\?|$)/.test(new URL(page.url()).pathname) && Date.now() < urlDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
   console.info("[ring-trace] chatsScreen after click", {
     chatsCount,
     url: page.url(),
   });
-  expect(chatsCount).toBeGreaterThan(0);
+  expect(page.url()).toMatch(/\/chats(\/|\?|$)/);
   expect(await page.getByTestId("chatsEnableMessaging").count()).toBe(0);
 }
 
