@@ -3,11 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
-import { ChatsPage, type ChatsPageRow } from "@/components/chats-page";
+import { CHATS_EMPTY_STATE_CANDIDATE_HINT, ChatsPage, type ChatsPageRow } from "@/components/chats-page";
 import { useInbox } from "@/hooks/useInbox";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import { addManualContact } from "@/services/contacts/addManualContact";
 import { ThreadViewHost } from "@/services/thread/threadActions";
+import { fetchAssignment } from "@/services/vibeware/assignment";
 import { emit } from "@/services/vibeware/collector";
 import { useContactStore } from "@/stores/contactStore";
 import type { InboxRow } from "@/lib/inbox";
@@ -34,7 +35,21 @@ export function ChatsPageHost() {
   const [peerDraft, setPeerDraft] = useState("");
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [emptyStateHint, setEmptyStateHint] = useState<string | undefined>(undefined);
   const emptyEmitted = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchAssignment().then((assignment) => {
+      if (cancelled) return;
+      if (assignment.bucket === "candidate") {
+        setEmptyStateHint(CHATS_EMPTY_STATE_CANDIDATE_HINT);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (inbox.loading) return;
@@ -88,6 +103,7 @@ export function ChatsPageHost() {
       peerDraft={peerDraft}
       starting={starting}
       startError={startError}
+      emptyStateHint={emptyStateHint}
       onChangePeerDraft={setPeerDraft}
       onStartChat={() => {
         void startChat();
