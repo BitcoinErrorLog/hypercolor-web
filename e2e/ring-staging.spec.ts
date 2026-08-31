@@ -105,12 +105,12 @@ async function completeRingOnboarding(
     );
   } catch (error) {
     const html = page.locator("html");
+    const status = page.getByTestId("enableMessagingStatus");
+    const statusCount = await status.count();
+    const statusTexts = await status.allTextContents();
+    const openChatsCount = await page.getByTestId("enableOpenChats").count();
     const errorText = await page
       .locator("p.text-red-400")
-      .textContent({ timeout: 2_000 })
-      .catch(() => null);
-    const statusText = await page
-      .getByTestId("enableMessagingStatus")
       .textContent({ timeout: 2_000 })
       .catch(() => null);
     const dataset = {
@@ -119,7 +119,13 @@ async function completeRingOnboarding(
       hcNote: await html.getAttribute("data-hc-note", { timeout: 2_000 }).catch(() => null),
       hcIdentity: await html.getAttribute("data-hc-identity", { timeout: 2_000 }).catch(() => null),
     };
-    console.info(`[ring-trace ${label} enable-fail]`, { errorText, statusText, dataset });
+    console.info(`[ring-trace ${label} enable-fail]`, {
+      errorText,
+      statusCount,
+      statusTexts,
+      openChatsCount,
+      dataset,
+    });
     throw error;
   }
   await expect(page.getByText(identity.pubky)).toBeVisible();

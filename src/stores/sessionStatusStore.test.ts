@@ -1,6 +1,13 @@
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearEnableCompleted, isEnableCompleted } from "@/lib/enable-done";
-import { useSessionStatusStore } from "./sessionStatusStore";
+import { clearEnableCompleted, isEnableCompleted, markEnableCompleted } from "@/lib/enable-done";
+import { readInitialSessionUiStatus, useSessionStatusStore } from "./sessionStatusStore";
+
+function StoreKindProbe() {
+  const status = useSessionStatusStore((s) => s.status);
+  return createElement("span", { "data-testid": "kind" }, status.kind);
+}
 
 describe("sessionStatusStore", () => {
   beforeEach(() => {
@@ -97,5 +104,24 @@ describe("sessionStatusStore", () => {
       kind: "enabled",
       pubky: "pinned",
     });
+  });
+
+  it("reads enabled from the durable flag before the first store subscriber mounts", () => {
+    expect(readInitialSessionUiStatus()).toEqual({ kind: "unknown" });
+    markEnableCompleted("pk:boot");
+    expect(readInitialSessionUiStatus()).toEqual({
+      kind: "enabled",
+      pubky: "pk:boot",
+    });
+  });
+
+  it("first render after setEnabled is enabled without waiting for an effect", () => {
+    useSessionStatusStore.getState().setEnabled("pk:paint");
+    expect(useSessionStatusStore.getInitialState().status).toEqual({
+      kind: "enabled",
+      pubky: "pk:paint",
+    });
+    const html = renderToString(createElement(StoreKindProbe));
+    expect(html).toContain("enabled");
   });
 });

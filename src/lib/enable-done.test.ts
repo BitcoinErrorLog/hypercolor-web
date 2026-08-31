@@ -1,10 +1,22 @@
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   clearEnableCompleted,
   getEnableCompletedPubky,
   isEnableCompleted,
   markEnableCompleted,
+  useEnableCompleted,
 } from "./enable-done";
+
+function EnableHookProbe() {
+  const done = useEnableCompleted();
+  return createElement(
+    "p",
+    { "data-testid": "enableMessagingStatus" },
+    done ? "Encrypted messaging enabled" : "Waiting for Pubky Ring…",
+  );
+}
 
 afterEach(() => {
   clearEnableCompleted();
@@ -21,16 +33,23 @@ describe("enable-done", () => {
     expect(isEnableCompleted()).toBe(false);
   });
 
-  it("writes Encrypted messaging enabled onto the live status node", () => {
-    const el = { textContent: "Waiting for Pubky Ring…" };
+  it("writes dataset hc-enable without patching status textContent", () => {
     const dataset: Record<string, string> = {};
+    const querySelectorAll = vi.fn(() => [{ textContent: "Waiting for Pubky Ring…" }]);
     vi.stubGlobal("document", {
       documentElement: { dataset },
-      querySelectorAll: () => [el],
+      querySelectorAll,
     });
     markEnableCompleted("pk:dom");
-    expect(el.textContent).toBe("Encrypted messaging enabled");
     expect(dataset.hcEnable).toBe("enabled");
+    expect(querySelectorAll).not.toHaveBeenCalled();
+  });
+
+  it("first render after markEnableCompleted is completed without an effect", () => {
+    markEnableCompleted("pk:hook");
+    const html = renderToString(createElement(EnableHookProbe));
+    expect(html).toContain("Encrypted messaging enabled");
+    expect(html).not.toContain("Waiting for Pubky Ring…");
   });
 
   it("keeps completion across a simulated Fast Refresh re-import", async () => {

@@ -42,14 +42,8 @@ function writeStored(pubky: string | null): void {
 
 function writeDataset(pubky: string | null): void {
   if (typeof document === "undefined") return;
-  if (pubky) {
-    document.documentElement.dataset.hcEnable = "enabled";
-    for (const el of document.querySelectorAll("[data-testid='enableMessagingStatus']")) {
-      el.textContent = "Encrypted messaging enabled";
-    }
-  } else {
-    delete document.documentElement.dataset.hcEnable;
-  }
+  if (pubky) document.documentElement.dataset.hcEnable = "enabled";
+  else delete document.documentElement.dataset.hcEnable;
 }
 
 function notify(): void {
@@ -90,7 +84,7 @@ function subscribeEnableCompleted(listener: () => void): () => void {
 }
 
 export function useEnableCompleted(): boolean {
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState(() => isEnableCompleted());
   useEffect(() => {
     const sync = () => setDone(currentPubky() !== null);
     sync();
@@ -100,7 +94,7 @@ export function useEnableCompleted(): boolean {
 }
 
 export function useEnableCompletedPubky(): string | null {
-  const [pubky, setPubky] = useState<string | null>(null);
+  const [pubky, setPubky] = useState<string | null>(() => currentPubky());
   useEffect(() => {
     const sync = () => setPubky(currentPubky());
     sync();

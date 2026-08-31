@@ -1,6 +1,7 @@
 "use client";
 
-import { create } from "zustand";
+import { useStore, type UseBoundStore } from "zustand";
+import { createStore, type StoreApi } from "zustand/vanilla";
 import {
   clearEnableCompleted,
   getEnableCompletedPubky,
@@ -40,9 +41,15 @@ function pubkyOf(status: SessionUiStatus): string {
   return "";
 }
 
-function createSessionStatusStore() {
-  return create<SessionStatusState>((set) => ({
-    status: { kind: "unknown" },
+export function readInitialSessionUiStatus(): SessionUiStatus {
+  const pubky = getEnableCompletedPubky();
+  if (pubky) return { kind: "enabled", pubky };
+  return { kind: "unknown" };
+}
+
+function createSessionStatusStore(): UseBoundStore<StoreApi<SessionStatusState>> {
+  const api = createStore<SessionStatusState>((set) => ({
+    status: readInitialSessionUiStatus(),
     setFromRestore: (restore, enable, opts) => {
       set((state) => {
         if (restore.status === "session-offline") {
@@ -86,6 +93,12 @@ function createSessionStatusStore() {
       set({ status: { kind: "no-identity" } });
     },
   }));
+  // useSyncExternalStore hydrates from getInitialState, not getState. A remount
+  // after setEnabled must not paint the creation-time "unknown" snapshot.
+  api.getInitialState = () => api.getState();
+  const useBoundStore = ((selector: (state: SessionStatusState) => unknown) =>
+    useStore(api, selector)) as UseBoundStore<StoreApi<SessionStatusState>>;
+  return Object.assign(useBoundStore, api);
 }
 
 const sessionStatusStoreKey = "__hypercolorSessionStatusStore";
