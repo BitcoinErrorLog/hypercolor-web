@@ -445,3 +445,35 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
     }
   });
 });
+
+describe("PaykitLinkWeb startAuthFlow client isolation", () => {
+  afterEach(() => {
+    resetPaykitLinkHandlesForTests();
+    resetPaykitClientForTests();
+    setPaykitWasmForTests(null, null);
+  });
+
+  it("constructs a new PubkyClient so Enable does not inherit a poisoned pkarr resolver", async () => {
+    const startAuthFlow = vi.fn(() => ({
+      authorizationUrl: () => "pubkyauth://x",
+      awaitApproval: vi.fn(),
+      free: vi.fn(),
+    }));
+    const free = vi.fn();
+    let constructed = 0;
+    class PubkyClient {
+      startAuthFlow = startAuthFlow;
+      free = free;
+      constructor() {
+        constructed += 1;
+      }
+    }
+    setPaykitWasmForTests({ PubkyClient } as never);
+    await PaykitLinkWeb.startAuthFlow("/pub/paykit/:rw");
+    expect(constructed).toBe(1);
+    await PaykitLinkWeb.startAuthFlow("/pub/paykit/:rw");
+    expect(constructed).toBe(2);
+    expect(free).toHaveBeenCalledTimes(1);
+    expect(startAuthFlow).toHaveBeenCalledTimes(2);
+  });
+});

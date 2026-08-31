@@ -73,6 +73,23 @@ describe("provisionReceiver", () => {
     expect(row?.receiverPath).toBe(LINK_RECEIVER_PATH);
   });
 
+  it("fails fast when publishReceiverMarker hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+      noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
+      publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
+      const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      const assertion = expect(pending).rejects.toMatchObject({
+        name: "SessionResumeTimeout",
+      });
+      await vi.advanceTimersByTimeAsync(15_100);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("zeroizes the re-derived receiver secret after publishing", async () => {
     const persisted = new Uint8Array(32).fill(9);
     await KeyStore.setPubky(OWNER);

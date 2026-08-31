@@ -10,6 +10,31 @@ import { PaykitLinkWeb, type SessionHandle } from "./PaykitLinkWeb";
 import { getLiveSession, persistReceiverPath } from "./session";
 
 export const RECEIVER_NOISE_ALIAS = LINK_RECEIVER_PATH;
+export const RECEIVER_MARKER_PUBLISH_BUDGET_MS = 15_000;
+
+async function withBudget<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            Object.assign(new Error(`${label} timed out after ${ms}ms`), {
+              name: "SessionResumeTimeout",
+            }),
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 export type ProvisionedReceiver = {
   pubky: string;
@@ -60,14 +85,18 @@ export async function provisionReceiver(
   } else {
     ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
   }
-  await PaykitLinkWeb.publishReceiverMarker(
-    session,
-    receiverPath,
-    noisePublicKey,
-    true,
-    false,
-    false,
-    false,
+  await withBudget(
+    PaykitLinkWeb.publishReceiverMarker(
+      session,
+      receiverPath,
+      noisePublicKey,
+      true,
+      false,
+      false,
+      false,
+    ),
+    RECEIVER_MARKER_PUBLISH_BUDGET_MS,
+    "publish receiver marker",
   );
   await StorageService.upsertLinkReceiver({
     ownerPubky: pubky,

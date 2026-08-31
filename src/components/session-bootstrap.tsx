@@ -47,23 +47,34 @@ export function SessionBootstrap() {
           enable = undefined;
         }
         if (runId !== bootstrapRun) return;
+        // Re-read at apply time so a slow first restore cannot overwrite
+        // Enable/Welcome progress with the snapshot from page load.
+        const restoreNow = await restoreSessionOnLoad();
+        if (runId !== bootstrapRun) return;
+        let enableNow = enable;
+        try {
+          enableNow = await getEnableStatus();
+        } catch {
+          enableNow = enable;
+        }
+        if (runId !== bootstrapRun) return;
         const pubky = useAuthStore.getState().pubky ?? (await KeyStore.getPubky());
         const hasIdentity =
           hadIdentity ||
           Boolean(pubky) ||
-          restore.status === "live" ||
-          restore.status === "session-offline";
-        setFromRestore(restore, enable, { hasIdentity });
+          restoreNow.status === "live" ||
+          restoreNow.status === "session-offline";
+        setFromRestore(restoreNow, enableNow, { hasIdentity });
         if (typeof document !== "undefined") {
-          document.documentElement.dataset.hcRestore = restore.status;
-          document.documentElement.dataset.hcEnable = enable ?? "";
+          document.documentElement.dataset.hcRestore = restoreNow.status;
+          document.documentElement.dataset.hcEnable = enableNow ?? "";
           document.documentElement.dataset.hcNote = getLastRestoreDebug();
           document.documentElement.dataset.hcIdentity = hasIdentity ? "1" : "0";
           void readSessionMetadata().then((meta) => {
             document.documentElement.dataset.hcMeta = meta ? "1" : "0";
           });
         }
-        if (enable === "enabled") {
+        if (enableNow === "enabled") {
           stopDrain = startLinkRetryDrainOnVisibility();
         }
       } catch {

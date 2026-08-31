@@ -36,6 +36,8 @@ describe("enable-page Open chats", () => {
     expect(host).toContain("markChatsRequested()");
     expect(host).toContain("isChatsRequested()");
     expect(host).toContain("showOpenChats={enabled && !chatsVisible}");
+    expect(host).toContain("setError(err instanceof Error ? err.message : \"Authorization failed\")");
+    expect(host).toContain("setEnabled(result.pubky)");
     expect(host).toContain("inert: true");
     expect(host).toContain("stampAppPath(\"/chats\")");
     expect(source).toContain("showOpenChats");
