@@ -71,6 +71,7 @@ vi.mock("@/services/StorageService", () => ({
     finalizeGroupFanoutSend: vi.fn(),
     countDeliveryQueueForMessage: vi.fn(async () => 0),
     updateGroupMessageDeliveryState: vi.fn(),
+    updateLinkMessageDeliveryState: vi.fn(),
     updateAttachmentDelivery: vi.fn(),
     markGroupEventSeen: vi.fn(),
     clearAccountData: vi.fn(),
@@ -183,6 +184,9 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
     vi.mocked(RetryQueue.recordFailure).mockReset();
     vi.mocked(StorageService.updateGroupMessageDeliveryState).mockReset();
+    vi.mocked(StorageService.updateLinkMessageDeliveryState).mockReset();
+    vi.mocked(StorageService.getLinkMessage).mockReset();
+    vi.mocked(RetryQueue.recordSuccess).mockReset();
     vi.mocked(StorageService.updateAttachmentDelivery).mockReset();
     vi.mocked(StorageService.countDeliveryQueueForMessage).mockReset().mockResolvedValue(0);
     await LinkService.adoptHarnessSession(handle() as never);
@@ -255,6 +259,90 @@ describe("LinkService persist-then-send", () => {
     };
     const payload = JSON.parse(queued.queueItem.payload) as { rawJson: string };
     expect(payload.rawJson).toContain('"body":"hello"');
+  });
+
+  it("marks the row failed when the transport write is aborted, not left sending", async () => {
+    sendPrivate.mockRejectedValueOnce(new Error("net::ERR_ABORTED"));
+
+    const message = await LinkService.sendDm(PEER, "hello");
+
+    expect(message.deliveryState).toBe("failed");
+    expect(StorageService.updateLinkMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      OWNER,
+      CHAT_MESSAGE_KIND,
+      EVENT_ID,
+      "failed",
+    );
+    // The queue item survives a failed send: it is what re-attempts the write.
+    expect(RetryQueue.recordSuccess).not.toHaveBeenCalled();
+  });
+
+  it("re-attempts the write when a retry drains a failed row", async () => {
+    sendPrivate.mockRejectedValueOnce(new Error("net::ERR_ABORTED"));
+    await LinkService.sendDm(PEER, "hello");
+    const queued = persistIntent.mock.calls[0]?.[0] as {
+      queueItem: { payload: string };
+    };
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      ownerPubky: OWNER,
+      senderPubky: OWNER,
+      kind: CHAT_MESSAGE_KIND,
+      eventId: EVENT_ID,
+      deliveryState: "failed",
+    } as never);
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([
+      {
+        id: QUEUE_ID,
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: queued.queueItem.payload,
+        attempts: 1,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+
+    await LinkService.retryPendingSends();
+
+    expect(sendPrivate).toHaveBeenCalledTimes(2);
+    expect(finalizeSend).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: EVENT_ID, queueId: QUEUE_ID }),
+    );
+  });
+
+  it("settles the queue item without re-sending once the row is sent", async () => {
+    await LinkService.sendDm(PEER, "hello");
+    const queued = persistIntent.mock.calls[0]?.[0] as {
+      queueItem: { payload: string };
+    };
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      ownerPubky: OWNER,
+      senderPubky: OWNER,
+      kind: CHAT_MESSAGE_KIND,
+      eventId: EVENT_ID,
+      deliveryState: "sent",
+    } as never);
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([
+      {
+        id: QUEUE_ID,
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: queued.queueItem.payload,
+        attempts: 1,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+
+    await LinkService.retryPendingSends();
+
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+    expect(RetryQueue.recordSuccess).toHaveBeenCalledWith(QUEUE_ID);
   });
 
   it("marks group fanout failed when RetryQueue permanently drops the last recipient", async () => {

@@ -20,6 +20,7 @@ import {
   CHAT_MESSAGE_KIND,
   coerceReceiverPath,
   decodeLinkEnvelope,
+  type LinkDeliveryState,
   type LinkMessage,
   type LinkReceiver,
   type LinkRecord,
@@ -446,7 +447,7 @@ export const LinkService = {
           payload.kind,
           payload.eventId,
         );
-        if (!row || row.deliveryState !== "sending") continue;
+        if (!row || !isDeliveryOwed(row.deliveryState)) continue;
       }
       await deliverQueuedPayload(item, payload);
     }
@@ -1411,7 +1412,7 @@ async function deliverQueuedPayload(
         payload.kind,
         payload.eventId,
       );
-      if (!row || row.deliveryState !== "sending") {
+      if (!row || !isDeliveryOwed(row.deliveryState)) {
         await RetryQueue.recordSuccess(item.id);
         return;
       }
@@ -1506,6 +1507,18 @@ async function deliverQueuedPayload(
 
 function isTransientLinkError(err: unknown): boolean {
   return isLinkNativeError(err) && (err.code === "unavailable" || err.code === "network");
+}
+
+/**
+ * A queued write is still owed while the row has not been confirmed sent.
+ *
+ * `failed` counts as owed: the row is marked failed so the sender sees the
+ * failure and gets a Retry control, but the queue item is what re-attempts the
+ * write. Treating `failed` as settled would drop the queue item and leave the
+ * message permanently undeliverable.
+ */
+function isDeliveryOwed(state: LinkDeliveryState): boolean {
+  return state === "sending" || state === "failed";
 }
 
 async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
@@ -1775,7 +1788,28 @@ async function dispatchPreparedDm(input: {
     return { ...message, deliveryState: "sent" };
   } catch (err) {
     console.warn(`[LinkService] Send failed for ${input.peerPubky}:`, errorMessage(err));
-    return message;
+    // A transient failure is worth waiting on: the queue item is already due and
+    // the sender sees the message as still on its way. Anything else has to
+    // surface, or the message sits at "sending" with no failure and no retry
+    // control for as long as the conversation is open.
+    if (isTransientLinkError(err)) return message;
+    const failedPayload = retryPayload(
+      input.ownerPubky,
+      input.peerPubky,
+      input.eventId,
+      persistJson,
+      input.kind,
+    );
+    try {
+      await markFailed(failedPayload);
+    } catch (markErr) {
+      console.warn(
+        `[LinkService] Could not mark send failed for ${input.peerPubky}:`,
+        errorMessage(markErr),
+      );
+      return message;
+    }
+    return { ...message, deliveryState: "failed" };
   }
 }
 
