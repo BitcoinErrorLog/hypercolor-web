@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
@@ -42,7 +42,6 @@ export function EnablePageHost() {
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
-  const [chatsPreMounted, setChatsPreMounted] = useState(isChatsRequested);
   const chatsVisible = chatsOpen || isChatsRequested();
 
   const onApproved = useCallback(
@@ -50,9 +49,6 @@ export function EnablePageHost() {
       const result = await provisionReceiver(session, session.pubky());
       setProvisionedPath(result.receiverPath);
       setEnabled(result.pubky);
-      startTransition(() => {
-        setChatsPreMounted(true);
-      });
     },
     [setEnabled],
   );
@@ -86,7 +82,6 @@ export function EnablePageHost() {
     status.kind === "enabled" || status.kind === "live" || status.kind === "session-offline"
       ? status.pubky
       : null;
-  const mountChats = chatsPreMounted || chatsVisible;
 
   return (
     <>
@@ -113,7 +108,6 @@ export function EnablePageHost() {
             void signOut().then(() => {
               clearChatsRequested();
               setChatsOpen(false);
-              setChatsPreMounted(false);
               reset();
               void auth.fetchUrl();
             });
@@ -128,18 +122,16 @@ export function EnablePageHost() {
               stampAppPath("/chats");
             }
           }}
-          showOpenChats={enabled && mountChats && !chatsVisible}
+          showOpenChats={enabled && !chatsVisible}
         />
       </div>
-      {mountChats ? (
-        <div
-          {...(!chatsVisible
-            ? { hidden: true, inert: true, "aria-hidden": true as const }
-            : {})}
-        >
-          <ChatsPageHost />
-        </div>
-      ) : null}
+      <div
+        {...(!chatsVisible
+          ? { hidden: true, inert: true, "aria-hidden": true as const }
+          : {})}
+      >
+        <ChatsPageHost />
+      </div>
     </>
   );
 }

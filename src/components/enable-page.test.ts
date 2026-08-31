@@ -32,11 +32,9 @@ describe("enable-page Open chats", () => {
     expect(source).not.toContain("router.push");
     expect(host).toContain("ChatsPageHost");
     expect(host).toContain("setChatsOpen(true)");
-    expect(host).toContain("startTransition");
-    expect(host).toContain("setChatsPreMounted(true)");
     expect(host).toContain("markChatsRequested()");
     expect(host).toContain("isChatsRequested()");
-    expect(host).toContain("showOpenChats={enabled && mountChats && !chatsVisible}");
+    expect(host).toContain("showOpenChats={enabled && !chatsVisible}");
     expect(host).toContain("inert: true");
     expect(host).toContain("stampAppPath(\"/chats\")");
     expect(source).toContain("showOpenChats");
