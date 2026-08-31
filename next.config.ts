@@ -33,6 +33,11 @@ const nextConfig: NextConfig = {
       asyncWebAssembly: true,
     };
     if (!isServer) {
+      // paykit-wasm-node uses an expression import that keeps webpack BUILDING
+      // on the client; Enable then never paints setEnabled after Ring approval.
+      config.plugins.push(
+        new webpack.IgnorePlugin({ resourceRegExp: /paykit-wasm-node/ }),
+      );
       config.plugins.push(
         new webpack.NormalModuleReplacementPlugin(/^node:/, (resource: { request: string }) => {
           resource.request = resource.request.replace(/^node:/, "");

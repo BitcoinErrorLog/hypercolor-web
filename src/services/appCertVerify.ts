@@ -8,7 +8,12 @@ async function loadPaykitWasmRuntime(): Promise<PaykitWasmModule> {
   if (typeof window !== "undefined") {
     return loadPaykitWasm();
   }
-  const { loadPaykitWasmNode } = await import("@/lib/paykit-wasm-node");
+  // Node/Vitest only. webpackIgnore keeps this out of the client graph —
+  // bundling paykit-wasm-node (expression import) HMR-stalls Enable after
+  // Ring approval so setEnabled never paints.
+  const { loadPaykitWasmNode } = await import(
+    /* webpackIgnore: true */ "@/lib/paykit-wasm-node"
+  );
   return loadPaykitWasmNode();
 }
 
