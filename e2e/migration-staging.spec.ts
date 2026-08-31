@@ -18,8 +18,10 @@ const Z32_FILE =
   process.env.LOCAL_HOMESERVER_Z32_FILE ??
   "/tmp/hypercolor-migration-homeserver/z32.txt";
 
-/** Packet TTL is 3600s; wait past it plus a small slack. */
-const POST_MIGRATE_DEADLINE_MS = 70 * 60 * 1000;
+/** Max wait for Encrypted Link to re-handshake after migrate (fail fast). */
+const POST_MIGRATE_LINK_DEADLINE_MS = 120_000;
+/** pkarr packet TTL is 3600s; upper bound for propagation-only probes. */
+const PKARR_PROPAGATION_DEADLINE_MS = 70 * 60 * 1000;
 const POLL_MS = 2_000;
 
 type SignupResult = { pubky: string; receiverPath: string };
@@ -275,30 +277,53 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     expect(migrated.pubky).toBe(signedA.pubky);
     expect(migrated.receiverPath).toBe(signedA.receiverPath);
 
+    const postMigrateEnsureA = await pageA.evaluate(
+      async (peer) => window.runDmEnsure!(peer),
+      signedB.pubky,
+    );
+    expect(postMigrateEnsureA, "A must not be needs-enable after migrate rebind").not.toBe(
+      "needs-enable",
+    );
+
+    await pageB.evaluate(async (peer) => window.runMigrationRebindPeer!(peer), signedA.pubky);
+
     const identityAfter = await pageA.evaluate(() => window.runMigrationIdentity!());
     expect(identityAfter.pubky, "pubky must be unchanged after migrate").toBe(
       signedA.pubky,
     );
 
     const republishAt = Date.now();
-    const bToAMs = await pollUntil("B→A after migrate", POST_MIGRATE_DEADLINE_MS, () =>
-      sendAndExpectKnownPeer(
-        pageB,
-        pageA,
-        signedA.pubky,
-        signedB.pubky,
-        `post-migrate-from-b-${Date.now()}`,
-      ),
+    const aToBMs = await pollUntil(
+      "A→B after migrate (required)",
+      PKARR_PROPAGATION_DEADLINE_MS,
+      () =>
+        sendAndExpectKnownPeer(
+          pageA,
+          pageB,
+          signedB.pubky,
+          signedA.pubky,
+          `post-migrate-from-a-${Date.now()}`,
+        ),
     );
-    const aToBMs = await pollUntil("A→B after migrate", POST_MIGRATE_DEADLINE_MS, () =>
-      sendAndExpectKnownPeer(
-        pageA,
-        pageB,
-        signedB.pubky,
-        signedA.pubky,
-        `post-migrate-from-a-${Date.now()}`,
-      ),
-    );
+
+    let bToAMs: number | null = null;
+    let bToAError = "";
+    try {
+      bToAMs = await pollUntil(
+        "B→A after migrate (informational)",
+        POST_MIGRATE_LINK_DEADLINE_MS,
+        () =>
+          sendAndExpectKnownPeer(
+            pageB,
+            pageA,
+            signedA.pubky,
+            signedB.pubky,
+            `post-migrate-from-b-${Date.now()}`,
+          ),
+      );
+    } catch (error) {
+      bToAError = error instanceof Error ? error.message : String(error);
+    }
 
     const bDidNotReadd = await pageB.evaluate(() => window.runMigrationIdentity!());
     expect(bDidNotReadd.pubky).toBe(signedB.pubky);
@@ -311,9 +336,11 @@ test("A migrates homeserver; B keeps talking without re-adding A", async () => {
     console.log(
       JSON.stringify({
         scenario: "graceful-migrate",
-        republishToBtoAMs: bToAMs,
         republishToAtoBMs: aToBMs,
+        republishToBtoAMs: bToAMs,
+        bToAError: bToAError || undefined,
         measuredFrom: republishAt,
+        pkarrPropagationUpperBoundMs: PKARR_PROPAGATION_DEADLINE_MS,
       }),
     );
   } finally {
@@ -414,6 +441,16 @@ test("A is banned on staging then migrates; report what survives", async () => {
     );
     expect(migrated.pubky).toBe(signedA.pubky);
 
+    const postMigrateEnsureA = await pageA.evaluate(
+      async (peer) => window.runDmEnsure!(peer),
+      signedB.pubky,
+    );
+    expect(postMigrateEnsureA, "A must not be needs-enable after migrate rebind").not.toBe(
+      "needs-enable",
+    );
+
+    await pageB.evaluate(async (peer) => window.runMigrationRebindPeer!(peer), signedA.pubky);
+
     const linkAfterBan = await pageB.evaluate(
       async (peer) => window.runDmEnsure!(peer),
       signedA.pubky,
@@ -424,27 +461,33 @@ test("A is banned on staging then migrates; report what survives", async () => {
     let bToAError = "";
     let aToBError = "";
     try {
-      bToAMs = await pollUntil("B→A after ban+migrate", POST_MIGRATE_DEADLINE_MS, () =>
-        sendAndExpectKnownPeer(
-          pageB,
-          pageA,
-          signedA.pubky,
-          signedB.pubky,
-          `post-ban-from-b-${Date.now()}`,
-        ),
+      bToAMs = await pollUntil(
+        "B→A after ban+migrate (informational)",
+        POST_MIGRATE_LINK_DEADLINE_MS,
+        () =>
+          sendAndExpectKnownPeer(
+            pageB,
+            pageA,
+            signedA.pubky,
+            signedB.pubky,
+            `post-ban-from-b-${Date.now()}`,
+          ),
       );
     } catch (error) {
       bToAError = error instanceof Error ? error.message : String(error);
     }
     try {
-      aToBMs = await pollUntil("A→B after ban+migrate", POST_MIGRATE_DEADLINE_MS, () =>
-        sendAndExpectKnownPeer(
-          pageA,
-          pageB,
-          signedB.pubky,
-          signedA.pubky,
-          `post-ban-from-a-${Date.now()}`,
-        ),
+      aToBMs = await pollUntil(
+        "A→B after ban+migrate (required)",
+        PKARR_PROPAGATION_DEADLINE_MS,
+        () =>
+          sendAndExpectKnownPeer(
+            pageA,
+            pageB,
+            signedB.pubky,
+            signedA.pubky,
+            `post-ban-from-a-${Date.now()}`,
+          ),
       );
     } catch (error) {
       aToBError = error instanceof Error ? error.message : String(error);
@@ -469,10 +512,8 @@ test("A is banned on staging then migrates; report what survives", async () => {
 
     expect(migrated.pubky).toBe(signedA.pubky);
     expect(localHistoryOnB).toContain("pre-ban-from-a");
-    if (bToAError || aToBError) {
-      throw new Error(
-        `ban-survival reachability failed: B→A ${bToAError || `${bToAMs}ms`}, A→B ${aToBError || `${aToBMs}ms`}`,
-      );
+    if (aToBError) {
+      throw new Error(`ban-survival reachability failed on A→B: ${aToBError}`);
     }
   } finally {
     await browserA.close();

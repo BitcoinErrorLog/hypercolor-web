@@ -94,8 +94,8 @@ export async function runMigrationSignup(
 
 /**
  * Dev/e2e only: migrate the same identity to `homeserverZ32` (signup or
- * sign-in on 409), republish `_pubky`, adopt the new session, drop live
- * Encrypted Link handles so they rebind, republish the receiver marker.
+ * sign-in on 409), republish `_pubky`, adopt the new session, and rebind
+ * Encrypted Link (same receiver Noise key, fresh peer handshakes).
  * Host-local data is not copied.
  */
 export async function runMigrationTo(
@@ -106,6 +106,14 @@ export async function runMigrationTo(
   const host = homeserverZ32.trim();
   if (!token) throw new Error("runMigrationTo: signup token is required");
   if (!host) throw new Error("runMigrationTo: homeserver z32 is required");
+  const priorLive = getLiveSession();
+  if (priorLive) {
+    try {
+      await PaykitLinkWeb.signOutSession(priorLive.handle);
+    } catch {
+      // Best-effort: cookie may already be replaced by migrate.
+    }
+  }
   const secret = requireIdentitySecret();
   let session;
   try {
@@ -114,12 +122,15 @@ export async function runMigrationTo(
     throw redactSignupToken(error, token);
   }
   await LinkService.adoptHarnessSession(session);
-  await LinkService.releaseLiveHandlesForHarness();
-  const provisioned = await LinkService.provisionHarnessReceiver();
+  const provisioned = await LinkService.rebindEncryptedLinkAfterHomeserverMigration();
   return {
     pubky: provisioned.pubky,
     receiverPath: provisioned.receiverPath || LINK_RECEIVER_PATH,
   };
+}
+
+export async function runMigrationRebindPeer(peerPubky: string): Promise<string> {
+  return LinkService.rebindPeerLinkAfterHomeserverMigration(peerPubky.trim());
 }
 
 export async function runMigrationIdentity(): Promise<MigrationIdentity> {

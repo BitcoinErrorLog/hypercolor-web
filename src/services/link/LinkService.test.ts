@@ -12,6 +12,9 @@ const getLink = vi.fn();
 const getReceiver = vi.fn();
 const getMessageRequest = vi.fn();
 const getPubky = vi.fn();
+const getAllLinks = vi.fn();
+const deleteLink = vi.fn();
+const closeLink = vi.fn();
 
 vi.mock("./PaykitLinkWeb", async () => {
   const actual = await vi.importActual<typeof import("./PaykitLinkWeb")>("./PaykitLinkWeb");
@@ -34,7 +37,7 @@ vi.mock("./PaykitLinkWeb", async () => {
       sendPrivateMessageJson: (...args: unknown[]) => sendPrivate(...args),
       receivePrivateMessages: vi.fn(),
       clearLinkOutbox: vi.fn(),
-      closeLink: vi.fn(),
+      closeLink: (...args: unknown[]) => closeLink(...args),
     },
   };
 });
@@ -44,12 +47,12 @@ vi.mock("@/services/StorageService", () => ({
     retryPendingCleanup: vi.fn(async () => undefined),
     getLinkReceiver: (...args: unknown[]) => getReceiver(...args),
     getLink: (...args: unknown[]) => getLink(...args),
-    getAllLinks: vi.fn(async () => []),
+    getAllLinks: (...args: unknown[]) => getAllLinks(...args),
+    deleteLink: (...args: unknown[]) => deleteLink(...args),
     upsertLink: vi.fn(),
     updateLinkSnapshot: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
     resetLinkConsecutiveFailures: vi.fn(),
-    deleteLink: vi.fn(),
     persistLinkSendIntent: (...args: unknown[]) => persistIntent(...args),
     finalizeLinkSend: (...args: unknown[]) => finalizeSend(...args),
     listDeliveryQueue: vi.fn(async () => []),
@@ -122,6 +125,8 @@ vi.mock("../attachments/redaction", () => ({
 vi.mock("./provisionReceiver", () => ({
   provisionReceiver: vi.fn(),
 }));
+
+import { provisionReceiver } from "./provisionReceiver";
 
 import { RetryQueue } from "@/services/RetryQueue";
 import { StorageService } from "@/services/StorageService";
@@ -304,5 +309,48 @@ describe("LinkService persist-then-send", () => {
       expect.anything(),
       "sent",
     );
+  });
+});
+
+describe("LinkService homeserver migration rebind", () => {
+  beforeEach(async () => {
+    resetLinkServiceHarnessState();
+    closeLink.mockReset().mockResolvedValue(undefined);
+    getAllLinks.mockReset().mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        role: "initiator",
+        status: "established",
+        snapshot: "HC1.stale",
+        remoteNoisePublicKey: "peer-noise",
+        localReceiverPath: LINK_RECEIVER_PATH,
+        remoteReceiverPath: LINK_RECEIVER_PATH,
+        consecutiveFailures: 0,
+        updatedAt: NOW,
+      },
+    ]);
+    deleteLink.mockReset().mockResolvedValue(undefined);
+    vi.mocked(provisionReceiver).mockReset().mockResolvedValue({
+      pubky: OWNER,
+      receiverPath: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-noise",
+    });
+    await LinkService.adoptHarnessSession(handle() as never);
+    restoreLink.mockReset().mockResolvedValue({ linkId: "handle-1" });
+    await LinkService.ensureLinkWith(PEER);
+  });
+
+  afterEach(() => {
+    resetLinkServiceHarnessState();
+  });
+
+  it("drops stale link rows and re-provisions the receiver on the new session", async () => {
+    const result = await LinkService.rebindEncryptedLinkAfterHomeserverMigration();
+
+    expect(result.noisePublicKey).toBe("local-noise");
+    expect(deleteLink).toHaveBeenCalledWith(OWNER, PEER);
+    expect(provisionReceiver).toHaveBeenCalledWith(expect.anything(), OWNER);
+    expect(closeLink).toHaveBeenCalled();
   });
 });

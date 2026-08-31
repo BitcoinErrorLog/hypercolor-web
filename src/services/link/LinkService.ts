@@ -199,6 +199,49 @@ export const LinkService = {
     return provisionReceiver(active.handle, active.pubky);
   },
 
+  /**
+   * After a homeserver migrate the SessionHandle targets a new host but
+   * Encrypted Link snapshots still describe outbox/inbox files that exist
+   * only on the old host. Re-publish the receiver marker (same Noise key —
+   * peers keep the same inbox key), drop stale link rows, and close live
+   * handles so the next send re-handshakes against the new session.
+   *
+   * Peer-visible: an Encrypted Link re-handshake is required; the receiver
+   * Noise public key in the marker does not change.
+   */
+  async rebindEncryptedLinkAfterHomeserverMigration(): Promise<{
+    pubky: string;
+    receiverPath: string;
+    noisePublicKey: string;
+  }> {
+    const active = requireActiveSession();
+    for (const live of liveHandles.values()) {
+      await closeQuietly(live.linkId);
+    }
+    liveHandles.clear();
+    const links = await StorageService.getAllLinks(active.pubky);
+    for (const link of links) {
+      await StorageService.deleteLink(active.pubky, link.peerPubky);
+    }
+    return provisionReceiver(active.handle, active.pubky);
+  },
+
+  /**
+   * Dev/e2e only. Drop a peer's stale Encrypted Link row after the peer
+   * migrates homeserver. Local receiver state is unchanged.
+   */
+  async rebindPeerLinkAfterHomeserverMigration(peerPubky: PubkyKey): Promise<LinkStatus> {
+    const active = requireActiveSession();
+    const key = linkKey(active.pubky, peerPubky);
+    const live = liveHandles.get(key);
+    if (live) {
+      await closeQuietly(live.linkId);
+      liveHandles.delete(key);
+    }
+    await StorageService.deleteLink(active.pubky, peerPubky);
+    return LinkService.ensureLinkWith(peerPubky);
+  },
+
   async establishedLinkId(peerPubky: PubkyKey): Promise<string> {
     const ownerPubky = await requireOwner();
     return requireEstablishedHandle(ownerPubky, peerPubky);

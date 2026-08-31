@@ -15,12 +15,14 @@ import {
   runMigrationPutPublicDoc,
   runMigrationSignup,
   runMigrationTo,
+  runMigrationRebindPeer,
 } from "@/services/link/migrationHarness";
 
 declare global {
   interface Window {
     runMigrationSignup?: typeof runMigrationSignup;
     runMigrationTo?: typeof runMigrationTo;
+    runMigrationRebindPeer?: typeof runMigrationRebindPeer;
     runMigrationIdentity?: typeof runMigrationIdentity;
     runMigrationLocalBodies?: typeof runMigrationLocalBodies;
     runMigrationProbeMarker?: typeof runMigrationProbeMarker;
@@ -39,6 +41,7 @@ export function MigrationHarnessPage() {
   useEffect(() => {
     window.runMigrationSignup = runMigrationSignup;
     window.runMigrationTo = runMigrationTo;
+    window.runMigrationRebindPeer = runMigrationRebindPeer;
     window.runMigrationIdentity = runMigrationIdentity;
     window.runMigrationLocalBodies = runMigrationLocalBodies;
     window.runMigrationProbeMarker = runMigrationProbeMarker;
@@ -53,6 +56,7 @@ export function MigrationHarnessPage() {
     return () => {
       delete window.runMigrationSignup;
       delete window.runMigrationTo;
+      delete window.runMigrationRebindPeer;
       delete window.runMigrationIdentity;
       delete window.runMigrationLocalBodies;
       delete window.runMigrationProbeMarker;
