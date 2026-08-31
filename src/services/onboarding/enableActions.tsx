@@ -46,7 +46,7 @@ export function EnablePageHost() {
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const [chatsVisible, setChatsVisible] = useState(isChatsRequested);
   const enabled = status.kind === "enabled";
-  const chatsMounted = enabled && chatsVisible;
+  const chatsMounted = enabled && (chatsOpen || isChatsRequested());
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -142,17 +142,15 @@ export function EnablePageHost() {
             ) {
               stampAppPath("/chats");
             }
-            setChatsOpen(true);
+            flushSync(() => {
+              setChatsOpen(true);
+            });
           }}
           showOpenChats={!chatsVisible}
         />
       </div>
       {enabled && chatsMounted ? (
-        <div
-          {...(!chatsVisible
-            ? { hidden: true, inert: true, "aria-hidden": true as const }
-            : {})}
-        >
+        <div>
           <ChatsPageHost />
         </div>
       ) : null}
