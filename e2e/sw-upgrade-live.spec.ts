@@ -17,6 +17,7 @@ import { chromium, expect, test, type Page } from "@playwright/test";
  *   SW_UPGRADE_ALIAS=<host> \
  *   SW_UPGRADE_TARGET_DEPLOYMENT=<host serving the new worker> \
  *   VERCEL_PROTECTION_BYPASS=<automation bypass secret> \
+ *   PUBKY_STAGING_INVITE_SCRIPT=<script printing a signup token> \
  *   RUN_STAGING_DM=1 \
  *   npx playwright test e2e/sw-upgrade-live.spec.ts
  */
@@ -26,9 +27,7 @@ const execFileAsync = promisify(execFile);
 const ALIAS = process.env.SW_UPGRADE_ALIAS?.trim() ?? "";
 const TARGET = process.env.SW_UPGRADE_TARGET_DEPLOYMENT?.trim() ?? "";
 const BYPASS = process.env.VERCEL_PROTECTION_BYPASS?.trim() ?? "";
-const GENERATE =
-  process.env.PUBKY_STAGING_INVITE_SCRIPT ??
-  "/Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh";
+const GENERATE = process.env.PUBKY_STAGING_INVITE_SCRIPT?.trim() ?? "";
 
 type SignupResult = { pubky: string; receiverPath: string };
 
@@ -39,6 +38,11 @@ function elapsed(from: number): number {
 async function mintToken(): Promise<string> {
   const explicit = process.env.STAGING_SIGNUP_TOKEN?.trim();
   if (explicit) return explicit;
+  if (!GENERATE) {
+    throw new Error(
+      "set STAGING_SIGNUP_TOKEN, or PUBKY_STAGING_INVITE_SCRIPT to a script that prints one",
+    );
+  }
   const { stdout } = await execFileAsync("bash", [GENERATE], { timeout: 20_000 });
   const token = stdout.trim();
   if (!token) throw new Error("staging invite script returned an empty token");

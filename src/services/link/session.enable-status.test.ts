@@ -154,7 +154,7 @@ describe("getEnableStatus durable evidence", () => {
     await expect(getEnableStatus()).resolves.toBe("needs-enable");
   });
 
-  it("is enabled from the receiver secret when the SQL marker has not landed", async () => {
+  it("is enabled from the receiver secret when metadata predates receiver-path evidence", async () => {
     await persistSessionMetadata({
       pubky: OWNER,
       exported: exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
@@ -170,10 +170,27 @@ describe("getEnableStatus durable evidence", () => {
       ownerPubky: OWNER,
       receiverAlias: LINK_RECEIVER_PATH,
       receiverPath: LINK_RECEIVER_PATH,
-      markerPublished: false,
+      markerPublished: true,
     });
     resetSessionStateForTests();
     await expect(getEnableStatus()).resolves.toBe("enabled");
+  });
+
+  it("is needs-enable after a failed Enable rolled the receiver secret back", async () => {
+    await persistSessionMetadata({
+      pubky: OWNER,
+      exported: exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    });
+    resume.mockResolvedValue(
+      fakeHandle(
+        OWNER,
+        exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+      ),
+    );
+    getReceiverNoiseSecret.mockResolvedValue(null);
+    getReceiver.mockResolvedValue(null);
+    resetSessionStateForTests();
+    await expect(getEnableStatus()).resolves.toBe("needs-enable");
   });
 
   it("does not resurrect session metadata after a wipe", async () => {

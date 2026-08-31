@@ -62,6 +62,34 @@ async function mintReceiver(
   }
 }
 
+/**
+ * Undo receiver state whose marker never landed.
+ *
+ * Enable status is derived from the receiver secret in the KeyStore, and when
+ * session metadata carries no receiver path the lookup falls back to the
+ * default alias — the very alias a mint writes. A secret left behind by a
+ * failed publish therefore reads as "enabled" forever while no marker exists
+ * for anyone to send to, and nothing ever retries. Rolling back keeps the
+ * invariant that a stored receiver secret means a marker was published.
+ *
+ * Deleting the secret is safe even if a timed-out publish did eventually land:
+ * the marker then advertises a key nobody holds, and re-running Enable mints a
+ * fresh key and overwrites the marker.
+ */
+async function rollbackUnpublishedReceiver(ownerPubky: PubkyKey): Promise<void> {
+  try {
+    await KeyStore.deleteReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
+  } catch {
+    // Best effort. A surviving secret keeps the stale "enabled" reading, which
+    // re-running Enable overwrites.
+  }
+  try {
+    await StorageService.deleteLinkReceiver(ownerPubky);
+  } catch {
+    // Best effort. The row is rewritten by the next successful publish.
+  }
+}
+
 export async function provisionReceiver(
   session: SessionHandle,
   pubky: PubkyKey,
@@ -70,6 +98,10 @@ export async function provisionReceiver(
   await KeyStore.setPubky(pubky);
   const existing = await StorageService.getLinkReceiver(pubky);
   let noisePublicKey: string;
+  // Whether a failed publish leaves nothing anyone depends on. Reusing a
+  // receiver whose marker is already published must survive a failed re-publish,
+  // because deleting that secret would break a receiver that works.
+  let rollbackOnFailure = true;
   if (existing) {
     const secret = await KeyStore.getReceiverNoiseSecret(existing.receiverAlias);
     if (secret) {
@@ -78,6 +110,7 @@ export async function provisionReceiver(
       } finally {
         zeroizeBytes(secret);
       }
+      rollbackOnFailure = !existing.markerPublished;
     } else {
       await StorageService.deleteLinkReceiver(pubky);
       ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
@@ -85,19 +118,24 @@ export async function provisionReceiver(
   } else {
     ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
   }
-  await withBudget(
-    PaykitLinkWeb.publishReceiverMarker(
-      session,
-      receiverPath,
-      noisePublicKey,
-      true,
-      false,
-      false,
-      false,
-    ),
-    RECEIVER_MARKER_PUBLISH_BUDGET_MS,
-    "publish receiver marker",
-  );
+  try {
+    await withBudget(
+      PaykitLinkWeb.publishReceiverMarker(
+        session,
+        receiverPath,
+        noisePublicKey,
+        true,
+        false,
+        false,
+        false,
+      ),
+      RECEIVER_MARKER_PUBLISH_BUDGET_MS,
+      "publish receiver marker",
+    );
+  } catch (error) {
+    if (rollbackOnFailure) await rollbackUnpublishedReceiver(pubky);
+    throw error;
+  }
   await StorageService.upsertLinkReceiver({
     ownerPubky: pubky,
     receiverAlias: RECEIVER_NOISE_ALIAS,
