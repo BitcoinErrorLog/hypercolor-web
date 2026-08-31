@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
@@ -127,14 +127,16 @@ export function EnablePageHost() {
           }}
           onOpenChats={() => {
             markChatsRequested();
-            setChatsMounted(true);
-            setChatsOpen(true);
             if (
               window.location.pathname !== "/chats" &&
               !window.location.pathname.startsWith("/chats/")
             ) {
               stampAppPath("/chats");
             }
+            startTransition(() => {
+              setChatsMounted(true);
+              setChatsOpen(true);
+            });
           }}
           showOpenChats={!chatsVisible}
         />
