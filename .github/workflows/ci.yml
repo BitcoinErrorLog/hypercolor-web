@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout hypercolor-web
         uses: actions/checkout@v4
@@ -32,6 +30,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
+          VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           mkdir -p "$VIBEWARE_BASE_DIR"
           git archive "$VIBEWARE_BASE" | tar -x -C "$VIBEWARE_BASE_DIR"
@@ -45,6 +44,7 @@ jobs:
           VIBEWARE_BASE: ${{ github.event.pull_request.base.sha }}
           VIBEWARE_HEAD: ${{ github.event.pull_request.head.sha }}
           VIBEWARE_HEAD_REF: ${{ github.head_ref }}
+          VIBEWARE_BASE_DIR: ${{ runner.temp }}/vibeware-base-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           node "$VIBEWARE_BASE_DIR/scripts/check-vibeware-pr.mjs" \
             --repo "$GITHUB_WORKSPACE" \
