@@ -42,8 +42,14 @@ function writeStored(pubky: string | null): void {
 
 function writeDataset(pubky: string | null): void {
   if (typeof document === "undefined") return;
-  if (pubky) document.documentElement.dataset.hcEnable = "enabled";
-  else delete document.documentElement.dataset.hcEnable;
+  if (pubky) {
+    document.documentElement.dataset.hcEnable = "enabled";
+    for (const el of document.querySelectorAll("[data-testid='enableMessagingStatus']")) {
+      el.textContent = "Encrypted messaging enabled";
+    }
+  } else {
+    delete document.documentElement.dataset.hcEnable;
+  }
 }
 
 function notify(): void {
@@ -84,13 +90,9 @@ function subscribeEnableCompleted(listener: () => void): () => void {
 }
 
 export function useEnableCompleted(): boolean {
-  return useSyncExternalStore(
-    subscribeEnableCompleted,
-    () => currentPubky() !== null,
-    () => false,
-  );
+  return useSyncExternalStore(subscribeEnableCompleted, () => currentPubky() !== null);
 }
 
 export function useEnableCompletedPubky(): string | null {
-  return useSyncExternalStore(subscribeEnableCompleted, currentPubky, () => null);
+  return useSyncExternalStore(subscribeEnableCompleted, currentPubky);
 }

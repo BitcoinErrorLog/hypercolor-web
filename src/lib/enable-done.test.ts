@@ -21,6 +21,18 @@ describe("enable-done", () => {
     expect(isEnableCompleted()).toBe(false);
   });
 
+  it("writes Encrypted messaging enabled onto the live status node", () => {
+    const el = { textContent: "Waiting for Pubky Ring…" };
+    const dataset: Record<string, string> = {};
+    vi.stubGlobal("document", {
+      documentElement: { dataset },
+      querySelectorAll: () => [el],
+    });
+    markEnableCompleted("pk:dom");
+    expect(el.textContent).toBe("Encrypted messaging enabled");
+    expect(dataset.hcEnable).toBe("enabled");
+  });
+
   it("keeps completion across a simulated Fast Refresh re-import", async () => {
     markEnableCompleted("pk:pinned");
     const reimported = await import("./enable-done");
@@ -42,7 +54,10 @@ describe("enable-done", () => {
         },
       },
     });
-    vi.stubGlobal("document", { documentElement: { dataset } });
+    vi.stubGlobal("document", {
+      documentElement: { dataset },
+      querySelectorAll: () => [],
+    });
     clearEnableCompleted();
     markEnableCompleted("pk:stored");
     expect(store.get("hc-enable-done")).toBe("pk:stored");
