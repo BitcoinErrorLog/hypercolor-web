@@ -32,37 +32,55 @@ function pubkyOf(status: SessionUiStatus): string {
   return "";
 }
 
-export const useSessionStatusStore = create<SessionStatusState>((set) => ({
-  status: { kind: "unknown" },
-  setFromRestore: (restore, enable, opts) => {
-    set((state) => {
-      if (restore.status === "session-offline") {
-        return {
-          status: {
-            kind: "session-offline",
-            pubky: restore.pubky || pubkyOf(state.status),
-          },
-        };
-      }
-      // A slow first-load restore must not undo Enable or Welcome progress.
-      if (state.status.kind === "enabled") {
-        return state;
-      }
-      if (restore.status !== "live" || !restore.pubky) {
-        if (state.status.kind === "needs-enable" || state.status.kind === "live") {
+function createSessionStatusStore() {
+  return create<SessionStatusState>((set) => ({
+    status: { kind: "unknown" },
+    setFromRestore: (restore, enable, opts) => {
+      set((state) => {
+        if (restore.status === "session-offline") {
+          return {
+            status: {
+              kind: "session-offline",
+              pubky: restore.pubky || pubkyOf(state.status),
+            },
+          };
+        }
+        // A slow first-load restore must not undo Enable or Welcome progress.
+        if (state.status.kind === "enabled") {
           return state;
         }
-        return {
-          status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
-        };
+        if (restore.status !== "live" || !restore.pubky) {
+          if (state.status.kind === "needs-enable" || state.status.kind === "live") {
+            return state;
+          }
+          return {
+            status: { kind: opts?.hasIdentity ? "needs-enable" : "no-identity" },
+          };
+        }
+        if (enable === "enabled") {
+          return { status: { kind: "enabled", pubky: restore.pubky } };
+        }
+        return { status: { kind: "live", pubky: restore.pubky } };
+      });
+    },
+    setEnabled: (pubky) => {
+      if (typeof document !== "undefined") {
+        document.documentElement.dataset.hcEnable = "enabled";
       }
-      if (enable === "enabled") {
-        return { status: { kind: "enabled", pubky: restore.pubky } };
-      }
-      return { status: { kind: "live", pubky: restore.pubky } };
-    });
-  },
-  setEnabled: (pubky) => set({ status: { kind: "enabled", pubky } }),
-  setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),
-  reset: () => set({ status: { kind: "no-identity" } }),
-}));
+      set({ status: { kind: "enabled", pubky } });
+    },
+    setNeedsEnable: () => set({ status: { kind: "needs-enable" } }),
+    reset: () => set({ status: { kind: "no-identity" } }),
+  }));
+}
+
+const sessionStatusStoreKey = "__hypercolorSessionStatusStore";
+type SessionStatusGlobal = typeof globalThis & {
+  [sessionStatusStoreKey]?: ReturnType<typeof createSessionStatusStore>;
+};
+
+/** Survive Next Fast Refresh so Enable's setEnabled is not lost on a new store instance. */
+export const useSessionStatusStore =
+  (globalThis as SessionStatusGlobal)[sessionStatusStoreKey] ??
+  ((globalThis as SessionStatusGlobal)[sessionStatusStoreKey] =
+    createSessionStatusStore());

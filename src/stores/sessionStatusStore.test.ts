@@ -71,4 +71,15 @@ describe("sessionStatusStore", () => {
       pubky: "abc",
     });
   });
+
+  it("keeps the same store instance across a simulated Fast Refresh re-import", async () => {
+    useSessionStatusStore.getState().setEnabled("pinned");
+    const first = useSessionStatusStore;
+    const reimported = await import("./sessionStatusStore");
+    expect(reimported.useSessionStatusStore).toBe(first);
+    expect(reimported.useSessionStatusStore.getState().status).toEqual({
+      kind: "enabled",
+      pubky: "pinned",
+    });
+  });
 });
