@@ -52,24 +52,28 @@ async function repointAlias(deployment: string): Promise<void> {
 }
 
 /**
- * Wait until the edge actually serves the new worker. Without this the reload
- * below can race alias propagation, the update check compares the old bytes
- * against themselves, and nothing further triggers another check — which looks
- * exactly like a worker that refuses to upgrade.
+ * Wait until the edge actually serves the new worker *to this browser*. Without
+ * this the reload below can race alias propagation, the update check compares
+ * the old bytes against themselves, and nothing further triggers another check —
+ * which looks exactly like a worker that refuses to upgrade.
+ *
+ * The probe has to run inside the page. A protected deployment varies on the
+ * bypass cookie, so a request authenticated with the bypass header can be served
+ * the new build while the browser's own cookie-authenticated request is still
+ * served the old one.
  */
-async function waitForServedWorker(marker: string): Promise<void> {
+async function waitForServedWorker(page: Page, marker: string): Promise<void> {
   const deadline = Date.now() + 120_000;
   for (;;) {
-    const response = await fetch(`https://${ALIAS}/sw.js`, {
-      cache: "no-store",
-      headers: { "x-vercel-protection-bypass": BYPASS },
+    const body = await page.evaluate(async () => {
+      const response = await fetch("/sw.js", { cache: "no-store" });
+      return response.text();
     });
-    const body = await response.text();
     if (body.includes(marker)) return;
     if (Date.now() > deadline) {
       throw new Error(`edge never served a worker containing ${marker}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    await page.waitForTimeout(1_000);
   }
 }
 
@@ -97,6 +101,24 @@ async function waitForController(page: Page, timeoutMs = 30_000): Promise<void> 
     undefined,
     { timeout: timeoutMs },
   );
+}
+
+/**
+ * Assert the chats screen actually rendered, on user-visible content only.
+ * A settled URL is not enough: the defect left the URL alone and never
+ * committed the transition.
+ */
+async function expectChatsSettled(page: Page): Promise<void> {
+  await expect(page.getByRole("heading", { name: "Chats", level: 1 })).toBeVisible({
+    timeout: 60_000,
+  });
+  await expect(page.getByPlaceholder("Paste a pubky to start a chat")).toBeVisible();
+  await expect(page.getByText("No conversations yet.")).toBeVisible();
+  // Messaging is enabled, so the chats screen must not still be asking for it.
+  await expect(
+    page.getByText("Encrypted chats need a Ring-approved Paykit session on this device."),
+  ).toHaveCount(0);
+  expect(new URL(page.url()).pathname).toBe("/chats");
 }
 
 /** Ask the App Router for a Flight payload the way a client transition does. */
@@ -165,23 +187,38 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
     // 2. Deploy: the bytes at /sw.js change under the live registration.
     const aliasStart = performance.now();
     await repointAlias(TARGET);
-    await waitForServedWorker("hypercolor-shell-v3");
+    await waitForServedWorker(page, "hypercolor-shell-v3");
     console.info(`[live] new worker live at the edge in ${elapsed(aliasStart)}ms`);
 
-    // 3. The returning visitor reloads once. A navigation triggers the update
-    //    check on its own; update() only removes the dependence on timing.
+    // 3. The returning visitor comes back. /sw.js is served max-age=0, so every
+    //    navigation triggers an update check; a visitor who opens the app more
+    //    than once gets more than one chance at it.
     const upgradeStart = performance.now();
-    await page.goto(`${base}/enable`, { waitUntil: "domcontentloaded" });
-    await page.evaluate(async () => {
-      const registration = await navigator.serviceWorker.getRegistration();
-      await registration?.update();
-    });
-    await expect
-      .poll(() => cacheKeys(page), { timeout: 120_000, intervals: [500] })
-      .toEqual(["hypercolor-shell-v3"]);
+    let loads = 0;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      loads += 1;
+      await page.goto(`${base}/enable`, { waitUntil: "domcontentloaded" });
+      await page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.getRegistration();
+        await registration?.update();
+      });
+      const settled = await Promise.resolve(
+        expect
+          .poll(() => cacheKeys(page), { timeout: 20_000, intervals: [500] })
+          .toEqual(["hypercolor-shell-v3"]),
+      ).then(
+        () => true,
+        () => false,
+      );
+      if (settled) break;
+      console.info(`[live] no takeover after load ${loads}; caches=${await cacheKeys(page)}`);
+    }
+    expect(await cacheKeys(page)).toEqual(["hypercolor-shell-v3"]);
     const upgradeMs = elapsed(upgradeStart);
     await waitForController(page);
-    console.info(`[live] v3 took over in ${upgradeMs}ms; v2 cache purged`);
+    console.info(
+      `[live] v3 took over after ${loads} load(s) in ${upgradeMs}ms; v2 cache purged`,
+    );
 
     // 4. Enable encrypted messaging. This is the same durable state Ring
     //    approval produces: a live session plus a KeyStore receiver secret.
@@ -212,10 +249,7 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
 
     const clickStart = performance.now();
     await openChats.click();
-    await expect(page.getByRole("heading", { name: "Chats", level: 1 })).toBeVisible({
-      timeout: 60_000,
-    });
-    expect(new URL(page.url()).pathname).toBe("/chats");
+    await expectChatsSettled(page);
     console.info(`[live] first Open chats settled in ${elapsed(clickStart)}ms`);
 
     // 6. The same click after a reload, and the enabled state surviving it.
@@ -228,10 +262,7 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
 
     const secondClickStart = performance.now();
     await page.getByRole("link", { name: "Open chats" }).click();
-    await expect(page.getByRole("heading", { name: "Chats", level: 1 })).toBeVisible({
-      timeout: 60_000,
-    });
-    expect(new URL(page.url()).pathname).toBe("/chats");
+    await expectChatsSettled(page);
     console.info(
       `[live] Open chats after reload settled in ${elapsed(secondClickStart)}ms`,
     );
