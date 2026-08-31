@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
+import { ChatsPage } from "@/components/chats-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
 import { ChatsPageHost } from "@/services/chats/chatsPageHost";
 import { clearChatsRequested, isChatsRequested, markChatsRequested } from "@/lib/chats-open";
@@ -46,6 +47,7 @@ export function EnablePageHost() {
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const [chatsVisible, setChatsVisible] = useState(isChatsRequested);
   const enabled = status.kind === "enabled";
+  const chatsRequested = chatsOpen || isChatsRequested();
   const chatsMounted = enabled && chatsVisible;
 
   const onApproved = useCallback(
@@ -151,6 +153,21 @@ export function EnablePageHost() {
           showOpenChats={!chatsVisible}
         />
       </div>
+      {enabled && chatsRequested && !chatsMounted ? (
+        <ChatsPage
+          conversationId={null}
+          enableCta={null}
+          thread={null}
+          rows={[]}
+          pendingRequests={0}
+          inboxError={null}
+          peerDraft=""
+          starting={false}
+          startError={null}
+          onChangePeerDraft={() => {}}
+          onStartChat={() => {}}
+        />
+      ) : null}
       {enabled && chatsMounted ? (
         <div>
           <ChatsPageHost />
