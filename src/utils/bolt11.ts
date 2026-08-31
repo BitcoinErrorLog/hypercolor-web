@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/utils/bolt11.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 import { decode as decodeBolt11Raw } from 'light-bolt11-decoder';
 
 const MSAT_PER_BTC = 100_000_000_000n;

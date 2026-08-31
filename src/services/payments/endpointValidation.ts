@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/services/payments/endpointValidation.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 import { tryDecodeBolt11Invoice } from '../../utils/bolt11';
 import { isValidMainnetOnchainAddress } from '../../utils/onchainAddress';
 import { schemeForEndpointIdentifier, type TipValidationStatus } from '../../types/payment';

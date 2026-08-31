@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/services/link/inboundEnvelope.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 import { CHAT_MESSAGE_KIND, LINK_MESSAGE_MAX_BYTES, PUBKY_APP_DM_KIND } from '../../types/link';
 import { CHAT_ATTACHMENT_KIND } from '../../types/attachment';
 import { isGroupWireKind, peekEnvelopeKind } from '../../types/group';

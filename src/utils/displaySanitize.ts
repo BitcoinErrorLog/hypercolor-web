@@ -1,5 +1,5 @@
 // Copied from BitcoinErrorLog/hypercolor src/utils/displaySanitize.ts
-// pin c7157aaa1b338dd1d8545e82f639007cba945631
+// pin a0937be84efffe2a1be08aef3cbe2f541588a4ca
 /**
  * Display-only sanitization for payment_reference and tip identifiers.
  * Raw values stay in storage for wire fidelity.

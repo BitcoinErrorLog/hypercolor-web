@@ -70,16 +70,17 @@ export function RequestsPage() {
     <article className="space-y-6" data-testid="messageRequestsScreen">
       <h1 className="text-2xl font-semibold tracking-tight">Message requests</h1>
       <p className="text-sm text-muted-foreground">
-        Inbound links from people you do not follow wait here. Accepting opens the
-        conversation and any held group invitations; declining drops held stream
-        items and remembers the decline. Group invitations show a name only.
+        New inbound conversations wait here until you accept. Follows do not
+        open a chat. Accepting opens the conversation and any held group
+        invitations; declining drops held stream items and remembers the
+        decline. Group invitations show a name only.
       </p>
       {error ? <p className="text-sm text-red-400">{error}</p> : null}
       {rows.length === 0 ? (
         <div className="space-y-2" data-testid="requestsEmpty">
           <p className="text-muted-foreground">No pending requests.</p>
           <p className="text-sm text-muted-foreground">
-            Inbound links from people you do not follow wait here.
+            New inbound conversations wait here until you accept.
           </p>
         </div>
       ) : (
