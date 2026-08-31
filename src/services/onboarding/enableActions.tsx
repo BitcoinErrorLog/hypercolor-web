@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
@@ -45,7 +45,7 @@ export function EnablePageHost() {
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
   const [chatsOpen, setChatsOpen] = useState(isChatsRequested);
   const [chatsMounted, setChatsMounted] = useState(() => isChatsRequested());
-  const chatsVisible = chatsOpen || isChatsRequested();
+  const chatsVisible = chatsMounted && (chatsOpen || isChatsRequested());
   const enabled = status.kind === "enabled";
 
   const onApproved = useCallback(
@@ -133,7 +133,7 @@ export function EnablePageHost() {
             ) {
               stampAppPath("/chats");
             }
-            startTransition(() => {
+            queueMicrotask(() => {
               setChatsMounted(true);
               setChatsOpen(true);
             });
