@@ -1,5 +1,7 @@
-// v2: purge entries written by the v1 worker, which cached any same-origin GET.
-const CACHE = "hypercolor-shell-v2";
+// v3: never cache-first Next Flight/RSC requests. v2 still intercepted every
+// same-origin GET, so a precached HTML document for /chats was returned to
+// the App Router and the client transition never committed.
+const CACHE = "hypercolor-shell-v3";
 const SHELL = [
   "/",
   "/chats",
@@ -25,10 +27,38 @@ function shouldCache(url) {
   return SHELL.includes(path);
 }
 
+function isNextRscRequest(request) {
+  const url = new URL(request.url);
+  if (url.searchParams.has("_rsc")) return true;
+  if (url.pathname.endsWith(".txt")) return true;
+  const rsc = request.headers.get("RSC") || request.headers.get("rsc");
+  if (rsc === "1") return true;
+  if (
+    request.headers.get("Next-Router-State-Tree") ||
+    request.headers.get("next-router-state-tree")
+  ) {
+    return true;
+  }
+  if (
+    request.headers.get("Next-Router-Prefetch") ||
+    request.headers.get("next-router-prefetch")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE).then(async (cache) => {
-      await Promise.all(SHELL.map((url) => cache.add(url).catch(() => undefined)));
+      // Do not precache HTML routes. In webpack-dev that storms compiles,
+      // corrupts Next JSON manifests, and leaves Flight waiting on HMR.
+      // Cache documents only after a successful navigation (fetch handler).
+      await Promise.all(
+        ["/manifest.webmanifest", "/icon.svg"].map((url) =>
+          cache.add(url).catch(() => undefined),
+        ),
+      );
       await self.skipWaiting();
     }),
   );
@@ -52,20 +82,29 @@ self.addEventListener("message", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  if (isNextRscRequest(event.request)) return;
+  if (event.request.mode !== "navigate" && event.request.destination !== "document") {
+    return;
+  }
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  if (!shouldCache(url)) return;
+  // Network-first, cache as offline fallback only. A cached document shell
+  // references build-hashed chunks that the next deploy no longer serves, so
+  // serving the cache first would re-break navigation the way v2 did.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetched = fetch(event.request)
-        .then((response) => {
-          if (response.ok && shouldCache(url)) {
-            const copy = response.clone();
-            void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached ?? fetched;
-    }),
+    fetch(event.request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          void caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return response;
+      })
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        throw new Error("hypercolor: offline and no cached document for this route");
+      }),
   );
 });

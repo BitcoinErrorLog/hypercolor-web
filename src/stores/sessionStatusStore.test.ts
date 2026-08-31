@@ -38,6 +38,37 @@ describe("sessionStatusStore", () => {
     });
   });
 
+  it("keeps enabled when a load-time snapshot lands after the Enable flow committed", () => {
+    useSessionStatusStore.getState().setEnabled("abc");
+    useSessionStatusStore
+      .getState()
+      .setFromRestore({ status: "needs-enable" }, undefined, { hasIdentity: true });
+    expect(useSessionStatusStore.getState().status).toEqual({
+      kind: "enabled",
+      pubky: "abc",
+    });
+  });
+
+  it("keeps enabled when a stale snapshot reports the session offline", () => {
+    useSessionStatusStore.getState().setEnabled("abc");
+    useSessionStatusStore
+      .getState()
+      .setFromRestore({ status: "session-offline", pubky: "abc" });
+    expect(useSessionStatusStore.getState().status).toEqual({
+      kind: "enabled",
+      pubky: "abc",
+    });
+  });
+
+  it("carries the known pubky into session-offline when restore omits it", () => {
+    useSessionStatusStore.getState().setFromRestore({ status: "live", pubky: "abc" });
+    useSessionStatusStore.getState().setFromRestore({ status: "session-offline" });
+    expect(useSessionStatusStore.getState().status).toEqual({
+      kind: "session-offline",
+      pubky: "abc",
+    });
+  });
+
   it("resets to no-identity after sign-out", () => {
     useSessionStatusStore.getState().setEnabled("abc");
     useSessionStatusStore.getState().reset();

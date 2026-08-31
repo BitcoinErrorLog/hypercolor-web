@@ -2,12 +2,14 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const resume = vi.fn();
+const restoreExport = vi.fn();
 const signOutSession = vi.fn();
 const removeReceiverMarker = vi.fn();
 
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
     resumeSessionFromCookie: (...args: unknown[]) => resume(...args),
+    restoreSession: (...args: unknown[]) => restoreExport(...args),
     signOutSession: (...args: unknown[]) => signOutSession(...args),
     removeReceiverMarker: (...args: unknown[]) => removeReceiverMarker(...args),
   },
@@ -63,6 +65,8 @@ describe("session restore classification", () => {
   beforeEach(async () => {
     resetSessionStateForTests();
     resume.mockReset();
+    restoreExport.mockReset();
+    restoreExport.mockRejectedValue(namedError("Error", "export restore unused"));
     signOutSession.mockReset();
     removeReceiverMarker.mockReset();
     await persistSessionMetadata({
@@ -145,6 +149,48 @@ describe("session restore classification", () => {
     expect(await readSessionMetadata()).toEqual({
       pubky: OWNER,
       exported: exportWithCaps("/pub/paykit/:rw"),
+    });
+  });
+
+  it("falls back to export restore when cookie resume exceeds the budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const fresh = exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw");
+      resume.mockImplementation(() => new Promise(() => {}));
+      restoreExport.mockResolvedValue(fakeHandle(OWNER, fresh));
+      const result = restoreSessionOnLoad();
+      await vi.advanceTimersByTimeAsync(4_100);
+      await expect(result).resolves.toMatchObject({ status: "live", pubky: OWNER });
+      expect(restoreExport).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores from the persisted export when cookie resume is offline", async () => {
+    const fresh = exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw");
+    resume.mockRejectedValue(namedError("Error", "cookie resume failed: network"));
+    restoreExport.mockResolvedValue(fakeHandle(OWNER, fresh));
+    const result = await restoreSessionOnLoad();
+    expect(result.status).toBe("live");
+    if (result.status === "live") expect(result.pubky).toBe(OWNER);
+    expect(restoreExport).toHaveBeenCalledTimes(1);
+    expect(await readSessionMetadata()).toEqual({ pubky: OWNER, exported: fresh });
+  });
+
+  it("preserves a published receiver path across cookie resume", async () => {
+    await persistSessionMetadata({
+      pubky: OWNER,
+      exported: exportWithCaps("/pub/paykit/:rw"),
+      receiverPath: "hypercolor/wallet",
+    });
+    const fresh = exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw");
+    resume.mockResolvedValue(fakeHandle(OWNER, fresh));
+    await restoreSessionOnLoad();
+    expect(await readSessionMetadata()).toEqual({
+      pubky: OWNER,
+      exported: fresh,
+      receiverPath: "hypercolor/wallet",
     });
   });
 

@@ -9,6 +9,13 @@ export type { WebSqliteVfs } from "./openWebSqlite";
 
 let _db: SqlExecutor | null = null;
 let _injected: SqlExecutor | null = null;
+let _opening: Promise<SqlExecutor> | null = null;
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pagehide", () => {
+    closeDb();
+  });
+}
 
 subscribeTabLock((lock) => {
   if (lock.mode !== "readonly" || !_db) return;
@@ -48,20 +55,28 @@ export function applyConnectionPreamble(db: SqlExecutor): void {
 export async function getDb(): Promise<SqlExecutor> {
   if (_injected) return _injected;
   if (_db) return _db;
+  if (_opening) return _opening;
 
-  const lock = await initTabLock();
-  if (lock.mode === "readonly") {
-    throw new Error(
-      "Hypercolor database is read-only in this tab. Take over writing from the banner to open the database.",
-    );
-  }
+  _opening = (async () => {
+    try {
+      const lock = await initTabLock();
+      if (lock.mode === "readonly") {
+        throw new Error(
+          "Hypercolor database is read-only in this tab. Take over writing from the banner to open the database.",
+        );
+      }
 
-  const db = await openWebSqlite();
-  applyConnectionPreamble(db);
-  await runMigrations(db);
-  db.executeSync("DELETE FROM mesh_peers");
-  _db = db;
-  return db;
+      const db = await openWebSqlite();
+      applyConnectionPreamble(db);
+      await runMigrations(db);
+      db.executeSync("DELETE FROM mesh_peers");
+      _db = db;
+      return db;
+    } finally {
+      _opening = null;
+    }
+  })();
+  return _opening;
 }
 
 /** Closes the database. Primarily used in tests and when a tab loses the writer lock. */

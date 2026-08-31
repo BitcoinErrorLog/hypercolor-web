@@ -206,12 +206,32 @@ export async function getPaykitClient(): Promise<PubkyClient> {
   return client;
 }
 
+/**
+ * Drop the cached wasm client so the next {@link getPaykitClient} constructs
+ * a new Pkarr resolver. Welcome `publicGet` can leave the shared client with
+ * an inflight relay that never settles (browser CORS), which then hangs
+ * Enable's `/session` exchange after the httprelay inbox DELETE.
+ */
+export function discardCachedPaykitClient(): void {
+  if (testClient) return;
+  // Do not `free()` — an in-flight `awaitApproval` / `/session` exchange may
+  // still hold this instance. Dropping the cache is enough so Enable constructs
+  // a fresh Pkarr resolver.
+  client = null;
+}
+
+/** Compile wasm and construct the client before cookie resume's budget starts. */
+export async function warmPaykitClient(): Promise<void> {
+  await getPaykitClient();
+}
+
 export function resetPaykitClientForTests(): void {
   client = null;
 }
 
 export const PaykitLinkWeb = {
   async startAuthFlow(capabilities: string): Promise<AuthFlowHandle> {
+    discardCachedPaykitClient();
     const wasmClient = await getPaykitClient();
     return wasmClient.startAuthFlow(capabilities);
   },

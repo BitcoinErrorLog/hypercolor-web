@@ -2,6 +2,7 @@ import {
   capabilitiesCoverHypercolorRw,
   extractCapabilitySpecsFromExport,
 } from "@/lib/capabilities";
+import { zeroizeBytes } from "@/lib/hex";
 import { KeyStore } from "@/services/KeyStore";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
@@ -22,6 +23,8 @@ const AUTH_REVOKED_NAMES = new Set([
 export type PersistedSession = {
   pubky: string;
   exported: string;
+  /** Receiver path published after Enable. Evidence, not a boolean flag. */
+  receiverPath?: string;
 };
 
 export type SessionRestoreResult =
@@ -33,9 +36,52 @@ export type EnableStatus = "needs-enable" | "session-offline" | "enabled";
 
 type LiveSession = { pubky: string; handle: SessionHandle };
 
-let live: LiveSession | null = null;
+const LIVE_KEY = "__hypercolorLiveSession";
+type LiveGlobal = typeof globalThis & { [LIVE_KEY]?: LiveSession | null };
+
+let live: LiveSession | null = (globalThis as LiveGlobal)[LIVE_KEY] ?? null;
+
+function bindLive(next: LiveSession | null): LiveSession | null {
+  live = next;
+  (globalThis as LiveGlobal)[LIVE_KEY] = next;
+  return next;
+}
+
 let restoreInFlight: Promise<SessionRestoreResult> | null = null;
 let sessionDb: IDBDatabase | null = null;
+let writeEpoch = 0;
+
+function bumpWriteEpoch(): number {
+  writeEpoch += 1;
+  return writeEpoch;
+}
+
+const COOKIE_RESUME_BUDGET_MS = 4_000;
+const EXPORT_RESTORE_BUDGET_MS = 8_000;
+
+async function withBudget<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            Object.assign(new Error(`${label} timed out after ${ms}ms`), {
+              name: "SessionResumeTimeout",
+            }),
+          );
+        }, ms);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 
 function errorName(error: unknown): string {
   if (typeof error === "object" && error !== null && "name" in error) {
@@ -74,14 +120,29 @@ async function openSessionDb(): Promise<IDBDatabase> {
 export async function persistSessionMetadata(
   meta: PersistedSession,
 ): Promise<void> {
+  const epoch = writeEpoch;
   const db = await openSessionDb();
+  if (epoch !== writeEpoch) return;
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    const req = tx.objectStore(STORE).put(meta, KEY_CURRENT);
-    req.onsuccess = () => resolve();
-    req.onerror = () =>
-      reject(req.error ?? new Error("session: failed to persist metadata"));
+    tx.oncomplete = () => resolve();
+    tx.onabort = () =>
+      reject(tx.error ?? new Error("session: persist metadata aborted"));
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("session: failed to persist metadata"));
+    tx.objectStore(STORE).put(meta, KEY_CURRENT);
   });
+  if (epoch !== writeEpoch) {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onabort = () =>
+        reject(tx.error ?? new Error("session: roll back metadata aborted"));
+      tx.onerror = () =>
+        reject(tx.error ?? new Error("session: failed to roll back metadata"));
+      tx.objectStore(STORE).delete(KEY_CURRENT);
+    });
+  }
 }
 
 export async function readSessionMetadata(): Promise<PersistedSession | null> {
@@ -103,24 +164,93 @@ export async function readSessionMetadata(): Promise<PersistedSession | null> {
         resolve(null);
         return;
       }
-      resolve(value);
+      const receiverPath =
+        typeof value.receiverPath === "string" && value.receiverPath.length > 0
+          ? value.receiverPath
+          : undefined;
+      resolve(
+        receiverPath
+          ? { pubky: value.pubky, exported: value.exported, receiverPath }
+          : { pubky: value.pubky, exported: value.exported },
+      );
     };
   });
 }
 
 export async function wipeSessionMetadata(): Promise<void> {
+  bumpWriteEpoch();
   const db = await openSessionDb();
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    const req = tx.objectStore(STORE).delete(KEY_CURRENT);
-    req.onsuccess = () => resolve();
-    req.onerror = () =>
-      reject(req.error ?? new Error("session: failed to wipe metadata"));
+    tx.oncomplete = () => resolve();
+    tx.onabort = () =>
+      reject(tx.error ?? new Error("session: wipe metadata aborted"));
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("session: failed to wipe metadata"));
+    tx.objectStore(STORE).delete(KEY_CURRENT);
   });
 }
 
 export function getLiveSession(): LiveSession | null {
   return live;
+}
+
+export async function persistReceiverPath(
+  pubky: string,
+  receiverPath: string,
+): Promise<void> {
+  const epoch = writeEpoch;
+  const stored = await readSessionMetadata();
+  if (epoch !== writeEpoch) return;
+  if (stored) {
+    if (stored.pubky !== pubky) return;
+    await persistSessionMetadata({ ...stored, receiverPath });
+    return;
+  }
+  const current = getLiveSession();
+  if (!current || current.pubky !== pubky) return;
+  let exported: string;
+  try {
+    exported = current.handle.exportSession();
+  } catch {
+    return;
+  }
+  if (!sessionExportCoversHypercolor(exported)) return;
+  await persistSessionMetadata({ pubky, exported, receiverPath });
+}
+
+async function metadataWithPreservedReceiver(
+  pubky: string,
+  exported: string,
+  previous: PersistedSession | null,
+): Promise<PersistedSession> {
+  const receiverPath =
+    previous?.pubky === pubky ? previous.receiverPath : undefined;
+  return receiverPath
+    ? { pubky, exported, receiverPath }
+    : { pubky, exported };
+}
+
+async function hasDurableEnableEvidence(
+  pubky: string | null | undefined,
+  stored: PersistedSession | null,
+): Promise<boolean> {
+  if (!pubky) return false;
+  const owner = await KeyStore.getPubky();
+  if (!owner || owner !== pubky) return false;
+  const alias =
+    stored?.pubky === pubky && stored.receiverPath
+      ? stored.receiverPath
+      : LINK_RECEIVER_PATH;
+  let secret: Uint8Array | null = null;
+  try {
+    secret = await KeyStore.getReceiverNoiseSecret(alias);
+  } catch {
+    return false;
+  }
+  if (!secret) return false;
+  zeroizeBytes(secret);
+  return true;
 }
 
 /**
@@ -132,9 +262,9 @@ export async function adoptLiveHandle(handle: SessionHandle): Promise<LiveSessio
   if (live && live.handle !== handle) {
     closeHandleQuietly(live.handle);
   }
-  live = { pubky, handle };
+  const adopted = bindLive({ pubky, handle })!;
   await KeyStore.setPubky(pubky);
-  return live;
+  return adopted;
 }
 
 export function classifyResumeError(error: unknown): "auth-revoked" | "session-offline" {
@@ -163,11 +293,58 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
   if (live && live.handle !== handle) {
     closeHandleQuietly(live.handle);
   }
-  live = { pubky, handle };
-  await persistSessionMetadata({ pubky, exported });
+  const adopted = bindLive({ pubky, handle })!;
+  const previous = await readSessionMetadata();
+  await persistSessionMetadata(
+    await metadataWithPreservedReceiver(pubky, exported, previous),
+  );
   await KeyStore.setPubky(pubky);
   useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
-  return live;
+  return adopted;
+}
+
+async function adoptRestoredHandle(
+  handle: SessionHandle,
+  stored: PersistedSession,
+): Promise<SessionRestoreResult> {
+  const epoch = writeEpoch;
+  const pubky = handle.pubky();
+  if (pubky !== stored.pubky) {
+    closeHandleQuietly(handle);
+    await wipeSessionMetadata();
+    bindLive(null);
+    return { status: "needs-enable" };
+  }
+  const exported = handle.exportSession();
+  if (!sessionExportCoversHypercolor(exported)) {
+    try {
+      await PaykitLinkWeb.signOutSession(handle);
+    } catch {
+      closeHandleQuietly(handle);
+    }
+    await wipeSessionMetadata();
+    bindLive(null);
+    return { status: "needs-enable" };
+  }
+  if (epoch !== writeEpoch) {
+    closeHandleQuietly(handle);
+    return { status: "needs-enable" };
+  }
+  bindLive({ pubky, handle });
+  await persistSessionMetadata(
+    await metadataWithPreservedReceiver(pubky, exported, stored),
+  );
+  if (epoch !== writeEpoch) {
+    if (live?.handle === handle) bindLive(null);
+    closeHandleQuietly(handle);
+    return { status: "needs-enable" };
+  }
+  await KeyStore.setPubky(pubky);
+  if (epoch !== writeEpoch) {
+    if (live?.handle === handle) bindLive(null);
+    return { status: "needs-enable" };
+  }
+  return { status: "live", pubky, handle };
 }
 
 async function restoreFromPersisted(): Promise<SessionRestoreResult> {
@@ -175,36 +352,39 @@ async function restoreFromPersisted(): Promise<SessionRestoreResult> {
   if (!stored) return { status: "needs-enable" };
 
   try {
-    const handle = await PaykitLinkWeb.resumeSessionFromCookie(stored.pubky);
-    const pubky = handle.pubky();
-    if (pubky !== stored.pubky) {
-      closeHandleQuietly(handle);
-      await wipeSessionMetadata();
-      live = null;
-      return { status: "needs-enable" };
-    }
-    const exported = handle.exportSession();
-    if (!sessionExportCoversHypercolor(exported)) {
-      try {
-        await PaykitLinkWeb.signOutSession(handle);
-      } catch {
-        closeHandleQuietly(handle);
-      }
-      await wipeSessionMetadata();
-      live = null;
-      return { status: "needs-enable" };
-    }
-    live = { pubky, handle };
-    await persistSessionMetadata({ pubky, exported });
-    await KeyStore.setPubky(pubky);
-    return { status: "live", pubky, handle };
+    const handle = await withBudget(
+      PaykitLinkWeb.resumeSessionFromCookie(stored.pubky),
+      COOKIE_RESUME_BUDGET_MS,
+      "cookie resume",
+    );
+    return await adoptRestoredHandle(handle, stored);
   } catch (error) {
     if (classifyResumeError(error) === "auth-revoked") {
+      if (await hasDurableEnableEvidence(stored.pubky, stored)) {
+        return { status: "session-offline", pubky: stored.pubky };
+      }
       await wipeSessionMetadata();
-      live = null;
+      bindLive(null);
       return { status: "needs-enable" };
     }
-    return { status: "session-offline", pubky: stored.pubky };
+    try {
+      const handle = await withBudget(
+        PaykitLinkWeb.restoreSession(stored.exported),
+        EXPORT_RESTORE_BUDGET_MS,
+        "export restore",
+      );
+      return await adoptRestoredHandle(handle, stored);
+    } catch (exportError) {
+      if (classifyResumeError(exportError) === "auth-revoked") {
+        if (await hasDurableEnableEvidence(stored.pubky, stored)) {
+          return { status: "session-offline", pubky: stored.pubky };
+        }
+        await wipeSessionMetadata();
+        bindLive(null);
+        return { status: "needs-enable" };
+      }
+      return { status: "session-offline", pubky: stored.pubky };
+    }
   }
 }
 
@@ -225,17 +405,30 @@ export async function restoreSessionOnLoad(): Promise<SessionRestoreResult> {
 }
 
 export async function getEnableStatus(): Promise<EnableStatus> {
-  try {
-    await StorageService.retryPendingCleanup();
-  } catch {
+  // Never await the journal here. Cleanup opens SQLite (OPFS SAH). After a
+  // document navigation that pool can stay locked while the previous
+  // document's handles drain — blocking this call keeps the Enable CTA up
+  // even when cookie resume and receiver keys already succeeded.
+  void StorageService.retryPendingCleanup().catch(() => {
     // Best-effort journal.
-  }
+  });
   const restore = await restoreSessionOnLoad();
-  if (restore.status === "session-offline") return "session-offline";
+  const stored = await readSessionMetadata();
+  const pubky =
+    restore.status === "live" || restore.status === "session-offline"
+      ? restore.pubky
+      : stored?.pubky;
+  let durable = false;
+  try {
+    durable = await hasDurableEnableEvidence(pubky, stored);
+  } catch {
+    durable = false;
+  }
+  if (restore.status === "session-offline") {
+    return durable ? "session-offline" : "needs-enable";
+  }
   if (restore.status !== "live") return "needs-enable";
-  const receiver = await StorageService.getLinkReceiver(restore.pubky);
-  if (!receiver?.markerPublished) return "needs-enable";
-  return "enabled";
+  return durable ? "enabled" : "needs-enable";
 }
 
 /**
@@ -243,8 +436,11 @@ export async function getEnableStatus(): Promise<EnableStatus> {
  * wipe, account-scoped SQL, persisted session metadata.
  */
 export async function signOut(): Promise<void> {
+  bumpWriteEpoch();
+  const previous = live;
+  bindLive(null);
   const owner =
-    live?.pubky ??
+    previous?.pubky ??
     (await readSessionMetadata())?.pubky ??
     (await KeyStore.getPubky());
   let markerPath = LINK_RECEIVER_PATH;
@@ -256,19 +452,19 @@ export async function signOut(): Promise<void> {
       // SQL may be unavailable in a readonly tab.
     }
   }
-  if (live) {
+  const handle = previous?.handle;
+  if (handle) {
     try {
-      await PaykitLinkWeb.removeReceiverMarker(live.handle, markerPath);
+      await PaykitLinkWeb.removeReceiverMarker(handle, markerPath);
     } catch {
       // Best-effort: peers should stop handshaking into a dead inbox.
     }
     try {
-      await PaykitLinkWeb.signOutSession(live.handle);
+      await PaykitLinkWeb.signOutSession(handle);
     } catch {
-      closeHandleQuietly(live.handle);
+      closeHandleQuietly(handle);
     }
   }
-  live = null;
   if (owner) {
     try {
       await StorageService.clearAccountData(owner);
@@ -286,8 +482,9 @@ export async function signOut(): Promise<void> {
 }
 
 export function resetSessionStateForTests(): void {
+  bumpWriteEpoch();
   closeHandleQuietly(live?.handle);
-  live = null;
+  bindLive(null);
   restoreInFlight = null;
   sessionDb = null;
 }

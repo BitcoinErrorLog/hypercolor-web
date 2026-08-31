@@ -31,6 +31,10 @@ function isAuthFlowExpiredError(error: unknown): boolean {
   const message =
     "message" in error ? String((error as { message?: unknown }).message) : "";
   if (name === "TimeoutError" || name === "SESSION_EXPIRED") return true;
+  // Session resume / receiver-publish budgets also say "timed out", but the
+  // pubkyauth flow itself is still valid — regenerating the URL would discard
+  // a grant Ring already approved.
+  if (name === "SessionResumeTimeout") return false;
   return /timeout|expired|SESSION_EXPIRED/i.test(`${name} ${message}`);
 }
 
