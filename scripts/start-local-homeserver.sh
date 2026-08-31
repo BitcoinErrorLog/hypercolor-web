@@ -6,7 +6,7 @@ set -euo pipefail
 DATA_DIR="${HYPERCOLOR_HS_DATA_DIR:-/tmp/hypercolor-migration-homeserver}"
 LOG_FILE="${HYPERCOLOR_HS_LOG:-/tmp/hypercolor-migration-homeserver/homeserver.log}"
 Z32_FILE="${HYPERCOLOR_HS_Z32:-/tmp/hypercolor-migration-homeserver/z32.txt}"
-CORE_DIR="${PUBKY_CORE_DIR:-/Volumes/vibedrive/vibes-dev/pubky-core}"
+CORE_DIR="${PUBKY_CORE_DIR:-/Volumes/vibedrive/vibes-dev/pubky-core-migration}"
 BIN="${CORE_DIR}/target/release/pubky-homeserver"
 
 mkdir -p "${DATA_DIR}"

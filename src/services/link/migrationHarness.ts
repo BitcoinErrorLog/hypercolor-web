@@ -93,9 +93,10 @@ export async function runMigrationSignup(
 }
 
 /**
- * Dev/e2e only: signup the same identity on `homeserverZ32`, adopt the new
- * session, drop live Encrypted Link handles so they rebind, republish the
- * receiver marker on the new host.
+ * Dev/e2e only: migrate the same identity to `homeserverZ32` (signup or
+ * sign-in on 409), republish `_pubky`, adopt the new session, drop live
+ * Encrypted Link handles so they rebind, republish the receiver marker.
+ * Host-local data is not copied.
  */
 export async function runMigrationTo(
   homeserverZ32: string,
@@ -108,7 +109,7 @@ export async function runMigrationTo(
   const secret = requireIdentitySecret();
   let session;
   try {
-    session = await PaykitLinkWeb.signupWithSecret(secret, host, token);
+    session = await PaykitLinkWeb.migrateHomeserverWithSecret(secret, host, token);
   } catch (error) {
     throw redactSignupToken(error, token);
   }

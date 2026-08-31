@@ -244,6 +244,23 @@ export const PaykitLinkWeb = {
     )) as SessionHandle;
   },
 
+  /**
+   * Dev/e2e only. Move an existing identity to `homeserverZ32` and
+   * republish `_pubky`. Host-local data is not copied.
+   */
+  async migrateHomeserverWithSecret(
+    identitySecret: Uint8Array,
+    homeserverZ32: string,
+    signupToken?: string | null,
+  ): Promise<SessionHandle> {
+    const wasmClient = await getPaykitClient();
+    return (await wasmClient.migrateHomeserverWithSecret(
+      identitySecret,
+      homeserverZ32,
+      signupToken ?? undefined,
+    )) as SessionHandle;
+  },
+
   async restoreSession(exported: string): Promise<SessionHandle> {
     const wasmClient = await getPaykitClient();
     return (await wasmClient.restoreSession(exported)) as SessionHandle;
