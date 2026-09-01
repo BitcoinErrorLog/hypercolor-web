@@ -89,6 +89,7 @@ vi.mock("@/services/KeyStore", () => ({
 }));
 
 vi.mock("@/services/RetryQueue", () => ({
+  isRetired: vi.fn(() => false),
   RetryQueue: {
     getDue: vi.fn(async () => []),
     recordSuccess: vi.fn(),
