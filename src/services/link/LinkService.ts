@@ -1745,8 +1745,16 @@ async function deliverQueuedPayloadLocked(
     // attachment reconstruction, so this path is scan-adjacent-to-encrypt
     // like attemptPersistedSend / sendPersistedLinkJson / dispatchPreparedDm.
     // Not clear means self-defer — never encrypt ahead of an older owed
-    // same-peer write.
-    const recheck = await drainOwedSamePeerWritesLocked(payload.peerPubky, { beforeItem: item });
+    // same-peer write. R6-1: a StorageService/SQLite throw from the scan
+    // must defer (attempts unchanged), not fall into this send-failure
+    // catch and burn a retry via recordFailure.
+    let recheck: "clear" | "blocked";
+    try {
+      recheck = await drainOwedSamePeerWritesLocked(payload.peerPubky, { beforeItem: item });
+    } catch {
+      await RetryQueue.defer(item.id, item.attempts);
+      return "deferred";
+    }
     if (recheck !== "clear") {
       await RetryQueue.defer(item.id, item.attempts);
       return "deferred";

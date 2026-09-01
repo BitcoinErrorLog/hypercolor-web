@@ -388,3 +388,15 @@ the new link.
 **Re-scan adjacency (hardening):** `deliverQueuedPayloadLocked` re-scans
 after `wireJsonForNativeSend` so all four encrypt paths are
 scan-adjacent-to-encrypt. A non-clear re-scan still defers.
+
+## R6-1 (Kimi round 6, LOW — fixed)
+
+A throw from the pre-encrypt re-scan (StorageService/SQLite, not a
+link-native error) now defers with attempts unchanged instead of
+falling into the send-failure catch and burning a `recordFailure`.
+
+**Legacy ownerless queue rows (informational, accepted):** rows written
+by pre-owner-scoping builds have no `ownerPubky`.
+`removeQueueItemsForRecipient` never deletes them
+(`queuePayloadBelongsToOwner` is false) and drains skip them
+(`parseRetryPayload` returns null). Inert cruft.

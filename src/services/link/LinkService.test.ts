@@ -951,7 +951,42 @@ describe("LinkService persist-then-send", () => {
 
     expect(reconstructAttachmentWireJson).toHaveBeenCalled();
     expect(RetryQueue.defer).toHaveBeenCalledWith("q-current", currentItem.attempts);
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalledWith("q-current", expect.anything());
+    expect(StorageService.updateLinkMessageDeliveryState).not.toHaveBeenCalledWith(
+      OWNER,
+      OWNER,
+      CHAT_ATTACHMENT_KIND,
+      currentEvent,
+      "failed",
+    );
     expect(sendPrivate.mock.calls.map((call) => call[1])).not.toContain(currentRaw);
+  });
+
+  it("defers without burning attempts when the pre-encrypt re-scan throws (R6-1)", async () => {
+    const item = dmQueueItem({
+      id: QUEUE_ID,
+      eventId: EVENT_ID,
+      body: "current",
+      createdAt: NOW - 1_000,
+      nextRetryAt: NOW,
+    });
+    item.attempts = 9;
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([item]);
+    vi.mocked(StorageService.listDeliveryQueue)
+      .mockResolvedValueOnce([item])
+      .mockRejectedValueOnce(new Error("SQLITE_BUSY: database is locked"));
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      deliveryState: "failed",
+    } as never);
+    sendPrivate.mockRejectedValue({ code: "protocol", message: "hard fail" });
+
+    await LinkService.drainRetries();
+
+    expect(RetryQueue.defer).toHaveBeenCalledWith(QUEUE_ID, 9);
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(RetryQueue.park).not.toHaveBeenCalled();
+    expect(StorageService.updateLinkMessageDeliveryState).not.toHaveBeenCalled();
+    expect(sendPrivate).not.toHaveBeenCalled();
   });
 
   it("fails an attachment retry closed when reconstruction is rejected", async () => {
