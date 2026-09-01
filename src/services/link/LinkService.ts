@@ -585,8 +585,8 @@ export const LinkService = {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
       if (stored) await wipeLinkState(stored);
-      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky);
-      await StorageService.removeQueueItemsForRecipient(peerPubky);
+      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky, ownerPubky);
+      await StorageService.removeQueueItemsForRecipient(peerPubky, ownerPubky);
       await settleOrphanedFanout(orphanedFanout);
       await StorageService.deleteLinkStreamItemsForPeer(ownerPubky, peerPubky);
       await StorageService.deleteLinkMessagesForPeer(ownerPubky, peerPubky);
@@ -613,16 +613,17 @@ export const LinkService = {
    * `sending` rows) does not re-send owed history under the new link. Group
    * fan-out states for this recipient are settled the same way: with the
    * queue items gone, a group row whose last owed recipient was this peer is
-   * marked failed instead of sitting in `sending` forever.
+   * marked failed instead of sitting in `sending` forever. Queue drop and
+   * abandon run in one SQL transaction so a crash cannot leave `sending`
+   * rows with no queue item for the heal to resurrect under the new link.
    */
   async resetEncryptedLink(peerPubky: PubkyKey): Promise<void> {
     return withQueue(peerPubky, async () => {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
       if (stored) await wipeLinkState(stored);
-      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky);
-      await StorageService.removeQueueItemsForRecipient(peerPubky);
-      await StorageService.abandonOwedLinkMessagesForPeer(ownerPubky, peerPubky);
+      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky, ownerPubky);
+      await StorageService.removeQueueItemsAndAbandonOwedForPeer(ownerPubky, peerPubky);
       await settleOrphanedFanout(orphanedFanout);
     });
   },
@@ -1685,7 +1686,7 @@ async function deliverQueuedPayloadLocked(
     }
     if (isRetired(item)) {
       await parkRetiredItem(item);
-      await markFailed(payload);
+      await markFailed(payload, { excludeItemId: item.id });
       return "failed";
     }
   } else {
@@ -1707,7 +1708,7 @@ async function deliverQueuedPayloadLocked(
     }
     if (isRetired(item)) {
       await parkRetiredItem(item);
-      await markFailed(payload);
+      await markFailed(payload, { excludeItemId: item.id });
       return "failed";
     }
   }
@@ -1721,21 +1722,11 @@ async function deliverQueuedPayloadLocked(
       return "deferred";
     }
     const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
-    if (dropped) await markFailed(payload);
+    if (dropped) await markFailed(payload, { excludeItemId: item.id });
     return "failed";
   }
 
   if (outcome !== "ready") {
-    await RetryQueue.defer(item.id, item.attempts);
-    return "deferred";
-  }
-
-  // R4-F2: the entry scan ran before `ensureLinkLocked` (a network-scale
-  // handshake window). An older owed item can be enqueued in between (heal,
-  // payment reconcile), so re-scan immediately before the encrypt. Not clear
-  // means self-defer — never encrypt ahead of an older owed same-peer write.
-  const recheck = await drainOwedSamePeerWritesLocked(payload.peerPubky, { beforeItem: item });
-  if (recheck !== "clear") {
     await RetryQueue.defer(item.id, item.attempts);
     return "deferred";
   }
@@ -1750,6 +1741,16 @@ async function deliverQueuedPayloadLocked(
       payload.eventId,
       payload.secretFingerprint,
     );
+    // R4-F2 / F5 hardening: re-scan immediately before the encrypt, after
+    // attachment reconstruction, so this path is scan-adjacent-to-encrypt
+    // like attemptPersistedSend / sendPersistedLinkJson / dispatchPreparedDm.
+    // Not clear means self-defer — never encrypt ahead of an older owed
+    // same-peer write.
+    const recheck = await drainOwedSamePeerWritesLocked(payload.peerPubky, { beforeItem: item });
+    if (recheck !== "clear") {
+      await RetryQueue.defer(item.id, item.attempts);
+      return "deferred";
+    }
     const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
     if (payload.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
       await StorageService.finalizeGroupFanoutSend({
@@ -1795,7 +1796,7 @@ async function deliverQueuedPayloadLocked(
       return "deferred";
     }
     const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
-    if (dropped) await markFailed(payload);
+    if (dropped) await markFailed(payload, { excludeItemId: item.id });
     return "failed";
   }
 }
@@ -1820,9 +1821,14 @@ function isDeliveryOwed(state: LinkDeliveryState): boolean {
   return state === "sending" || state === "failed";
 }
 
-async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
+async function markFailed(
+  payload: AnyLinkRetryPayload,
+  options?: { excludeItemId?: string },
+): Promise<void> {
   if (payload.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
-    const remaining = await StorageService.countDeliveryQueueForMessage(payload.eventId);
+    const remaining = await StorageService.countDeliveryQueueForMessage(payload.eventId, {
+      excludeItemId: options?.excludeItemId,
+    });
     if (remaining === 0) {
       await StorageService.updateGroupMessageDeliveryState(
         payload.ownerPubky,
@@ -1860,20 +1866,24 @@ async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
 }
 
 /**
- * Snapshot the group fan-out payloads queued for `peerPubky` before their
- * queue rows are deleted (`removeQueueItemsForRecipient`). Deleting them
- * without settling would orphan `group_messages` rows in `sending` forever:
- * the lost-item heal covers DM rows only (R4-F4/R4-F5).
+ * Snapshot this owner's group fan-out payloads queued for `peerPubky`
+ * before their queue rows are deleted. Deleting them without settling
+ * would orphan `group_messages` rows in `sending` forever: the lost-item
+ * heal covers DM rows only (R4-F4/R4-F5). Filtered by `ownerPubky` so a
+ * second owner's stale rows for the same recipient are left alone (F5-4).
  */
 async function collectFanoutPayloadsForRecipient(
   peerPubky: PubkyKey,
+  ownerPubky: PubkyKey,
 ): Promise<GroupFanoutRetryPayload[]> {
   const items = await StorageService.listDeliveryQueue();
   const out: GroupFanoutRetryPayload[] = [];
   for (const item of items) {
     if (item.recipientPubky !== peerPubky) continue;
     const payload = parseRetryPayload(item.payload);
-    if (payload?.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) out.push(payload);
+    if (payload?.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE && payload.ownerPubky === ownerPubky) {
+      out.push(payload);
+    }
   }
   return out;
 }

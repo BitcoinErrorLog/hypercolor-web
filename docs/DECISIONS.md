@@ -263,6 +263,13 @@ no longer resurrect a capped item with `attempts: 0` (the R4-F3
 cap-defeating loop). Group fan-out items were dropped by the same removal
 path, so parking preserves them too (the fan-out half of R4-F5).
 
+`recordFailure` parks at `currentAttempts + 1 >= MAX_ATTEMPTS` without
+incrementing, so stored `attempts` maxes at 9 and `isRetired`'s
+`attempts >= 10` arm does not fire for a cap-parked item under 24h old.
+The send-path drain therefore re-attempts a cap-parked item (same
+ciphertext, idempotent) rather than hard-blocking, and blocks only if
+that re-attempt fails.
+
 ## R4-F2 (Kimi round 4): pre-encrypt re-scan + heal enqueues under the peer mutex
 
 `deliverQueuedPayloadLocked` ran the older-owed scan at entry, but the
@@ -344,3 +351,40 @@ Payment reconcile does not call it — it builds the queue payload inline
 from the persisted `link_messages` row. Full-repo `tsc --noEmit` is the
 gate that any out-of-bundle payment caller would fail if it dropped the
 `await`.
+
+## F5-1..F5-4 (Kimi round 5, LOW follow-ups — fixed)
+
+Round 5 SHIPped with four non-blocking LOWs plus a crash-window note.
+This round closes them.
+
+**F5-1 (fixed):** keep park-without-increment (re-attempt-once-then-block
+is better liveness; the re-attempt is the same plaintext/nonce,
+idempotent). Tests exercise `attempts: 9` and the real re-attempt-or-block
+path. R4-F1 above now states that the send-path drain re-attempts a
+cap-parked item and blocks only if that re-attempt fails.
+
+**F5-2 (fixed):** `updateGroupMessageDeliveryState('failed')` is a
+compare-and-set (`WHERE delivery_state NOT IN ('sent','delivered')`). A
+concurrent finalize that already wrote `sent` cannot be overwritten by
+`settleOrphanedFanout` / `markFailed`. Attachment `failed` updates use
+the same CAS.
+
+**F5-3 (fixed):** fan-out `markFailed` excludes the current parked item
+from `countDeliveryQueueForMessage` so a sole remaining (just-parked)
+item can still surface the group row as `failed`. The F5-2 CAS still
+allows that write while the row is `sending`.
+
+**F5-4 (fixed):** `collectFanoutPayloadsForRecipient` and
+`removeQueueItemsForRecipient` filter by parsed `payload.ownerPubky ===
+currentOwner`. A second owner's stale rows for the same recipient are
+neither deleted nor marked failed by this owner's reset/decline.
+
+**Crash window (fixed):** `resetEncryptedLink` runs queue drop +
+`abandonOwedLinkMessagesForPeer` in one `BEGIN IMMEDIATE` transaction
+(`removeQueueItemsAndAbandonOwedForPeer`), so a crash cannot leave
+`sending` DM rows with no queue item for the heal to re-enqueue under
+the new link.
+
+**Re-scan adjacency (hardening):** `deliverQueuedPayloadLocked` re-scans
+after `wireJsonForNativeSend` so all four encrypt paths are
+scan-adjacent-to-encrypt. A non-clear re-scan still defers.

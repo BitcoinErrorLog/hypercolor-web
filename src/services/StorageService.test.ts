@@ -8,6 +8,7 @@ import { setDbForTests } from "../db";
 import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
 import { runMigrations } from "../db/migrations";
 import { CHAT_MESSAGE_KIND } from "../types/link";
+import { GROUP_MESSAGE_KIND } from "../types/group";
 import { KeyStore } from "./KeyStore";
 import { StorageService } from "./StorageService";
 
@@ -401,7 +402,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
         id: "q-owed",
         messageId: EVENT,
         recipientPubky: PEER,
-        payload: '{"type":"link.chat.message"}',
+        payload: JSON.stringify({ type: "link.chat.message", ownerPubky: OWNER }),
         attempts: 1,
         nextRetryAt: 40,
         createdAt: 40,
@@ -413,7 +414,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(owed[0]?.sentAt).toBe(40);
     const queued = await StorageService.getDeliveryQueueItem("q-owed");
     expect(queued?.messageId).toBe(EVENT);
-    await StorageService.removeQueueItemsForRecipient(PEER);
+    await StorageService.removeQueueItemsForRecipient(PEER, OWNER);
     expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
     expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toHaveLength(1);
 
@@ -469,5 +470,208 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     const sent = peerRows.find((row) => row.eventId === SENT_EVENT);
     expect(abandoned?.deliveryState).toBe("failed");
     expect(sent?.deliveryState).toBe("sent");
+  });
+
+  it("does not overwrite a sent group row with failed (F5-2 CAS)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const channelId = `${OWNER}:chan-1`;
+    await StorageService.saveGroupMessage({
+      ownerPubky: OWNER,
+      channelId,
+      eventId: EVENT,
+      senderPubky: OWNER,
+      kind: GROUP_MESSAGE_KIND,
+      body: "hello",
+      rawJson: '{"k":1}',
+      sentAt: 40,
+      receivedAt: null,
+      deliveryState: "sending",
+      replyToEventId: null,
+      replyToAuthorPubky: null,
+      targetEventId: null,
+      targetAuthorPubky: null,
+      editedAt: null,
+      deleted: false,
+    });
+
+    await StorageService.updateGroupMessageDeliveryState(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT,
+      "sent",
+    );
+    await StorageService.updateGroupMessageDeliveryState(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT,
+      "failed",
+    );
+
+    const row = await StorageService.getGroupMessage(OWNER, channelId, OWNER, EVENT);
+    expect(row?.deliveryState).toBe("sent");
+  });
+
+  it("excludes the current item from the remaining-queue count (F5-3)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.enqueue({
+      id: "q-only",
+      messageId: EVENT,
+      recipientPubky: PEER,
+      payload: JSON.stringify({ type: "link.group.fanout", ownerPubky: OWNER }),
+      attempts: 9,
+      nextRetryAt: 40,
+      createdAt: 40,
+    });
+
+    expect(await StorageService.countDeliveryQueueForMessage(EVENT)).toBe(1);
+    expect(
+      await StorageService.countDeliveryQueueForMessage(EVENT, { excludeItemId: "q-only" }),
+    ).toBe(0);
+  });
+
+  it("removes only the current owner's queue items for a recipient (F5-4)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const otherOwner = OTHER;
+    await StorageService.enqueue({
+      id: "q-own",
+      messageId: EVENT,
+      recipientPubky: PEER,
+      payload: JSON.stringify({ type: "link.chat.message", ownerPubky: OWNER }),
+      attempts: 1,
+      nextRetryAt: 40,
+      createdAt: 40,
+    });
+    await StorageService.enqueue({
+      id: "q-other",
+      messageId: "00000000-0000-4000-8000-0000000000aa",
+      recipientPubky: PEER,
+      payload: JSON.stringify({ type: "link.chat.message", ownerPubky: otherOwner }),
+      attempts: 1,
+      nextRetryAt: 40,
+      createdAt: 40,
+    });
+
+    await StorageService.removeQueueItemsForRecipient(PEER, OWNER);
+
+    expect(await StorageService.getDeliveryQueueItem("q-own")).toBeNull();
+    expect(await StorageService.getDeliveryQueueItem("q-other")).not.toBeNull();
+  });
+
+  it("rolls queue drop and abandon in one transaction (F5 crash window)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.persistLinkSendIntent({
+      message: {
+        ownerPubky: OWNER,
+        eventId: EVENT,
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        direction: "sent",
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: '{"k":1}',
+        body: "owed",
+        sentAt: 40,
+        receivedAt: null,
+        deliveryState: "sending",
+      },
+      queueItem: {
+        id: "q-owed",
+        messageId: EVENT,
+        recipientPubky: PEER,
+        payload: JSON.stringify({ type: "link.chat.message", ownerPubky: OWNER }),
+        attempts: 1,
+        nextRetryAt: 40,
+        createdAt: 40,
+      },
+    });
+
+    const original = db.executeSync.bind(db);
+    let inTxn = false;
+    db.executeSync = (query: string, params: unknown[] = []) => {
+      const sql = query.trim();
+      if (
+        inTxn &&
+        /UPDATE\s+link_messages/i.test(sql) &&
+        /delivery_state = 'failed'/.test(sql)
+      ) {
+        throw new Error("injected abandon failure");
+      }
+      const result = original(query, params as never);
+      if (/^BEGIN\b/i.test(sql)) inTxn = true;
+      if (/^(COMMIT|ROLLBACK)\b/i.test(sql)) inTxn = false;
+      return result;
+    };
+
+    await expect(
+      StorageService.removeQueueItemsAndAbandonOwedForPeer(OWNER, PEER),
+    ).rejects.toThrow("injected abandon failure");
+
+    db.executeSync = original;
+    expect(await StorageService.getDeliveryQueueItem("q-owed")).not.toBeNull();
+    const owed = await StorageService.listOwedOutboundLinkMessages(OWNER);
+    expect(owed).toHaveLength(1);
+    expect(owed[0]?.eventId).toBe(EVENT);
+  });
+
+  it("drops the queue and abandons owed DMs in a single transaction (F5 crash window)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.persistLinkSendIntent({
+      message: {
+        ownerPubky: OWNER,
+        eventId: EVENT,
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        direction: "sent",
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: '{"k":1}',
+        body: "owed",
+        sentAt: 40,
+        receivedAt: null,
+        deliveryState: "sending",
+      },
+      queueItem: {
+        id: "q-owed",
+        messageId: EVENT,
+        recipientPubky: PEER,
+        payload: JSON.stringify({ type: "link.chat.message", ownerPubky: OWNER }),
+        attempts: 1,
+        nextRetryAt: 40,
+        createdAt: 40,
+      },
+    });
+
+    const statements: string[] = [];
+    const original = db.executeSync.bind(db);
+    db.executeSync = (query: string, params: unknown[] = []) => {
+      statements.push(query.trim().replace(/\s+/g, " "));
+      return original(query, params as never);
+    };
+
+    await StorageService.removeQueueItemsAndAbandonOwedForPeer(OWNER, PEER);
+
+    db.executeSync = original;
+    const begin = statements.findIndex((sql) => /^BEGIN IMMEDIATE/i.test(sql));
+    const commit = statements.findIndex((sql) => /^COMMIT\b/i.test(sql));
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(commit).toBeGreaterThan(begin);
+    const txn = statements.slice(begin, commit + 1);
+    expect(txn.some((sql) => /DELETE FROM delivery_queue/i.test(sql))).toBe(true);
+    expect(txn.some((sql) => /UPDATE link_messages/i.test(sql))).toBe(true);
+    expect(txn.filter((sql) => /^COMMIT\b/i.test(sql))).toHaveLength(1);
+    expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
+    expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toEqual([]);
   });
 });

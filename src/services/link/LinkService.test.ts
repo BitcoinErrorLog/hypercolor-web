@@ -62,6 +62,7 @@ vi.mock("@/services/StorageService", () => ({
     getLinkMessageByEventId: vi.fn(),
     clearPaymentPendingEvent: vi.fn(),
     removeQueueItemsForRecipient: vi.fn(),
+    removeQueueItemsAndAbandonOwedForPeer: vi.fn(),
     deleteLinkStreamItemsForPeer: vi.fn(),
     deleteLinkMessagesForPeer: vi.fn(),
     getGroupMessage: vi.fn(),
@@ -217,6 +218,9 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(StorageService.listPaymentRequestsWithPendingEvent).mockReset().mockResolvedValue([]);
     vi.mocked(StorageService.updateAttachmentDelivery).mockReset();
     vi.mocked(StorageService.countDeliveryQueueForMessage).mockReset().mockResolvedValue(0);
+    vi.mocked(StorageService.removeQueueItemsForRecipient).mockReset();
+    vi.mocked(StorageService.removeQueueItemsAndAbandonOwedForPeer).mockReset();
+    vi.mocked(StorageService.abandonOwedLinkMessagesForPeer).mockReset();
     vi.mocked(reconstructAttachmentWireJson).mockReset().mockImplementation(async (raw: string) => raw);
     await LinkService.adoptHarnessSession(handle() as never);
   });
@@ -545,7 +549,7 @@ describe("LinkService persist-then-send", () => {
     );
   });
 
-  it("keeps blocking a newer same-peer encrypt while a capped item is parked (R4-F1)", async () => {
+  it("re-attempts a cap-parked item at attempts 9 and blocks only if that retry fails (F5-1)", async () => {
     const owedEventId = "00000000-0000-4000-8000-000000000002";
     const owedJson = JSON.stringify({
       version: 1,
@@ -568,7 +572,7 @@ describe("LinkService persist-then-send", () => {
           eventId: owedEventId,
           rawJson: owedJson,
         }),
-        attempts: 10,
+        attempts: 9,
         nextRetryAt: NOW + 365 * 24 * 60 * 60 * 1000,
         createdAt: NOW - 1_000,
       },
@@ -577,14 +581,17 @@ describe("LinkService persist-then-send", () => {
       if (eventId === owedEventId) return { deliveryState: "failed" } as never;
       return { deliveryState: "sending" } as never;
     });
+    // Production isRetired: attempts maxes at 9, so the attempts>=10 arm
+    // is unreachable; the drain re-attempts the same ciphertext.
     vi.mocked(isRetired).mockImplementation((item) => item.attempts >= 10);
+    sendPrivate.mockRejectedValue({ code: "protocol", message: "hard fail" });
+    vi.mocked(RetryQueue.recordFailure).mockResolvedValue(true);
 
     const message = await LinkService.sendDm(PEER, "new");
 
-    // The parked capped item is still owed: it re-parks, and the new
-    // plaintext is never encrypted at the possibly-committed nonce.
-    expect(sendPrivate).not.toHaveBeenCalled();
-    expect(RetryQueue.park).toHaveBeenCalledWith("owed-q");
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+    expect(sendPrivate.mock.calls[0]?.[1]).toBe(owedJson);
+    expect(RetryQueue.recordFailure).toHaveBeenCalledWith("owed-q", 9);
     expect(message.deliveryState).toBe("failed");
   });
 
@@ -696,8 +703,9 @@ describe("LinkService persist-then-send", () => {
 
     await LinkService.resetEncryptedLink(PEER);
 
-    expect(StorageService.removeQueueItemsForRecipient).toHaveBeenCalledWith(PEER);
-    expect(StorageService.abandonOwedLinkMessagesForPeer).toHaveBeenCalledWith(OWNER, PEER);
+    expect(StorageService.removeQueueItemsAndAbandonOwedForPeer).toHaveBeenCalledWith(OWNER, PEER);
+    expect(StorageService.removeQueueItemsForRecipient).not.toHaveBeenCalled();
+    expect(StorageService.abandonOwedLinkMessagesForPeer).not.toHaveBeenCalled();
     expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
       OWNER,
       channelId,
@@ -705,6 +713,245 @@ describe("LinkService persist-then-send", () => {
       EVENT_ID,
       "failed",
     );
+  });
+
+  it("keeps a fully-delivered group row sent when reset settle races finalize (F5-2)", async () => {
+    const channelId = `${OWNER}:chan-1`;
+    let groupState: "sending" | "sent" | "delivered" | "failed" = "sending";
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([
+      {
+        id: "g-q-a",
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: JSON.stringify({
+          type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          kind: CHAT_MESSAGE_KIND,
+          eventId: EVENT_ID,
+          channelId,
+          rawJson: '{"k":1}',
+        }),
+        attempts: 1,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+    vi.mocked(StorageService.getGroupMessage).mockImplementation(
+      async () => ({ deliveryState: groupState }) as never,
+    );
+    // Recipient B's finalize deletes its item and writes `sent` after
+    // settle re-reads `sending` but before markFailed's CAS update.
+    vi.mocked(StorageService.countDeliveryQueueForMessage).mockImplementation(async () => {
+      groupState = "sent";
+      return 0;
+    });
+    vi.mocked(StorageService.updateGroupMessageDeliveryState).mockImplementation(
+      async (_o, _c, _s, _e, next) => {
+        if (next === "failed" && (groupState === "sent" || groupState === "delivered")) return;
+        groupState = next as typeof groupState;
+      },
+    );
+
+    await LinkService.resetEncryptedLink(PEER);
+
+    expect(groupState).toBe("sent");
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT_ID,
+      "failed",
+    );
+  });
+
+  it("marks a group row failed at the cap when the parked item is the only remaining (F5-3)", async () => {
+    const channelId = `${OWNER}:chan-1`;
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: EVENT_ID,
+      sent_at: NOW,
+      body: "group hello",
+    });
+    const item = {
+      id: QUEUE_ID,
+      messageId: EVENT_ID,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: EVENT_ID,
+        channelId,
+        rawJson,
+      }),
+      attempts: 9,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([item]);
+    vi.mocked(RetryQueue.recordFailure).mockResolvedValueOnce(true);
+    sendPrivate.mockRejectedValueOnce({ code: "protocol", message: "protocol error" });
+    vi.mocked(StorageService.getGroupMessage).mockResolvedValue({
+      deliveryState: "sending",
+    } as never);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([item]);
+    vi.mocked(StorageService.countDeliveryQueueForMessage).mockImplementation(
+      async (_id, options) => (options?.excludeItemId === QUEUE_ID ? 0 : 1),
+    );
+
+    await LinkService.drainRetries();
+
+    expect(StorageService.countDeliveryQueueForMessage).toHaveBeenCalledWith(EVENT_ID, {
+      excludeItemId: QUEUE_ID,
+    });
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT_ID,
+      "failed",
+    );
+  });
+
+  it("leaves a second owner's queue rows untouched on reset and decline (F5-4)", async () => {
+    const otherOwner = "b".repeat(52);
+    const channelId = `${OWNER}:chan-1`;
+    const otherEvent = "00000000-0000-4000-8000-0000000000aa";
+    const ownItem = {
+      id: "g-own",
+      messageId: EVENT_ID,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: EVENT_ID,
+        channelId,
+        rawJson: '{"k":1}',
+      }),
+      attempts: 1,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    const otherItem = {
+      id: "g-other",
+      messageId: otherEvent,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: otherOwner,
+        peerPubky: PEER,
+        senderPubky: otherOwner,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: otherEvent,
+        channelId: `${otherOwner}:chan-2`,
+        rawJson: '{"k":2}',
+      }),
+      attempts: 1,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([ownItem, otherItem]);
+    vi.mocked(StorageService.getGroupMessage).mockResolvedValue({
+      deliveryState: "sending",
+    } as never);
+    vi.mocked(StorageService.countDeliveryQueueForMessage).mockResolvedValue(0);
+
+    await LinkService.resetEncryptedLink(PEER);
+
+    expect(StorageService.removeQueueItemsAndAbandonOwedForPeer).toHaveBeenCalledWith(OWNER, PEER);
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT_ID,
+      "failed",
+    );
+    expect(StorageService.updateGroupMessageDeliveryState).not.toHaveBeenCalledWith(
+      otherOwner,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+
+    vi.mocked(StorageService.updateGroupMessageDeliveryState).mockClear();
+    await LinkService.declineMessageRequest(PEER);
+
+    expect(StorageService.removeQueueItemsForRecipient).toHaveBeenCalledWith(PEER, OWNER);
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
+      EVENT_ID,
+      "failed",
+    );
+    expect(StorageService.updateGroupMessageDeliveryState).not.toHaveBeenCalledWith(
+      otherOwner,
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("defers when an older owed item appears during attachment reconstruction (F5 re-scan)", async () => {
+    const olderEvent = "00000000-0000-4000-8000-00000000000e";
+    const currentEvent = "00000000-0000-4000-8000-00000000000f";
+    const olderItem = dmQueueItem({
+      id: "q-older",
+      eventId: olderEvent,
+      body: "older-heal",
+      createdAt: NOW - 5_000,
+      nextRetryAt: NOW,
+    });
+    const currentRaw = JSON.stringify({
+      kind: CHAT_ATTACHMENT_KIND,
+      event_id: currentEvent,
+    });
+    const currentItem = {
+      id: "q-current",
+      messageId: currentEvent,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_RETRY_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_ATTACHMENT_KIND,
+        eventId: currentEvent,
+        rawJson: currentRaw,
+        secretFingerprint: "fp-test",
+      }),
+      attempts: 1,
+      nextRetryAt: NOW,
+      createdAt: NOW - 1_000,
+    };
+    let queue = [currentItem];
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([currentItem]);
+    vi.mocked(StorageService.listDeliveryQueue).mockImplementation(async () => queue);
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      deliveryState: "failed",
+    } as never);
+    vi.mocked(reconstructAttachmentWireJson).mockImplementation(async (raw) => {
+      queue = [olderItem, currentItem];
+      return raw;
+    });
+    sendPrivate.mockRejectedValue({ code: "protocol", message: "hard fail" });
+
+    await LinkService.drainRetries();
+
+    expect(reconstructAttachmentWireJson).toHaveBeenCalled();
+    expect(RetryQueue.defer).toHaveBeenCalledWith("q-current", currentItem.attempts);
+    expect(sendPrivate.mock.calls.map((call) => call[1])).not.toContain(currentRaw);
   });
 
   it("fails an attachment retry closed when reconstruction is rejected", async () => {

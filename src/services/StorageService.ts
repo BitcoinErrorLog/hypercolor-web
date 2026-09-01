@@ -422,18 +422,39 @@ export const StorageService = {
    */
   async abandonOwedLinkMessagesForPeer(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
     const db = await getDb();
-    db.executeSync(
-      `UPDATE link_messages
-       SET delivery_state = 'failed'
-       WHERE owner_pubky = ? AND peer_pubky = ? AND direction = 'sent'
-         AND delivery_state IN ('sending', 'failed')`,
-      [ownerPubky, peerPubky],
-    );
+    abandonOwedLinkMessagesForPeerSync(db, ownerPubky, peerPubky);
   },
 
-  async removeQueueItemsForRecipient(recipientPubky: PubkyKey): Promise<void> {
+  /**
+   * Drop this owner's queue items for `recipientPubky` only. Payload JSON
+   * carries `ownerPubky` (no queue-table column — wire pin stays v13).
+   * A second owner's stale rows for the same recipient must survive.
+   */
+  async removeQueueItemsForRecipient(
+    recipientPubky: PubkyKey,
+    ownerPubky: PubkyKey,
+  ): Promise<void> {
     const db = await getDb();
-    db.executeSync('DELETE FROM delivery_queue WHERE recipient_pubky = ?', [recipientPubky]);
+    transact(db, () => {
+      deleteOwnedQueueItemsForRecipient(db, recipientPubky, ownerPubky);
+    });
+  },
+
+  /**
+   * Reset crash-window close: queue drop + abandon in one IMMEDIATE
+   * transaction so a death between the two cannot leave `sending` rows
+   * with no queue item for the lost-item heal to re-enqueue under a new
+   * link (R4-F4 / F5 hardening).
+   */
+  async removeQueueItemsAndAbandonOwedForPeer(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+  ): Promise<void> {
+    const db = await getDb();
+    transact(db, () => {
+      deleteOwnedQueueItemsForRecipient(db, peerPubky, ownerPubky);
+      abandonOwedLinkMessagesForPeerSync(db, ownerPubky, peerPubky);
+    });
   },
 
   async removeFromQueue(id: string): Promise<void> {
@@ -1216,6 +1237,16 @@ export const StorageService = {
     deliveryState: AttachmentRecord['deliveryState'],
   ): Promise<void> {
     const db = await getDb();
+    if (deliveryState === 'failed') {
+      db.executeSync(
+        `UPDATE attachments
+         SET delivery_state = ?, updated_at = ?
+         WHERE owner_pubky = ? AND sender_pubky = ? AND event_id = ?
+           AND delivery_state NOT IN ('sent', 'delivered')`,
+        [deliveryState, now(), ownerPubky, senderPubky, eventId],
+      );
+      return;
+    }
     db.executeSync(
       `UPDATE attachments
        SET delivery_state = ?, updated_at = ?
@@ -1731,6 +1762,19 @@ export const StorageService = {
     state: LinkDeliveryState,
   ): Promise<void> {
     const db = await getDb();
+    // F5-2: a concurrent finalize can flip the row to `sent` after the
+    // settle re-count hits 0. Never overwrite a confirmed delivery with
+    // `failed` (display-state race; no nonce impact).
+    if (state === 'failed') {
+      db.executeSync(
+        `UPDATE group_messages
+         SET delivery_state = ?, updated_at = ?
+         WHERE owner_pubky = ? AND channel_id = ? AND sender_pubky = ? AND event_id = ?
+           AND delivery_state NOT IN ('sent', 'delivered')`,
+        [state, now(), ownerPubky, channelId, senderPubky, eventId],
+      );
+      return;
+    }
     db.executeSync(
       `UPDATE group_messages
        SET delivery_state = ?, updated_at = ?
@@ -1812,11 +1856,20 @@ export const StorageService = {
     });
   },
 
-  async countDeliveryQueueForMessage(messageId: string): Promise<number> {
+  async countDeliveryQueueForMessage(
+    messageId: string,
+    options?: { excludeItemId?: string },
+  ): Promise<number> {
     const db = await getDb();
-    const result = db.executeSync('SELECT COUNT(*) AS n FROM delivery_queue WHERE message_id = ?', [
-      messageId,
-    ]);
+    const excludeItemId = options?.excludeItemId;
+    const result = excludeItemId
+      ? db.executeSync(
+          'SELECT COUNT(*) AS n FROM delivery_queue WHERE message_id = ? AND id != ?',
+          [messageId, excludeItemId],
+        )
+      : db.executeSync('SELECT COUNT(*) AS n FROM delivery_queue WHERE message_id = ?', [
+          messageId,
+        ]);
     return (result.rows?.[0]?.n as number) ?? 0;
   },
 
@@ -2433,6 +2486,35 @@ function queuePayloadBelongsToOwner(payload: string, ownerPubky: string): boolea
   } catch {
     return false;
   }
+}
+
+function deleteOwnedQueueItemsForRecipient(
+  db: SqlExecutor,
+  recipientPubky: PubkyKey,
+  ownerPubky: PubkyKey,
+): void {
+  const result = db.executeSync('SELECT id, payload FROM delivery_queue WHERE recipient_pubky = ?', [
+    recipientPubky,
+  ]);
+  for (const row of result.rows ?? []) {
+    if (queuePayloadBelongsToOwner(String(row.payload), ownerPubky)) {
+      db.executeSync('DELETE FROM delivery_queue WHERE id = ?', [row.id]);
+    }
+  }
+}
+
+function abandonOwedLinkMessagesForPeerSync(
+  db: SqlExecutor,
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+): void {
+  db.executeSync(
+    `UPDATE link_messages
+     SET delivery_state = 'failed'
+     WHERE owner_pubky = ? AND peer_pubky = ? AND direction = 'sent'
+       AND delivery_state IN ('sending', 'failed')`,
+    [ownerPubky, peerPubky],
+  );
 }
 
 function insertAttachment(db: SqlExecutor, record: AttachmentRecord): void {
