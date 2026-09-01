@@ -19,6 +19,8 @@ import {
   type GroupMember,
   type GroupMessage,
 } from "../../types/group";
+import { CHAT_ATTACHMENT_KIND } from "../../types/attachment";
+import { fingerprintStoredAttachmentSecret } from "../attachments/redaction";
 import { KeyStore } from "../KeyStore";
 import { StorageService } from "../StorageService";
 import { LinkService } from "../link/LinkService";
@@ -470,6 +472,10 @@ async function fanOutEnvelope(input: {
     input.extraRecipients ?? [],
   );
   const ts = Date.now();
+  const secretFingerprint =
+    input.kind === CHAT_ATTACHMENT_KIND
+      ? await fingerprintStoredAttachmentSecret(input.ownerPubky, input.senderPubky, input.eventId)
+      : undefined;
   const message: GroupMessage = {
     ownerPubky: input.ownerPubky,
     channelId: input.channelId,
@@ -501,6 +507,7 @@ async function fanOutEnvelope(input: {
       eventId: input.eventId,
       channelId: input.channelId,
       rawJson: input.rawJson,
+      ...(secretFingerprint ? { secretFingerprint } : {}),
     }),
     attempts: 0,
     nextRetryAt: ts,

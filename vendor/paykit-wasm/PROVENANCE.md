@@ -4,10 +4,10 @@ Vendored browser WASM binding for the Paykit Encrypted Link messaging
 surface and Payment Endpoints. Copied from the official checkout's already-built
 `paykit-wasm/pkg` — not rebuilt in this tree.
 
-This bump is **rc49** (`f978731`) on top of the rc48 pin. Relative to the
+This bump is **rc50** (`d4a73a5`) on top of the rc49 pin. Relative to the
 previous product pin `24ed3a0e85067d3416e1a7085ed8b7ff9f241267`
 (`0.1.0-rc44` on `feat/wasm-binding`), the public
-`fix/wasm-homeserver-write-abort` branch is ten commits:
+`fix/wasm-homeserver-write-abort` branch is eleven commits:
 
 1. `4c0b7a1` feat: export sb2Encrypt and sb2Sign from wasm
 2. `51f1e68` Export migrateHomeserverWithSecret on paykit-wasm
@@ -19,11 +19,14 @@ previous product pin `24ed3a0e85067d3416e1a7085ed8b7ff9f241267`
 8. `b04e05c` fix: drain wasm write bodies so fetch is not aborted
 9. `cae1a8f` fix: drop leftover pkarr stream after BrowserHttp
 10. `f978731` fix: bound wasm write-body drain so a stalled 2xx cannot hang
+11. `d4a73a5` fix: bound error-body drain and bump wasm to rc50
 
-`f978731` races `commit_issued_http_write`'s `response.bytes()` against a
-5s timeout (`RequestError::Timeout`) so a hostile/stalled homeserver
-cannot trickle a 2xx body forever. The write stays owed and retries.
-Native unit tests cover a never-completing body → typed error.
+`d4a73a5` applies the same `race_write_body_drain` bound to
+`check_http_status`'s error-body `text()` read (a hostile homeserver
+can hang the error path the same way F2 hung the 2xx path) and clears
+the wasm `setTimeout` on drop of `wasm_sleep`. Native unit tests cover
+a never-completing error body → typed timeout + canonical-reason
+fallback.
 
 ## Source
 
@@ -31,18 +34,18 @@ Native unit tests cover a never-completing body → typed error.
 | --- | --- |
 | Repository | `https://github.com/BitcoinErrorLog/paykit-rs-official` |
 | Branch | `fix/wasm-homeserver-write-abort` |
-| Commit | `f97873183491f671220ae8e72f407df0a10ef69a` |
+| Commit | `d4a73a5765e1f0b18ed451d78f98dab97c611a8c` |
 | Upstream | `https://github.com/pubky/paykit-rs` |
 | Upstream pin | `c8892f638951f033acbcd12804a31667a81ddc14` (tag anchor v0.1.0-rc43) |
 | `pubky-crypto` git dep | `https://github.com/BitcoinErrorLog/pubky-crypto.git` @ `01eb3e6575cf8c707ad0675962581e13aa4da0f0` |
 | Package path | `paykit-wasm/pkg` |
 | Package name | `paykit-wasm` |
-| Package version | `0.1.0-rc49` |
+| Package version | `0.1.0-rc50` |
 | License | MIT |
-| Previous pin | `cae1a8fb8bf9b05ca5e25a935e873db59da63f2a` (`0.1.0-rc48`) |
+| Previous pin | `f97873183491f671220ae8e72f407df0a10ef69a` (`0.1.0-rc49`) |
 
 The five artifacts below are byte-identical to `paykit-wasm/pkg` on that
-checkout (`git rev-parse HEAD` = `f97873183491f671220ae8e72f407df0a10ef69a`).
+checkout (`git rev-parse HEAD` = `d4a73a5765e1f0b18ed451d78f98dab97c611a8c`).
 SHA-256 values were computed with `shasum -a 256` against those files on
 disk after the copy — not invented and not copied from an older README.
 
@@ -66,21 +69,51 @@ Re-recorded on this machine with `rustc --version --verbose` and
 
 | File | SHA-256 |
 | --- | --- |
-| `paykit_wasm_bg.wasm` | `7f725d51e7617b57d55d65921c96f722804da26285cfc52d1cf858e4bf029354` |
-| `paykit_wasm.js` | `6d7a0570ecb1b3291da6ff42f709f84a625a1cca3ff62cd3b64f8a8aae076d92` |
-| `paykit_wasm.d.ts` | `65f3d7b3676692cede5fd777af3d9d87afb4d3508cc3fe34dd8f9f22bbee327c` |
-| `paykit_wasm_bg.wasm.d.ts` | `5d4ff6da1c60e4379e7adbbdc94767823f7a368157707eb8ed0e32ec1283e00d` |
-| `package.json` | `39fdb1a9c421fc04dddffc6ce2b77b750d28e1d12731f53e2082245e8af3ffaa` |
+| `paykit_wasm_bg.wasm` | `fe41d70bfb4a23ec7e21713998cf960318a84ab3845775f62211a0f0bfb3024d` |
+| `paykit_wasm.js` | `df0e5f7804ee62bd4b880c2f532635afe9e47c5cd06c766c95df4eec47db6392` |
+| `paykit_wasm.d.ts` | `bf0696f9d72fc02310a6a1815a99b41b1be768020f3a41199cc337ce54dc2398` |
+| `paykit_wasm_bg.wasm.d.ts` | `cebe23ebf38336009e38e3e7627d7df503b54fba24e18ae1abb33834c93941c0` |
+| `package.json` | `043f33bb2b4fdb2602b609e5138b68b506937953d0c1775ccc624eb27238764f` |
 
 Generated package size: ~1.8 MB (wasm ~1.8 MB). `wasm-opt` output is not
 guaranteed bit-identical across platforms; treat these checksums as a record
 of this build, and re-record when the pin or toolchain changes.
 
+## Independent rebuild verification
+
+Performed for `d4a73a5` on 2026-09-01, same machine as the source build:
+
+- Checkout at `d4a73a5` with a clean working tree (`git status --porcelain`
+  empty). The commit is the local HEAD of
+  `fix/wasm-homeserver-write-abort` (`git rev-parse HEAD` =
+  `d4a73a5765e1f0b18ed451d78f98dab97c611a8c`). A `git worktree add`
+  of that pin required `GIT_LFS_SKIP_SMUDGE=1` because the android
+  `.so` LFS object is not on the server; wasm sources do not need it.
+- Same-tree forced recompile: after `touch`ing `vendor/pubky/src/util.rs`
+  and `paykit-wasm/src/lib.rs`, `wasm-pack` rebuilt `pubky`,
+  `paykit-lib`, and `paykit-wasm`, and `wasm-opt` produced the same
+  `paykit_wasm_bg.wasm` SHA-256 recorded above (`fe41d70bf…`).
+  JS / `.d.ts` / `package.json` also matched.
+- Clean worktree at `/tmp/paykit-rc50-verify` with a separate
+  `CARGO_TARGET_DIR`: JS, both `.d.ts` files, and `package.json` were
+  byte-identical to the pin. `paykit_wasm_bg.wasm` was **not**
+  bit-identical (`3c828dd1fd0ec14ff25e80ada42d1db0417608e681a8efee420d8b7d4de8a36f`).
+  That is the documented `wasm-opt` non-determinism across compile
+  contexts (different target dir / cold LLVM), not a source drift.
+  `node paykit-wasm/scripts/smoke.mjs` on the clean rebuild: 17/17.
+- `node paykit-wasm/scripts/smoke.mjs` on the source `pkg`: 17/17.
+- `npm run check:wasm` against the vendored copy in this repo: passed.
+
+The vendored `.wasm` is the same-tree artifact whose hash is recorded
+above. The pin is trusted on that match plus the clean-checkout JS
+identity and both smokes — not on a claim that `wasm-opt` is stable
+across target directories.
+
 ## Re-vendor
 
 ```bash
 git clone https://github.com/BitcoinErrorLog/paykit-rs-official.git
-cd paykit-rs-official && git checkout f97873183491f671220ae8e72f407df0a10ef69a
+cd paykit-rs-official && git checkout d4a73a5765e1f0b18ed451d78f98dab97c611a8c
 # Prefer the already-built paykit-wasm/pkg at that HEAD.
 # Rebuild only if those artifacts are missing or their shasum -a 256
 # values do not match the files on disk:
