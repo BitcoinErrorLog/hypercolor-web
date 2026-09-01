@@ -25,12 +25,44 @@ function trace(label: string, message: string): void {
 
 type FailedRequest = { method: string; url: string; status: number | string };
 
+type LoadingFailed = {
+  method: string;
+  url: string;
+  errorText: string;
+  canceled: boolean;
+};
+
+function isHomeserverWrite(url: string, method: string): boolean {
+  const verb = method.toUpperCase();
+  if (verb !== "PUT" && verb !== "DELETE") return false;
+  const lower = url.toLowerCase();
+  return (
+    lower.includes("/pub/paykit") ||
+    lower.includes("paykit.app") ||
+    lower.includes("homeserver")
+  );
+}
+
+function isAborted(errorText: string): boolean {
+  return /ERR_ABORTED|net::ERR_ABORTED/i.test(errorText);
+}
+
+function assertNoAbortedMarkerPublish(events: LoadingFailed[], label: string): void {
+  const hits = events.filter((event) => isAborted(event.errorText) && isHomeserverWrite(event.url, event.method));
+  expect(hits, `${label} receiver-marker/homeserver write must not abort`).toEqual([]);
+}
+
 function attachDiagnostics(page: Page, label: string): FailedRequest[] {
   const failures: FailedRequest[] = [];
   page.on("console", (msg) => {
     if (msg.type() === "error") trace(label, `console-error ${msg.text()}`);
   });
-  page.on("pageerror", (error) => trace(label, `pageerror ${error.message}`));
+  page.on("pageerror", (error) => {
+    trace(label, `pageerror ${error.message}`);
+    if (error.stack) trace(label, `pageerror-stack ${error.stack}`);
+    const extra = error as Error & { cause?: unknown };
+    if (extra.cause) trace(label, `pageerror-cause ${String(extra.cause)}`);
+  });
   page.on("response", (response) => {
     const status = response.status();
     if (status >= 200 && status < 300) return;
@@ -55,10 +87,11 @@ function attachDiagnostics(page: Page, label: string): FailedRequest[] {
  * Attach CDP so a failing request can be traced back to the code that issued
  * it. Playwright's own events do not carry the initiator stack.
  */
-async function attachInitiatorTrace(page: Page, label: string): Promise<void> {
+async function attachInitiatorTrace(page: Page, label: string): Promise<LoadingFailed[]> {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.enable");
   const requests = new Map<string, { url: string; method: string; initiator: string }>();
+  const failed: LoadingFailed[] = [];
   cdp.on("Network.requestWillBeSent", (event) => {
     const frames = event.initiator?.stack?.callFrames ?? [];
     const top = frames
@@ -83,15 +116,23 @@ async function attachInitiatorTrace(page: Page, label: string): Promise<void> {
   // points at the transport.
   cdp.on("Network.loadingFailed", (event) => {
     const request = requests.get(event.requestId);
+    const entry: LoadingFailed = {
+      method: request?.method ?? "?",
+      url: request?.url ?? event.requestId,
+      errorText: event.errorText,
+      canceled: event.canceled,
+    };
+    failed.push(entry);
     trace(
       label,
-      `LOADINGFAILED ${request?.method ?? "?"} ${request?.url ?? "?"} ` +
+      `LOADINGFAILED ${entry.method} ${entry.url} ` +
         `errorText=${event.errorText} canceled=${String(event.canceled)} ` +
         `blockedReason=${event.blockedReason ?? "none"} type=${event.type} ` +
         `corsError=${event.corsErrorStatus?.corsError ?? "none"} ` +
         `initiator=${request?.initiator ?? "unknown"}`,
     );
   });
+  return failed;
 }
 
 /**
@@ -123,6 +164,16 @@ async function completeRingOnboarding(
   const connectUrl = await visibleRingUrl(page, "pubkyring");
   trace(label, `approving paykit-connect after ${elapsed(start)}ms`);
   await identity.approvePaykitConnect(connectUrl);
+  await Promise.race([
+    page.getByText("Continue as").waitFor({ state: "visible", timeout: 20_000 }),
+    page.locator("p.text-red-400").first().waitFor({ state: "visible", timeout: 20_000 }),
+  ]).catch(() => undefined);
+  const postApproveError = await page.locator("p.text-red-400").first().textContent().catch(() => null);
+  const adoptCount = await page.getByText("Continue as").count();
+  trace(
+    label,
+    `post-approve adopt=${adoptCount} error=${postApproveError ?? "(none)"} path=${new URL(page.url()).pathname}`,
+  );
 
   // Ring answered: the app offers to continue as the approved identity.
   await expect(page.getByText(`Continue as`)).toBeVisible({ timeout: 90_000 });
@@ -304,8 +355,8 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
     const pageB = await (await browserB.newContext()).newPage();
     const failuresA = attachDiagnostics(pageA, "A");
     const failuresB = attachDiagnostics(pageB, "B");
-    await attachInitiatorTrace(pageA, "A");
-    await attachInitiatorTrace(pageB, "B");
+    const loadingFailedA = await attachInitiatorTrace(pageA, "A");
+    const loadingFailedB = await attachInitiatorTrace(pageB, "B");
     summarize = () => {
       for (const [label, failures] of [
         ["A", failuresA],
@@ -325,10 +376,12 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
 
     // Leg 2a: Ring -> Enable -> Chats for both identities, through the real UI.
     await completeRingOnboarding(pageA, identityA, "A");
+    assertNoAbortedMarkerPublish(loadingFailedA, "A");
     await openChatsFromEnable(pageA, "A");
     await pageA.screenshot({ path: "/tmp/hc-gate/leg2-a-chats.png", fullPage: true });
 
     await completeRingOnboarding(pageB, identityB, "B");
+    assertNoAbortedMarkerPublish(loadingFailedB, "B");
     await openChatsFromEnable(pageB, "B");
     await pageB.screenshot({ path: "/tmp/hc-gate/leg2-b-chats.png", fullPage: true });
 
@@ -346,6 +399,8 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
     await sendMessage(pageB, "gate-hello-from-b", "B");
     await expectMessageVisible(pageA, "gate-hello-from-b", "A");
     await pageA.screenshot({ path: "/tmp/hc-gate/leg2-a-received.png", fullPage: true });
+    assertNoAbortedMarkerPublish(loadingFailedA, "A-final");
+    assertNoAbortedMarkerPublish(loadingFailedB, "B-final");
   } finally {
     summarize();
     trace("setup", `A=${identityA.pubky} B=${identityB.pubky}`);
