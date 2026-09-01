@@ -56,6 +56,7 @@ vi.mock("@/services/StorageService", () => ({
     listDeliveryQueue: vi.fn(async () => []),
     getDeliveryQueueItem: vi.fn(async () => null),
     listOwedOutboundLinkMessages: vi.fn(async () => []),
+    abandonOwedLinkMessagesForPeer: vi.fn(),
     enqueue: vi.fn(),
     hasQueueItemForMessage: vi.fn(async () => false),
     getLinkMessageByEventId: vi.fn(),
@@ -472,7 +473,14 @@ describe("LinkService persist-then-send", () => {
       nextRetryAt: NOW,
       createdAt: NOW - 1_000,
     };
-    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([owedItem]);
+    // Stateful queue mock: a successful delivery removes its row (as the
+    // real finalize/recordSuccess does), so the pre-encrypt re-scan sees
+    // the settled state instead of re-delivering.
+    let queue = [owedItem];
+    vi.mocked(StorageService.listDeliveryQueue).mockImplementation(async () => queue);
+    vi.mocked(RetryQueue.recordSuccess).mockImplementation(async (id: string) => {
+      queue = queue.filter((row) => row.id !== id);
+    });
     vi.mocked(StorageService.getLinkMessage).mockImplementation(async (_o, _s, _k, eventId) => {
       if (eventId === owedEventId) {
         return { deliveryState: "failed" } as never;
@@ -532,6 +540,168 @@ describe("LinkService persist-then-send", () => {
       OWNER,
       OWNER,
       CHAT_MESSAGE_KIND,
+      EVENT_ID,
+      "failed",
+    );
+  });
+
+  it("keeps blocking a newer same-peer encrypt while a capped item is parked (R4-F1)", async () => {
+    const owedEventId = "00000000-0000-4000-8000-000000000002";
+    const owedJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: owedEventId,
+      sent_at: NOW - 1,
+      body: "old",
+    });
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([
+      {
+        id: "owed-q",
+        messageId: owedEventId,
+        recipientPubky: PEER,
+        payload: JSON.stringify({
+          type: LINK_RETRY_PAYLOAD_TYPE,
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          kind: CHAT_MESSAGE_KIND,
+          eventId: owedEventId,
+          rawJson: owedJson,
+        }),
+        attempts: 10,
+        nextRetryAt: NOW + 365 * 24 * 60 * 60 * 1000,
+        createdAt: NOW - 1_000,
+      },
+    ]);
+    vi.mocked(StorageService.getLinkMessage).mockImplementation(async (_o, _s, _k, eventId) => {
+      if (eventId === owedEventId) return { deliveryState: "failed" } as never;
+      return { deliveryState: "sending" } as never;
+    });
+    vi.mocked(isRetired).mockImplementation((item) => item.attempts >= 10);
+
+    const message = await LinkService.sendDm(PEER, "new");
+
+    // The parked capped item is still owed: it re-parks, and the new
+    // plaintext is never encrypted at the possibly-committed nonce.
+    expect(sendPrivate).not.toHaveBeenCalled();
+    expect(RetryQueue.park).toHaveBeenCalledWith("owed-q");
+    expect(message.deliveryState).toBe("failed");
+  });
+
+  it("does not heal a terminally failed DM even if its queue item is gone (R4-F4)", async () => {
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        eventId: EVENT_ID,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: '{"k":1}',
+        sentAt: NOW - 5_000,
+        deliveryState: "failed",
+      },
+    ] as never);
+    vi.mocked(StorageService.hasQueueItemForMessage).mockResolvedValue(false);
+
+    await LinkService.recoverPendingSends();
+
+    expect(StorageService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect a parked capped item with attempts reset via the heal (R4-F1)", async () => {
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        eventId: EVENT_ID,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: '{"k":1}',
+        sentAt: NOW - 5_000,
+        deliveryState: "failed",
+      },
+    ] as never);
+    // The parked item still occupies the queue for this message.
+    vi.mocked(StorageService.hasQueueItemForMessage).mockResolvedValue(true);
+
+    await LinkService.recoverPendingSends();
+
+    expect(StorageService.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("defers instead of encrypting when an older owed item appears between entry scan and encrypt (R4-F2)", async () => {
+    const olderEvent = "00000000-0000-4000-8000-00000000000e";
+    const currentEvent = "00000000-0000-4000-8000-00000000000f";
+    const olderItem = dmQueueItem({
+      id: "q-older",
+      eventId: olderEvent,
+      body: "older-heal",
+      createdAt: NOW - 5_000,
+      nextRetryAt: NOW,
+    });
+    const currentItem = dmQueueItem({
+      id: "q-current",
+      eventId: currentEvent,
+      body: "current",
+      createdAt: NOW - 1_000,
+      nextRetryAt: NOW,
+    });
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([currentItem]);
+    // Entry scan is clear; the older owed item (a simulated heal enqueue)
+    // becomes visible only on the pre-encrypt re-scan.
+    vi.mocked(StorageService.listDeliveryQueue)
+      .mockResolvedValueOnce([currentItem])
+      .mockResolvedValue([olderItem, currentItem]);
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      deliveryState: "failed",
+    } as never);
+    sendPrivate.mockRejectedValue({ code: "protocol", message: "hard fail" });
+
+    await LinkService.drainRetries();
+
+    // Only the older item was attempted; the current item deferred instead
+    // of encrypting ahead of the older owed write.
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+    expect(sendPrivate.mock.calls[0]?.[1]).toBe(olderItem.rawJson);
+    expect(RetryQueue.defer).toHaveBeenCalledWith("q-current", currentItem.attempts);
+    expect(finalizeSend).not.toHaveBeenCalled();
+  });
+
+  it("resetEncryptedLink abandons owed DM rows and settles orphaned fan-out (R4-F4)", async () => {
+    const channelId = `${OWNER}:chan-1`;
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([
+      {
+        id: "g-q",
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: JSON.stringify({
+          type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          kind: CHAT_MESSAGE_KIND,
+          eventId: EVENT_ID,
+          channelId,
+          rawJson: '{"k":1}',
+        }),
+        attempts: 3,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+    vi.mocked(StorageService.getGroupMessage).mockResolvedValue({
+      deliveryState: "sending",
+    } as never);
+    vi.mocked(StorageService.countDeliveryQueueForMessage).mockResolvedValue(0);
+
+    await LinkService.resetEncryptedLink(PEER);
+
+    expect(StorageService.removeQueueItemsForRecipient).toHaveBeenCalledWith(PEER);
+    expect(StorageService.abandonOwedLinkMessagesForPeer).toHaveBeenCalledWith(OWNER, PEER);
+    expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
+      OWNER,
+      channelId,
+      OWNER,
       EVENT_ID,
       "failed",
     );
@@ -684,7 +854,14 @@ describe("LinkService persist-then-send", () => {
       nextRetryAt: NOW,
     });
     vi.mocked(RetryQueue.getDue).mockResolvedValue([itemB]);
-    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([itemA, itemB]);
+    // Stateful queue mock: a successful delivery removes its row (as the
+    // real finalize/recordSuccess does), so the pre-encrypt re-scan sees
+    // the settled state instead of re-delivering.
+    let queue = [itemA, itemB];
+    vi.mocked(StorageService.listDeliveryQueue).mockImplementation(async () => queue);
+    vi.mocked(RetryQueue.recordSuccess).mockImplementation(async (id: string) => {
+      queue = queue.filter((row) => row.id !== id);
+    });
     vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
       deliveryState: "failed",
     } as never);
@@ -764,7 +941,14 @@ describe("LinkService persist-then-send", () => {
       createdAt: NOW - 1_000,
     };
     vi.mocked(RetryQueue.getDue).mockResolvedValue([itemB]);
-    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([itemA, itemB]);
+    // Stateful queue mock: a successful delivery removes its row (as the
+    // real finalize/recordSuccess does), so the pre-encrypt re-scan sees
+    // the settled state instead of re-delivering.
+    let queue = [itemA, itemB];
+    vi.mocked(StorageService.listDeliveryQueue).mockImplementation(async () => queue);
+    vi.mocked(RetryQueue.recordSuccess).mockImplementation(async (id: string) => {
+      queue = queue.filter((row) => row.id !== id);
+    });
     vi.mocked(StorageService.getGroupMessage).mockResolvedValue({
       deliveryState: "sending",
     } as never);
@@ -825,7 +1009,7 @@ describe("LinkService persist-then-send", () => {
         kind: CHAT_MESSAGE_KIND,
         rawJson,
         sentAt,
-        deliveryState: "failed",
+        deliveryState: "sending",
       },
     ] as never);
     vi.mocked(StorageService.hasQueueItemForMessage).mockResolvedValue(false);

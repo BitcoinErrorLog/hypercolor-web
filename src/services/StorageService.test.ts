@@ -395,7 +395,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
         body: "owed",
         sentAt: 40,
         receivedAt: null,
-        deliveryState: "failed",
+        deliveryState: "sending",
       },
       queueItem: {
         id: "q-owed",
@@ -416,5 +416,58 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     await StorageService.removeQueueItemsForRecipient(PEER);
     expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
     expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toHaveLength(1);
+
+    await StorageService.updateLinkMessageDeliveryState(
+      OWNER,
+      OWNER,
+      CHAT_MESSAGE_KIND,
+      EVENT,
+      "failed",
+    );
+    expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toEqual([]);
+  });
+
+  it("abandons a peer's owed DM rows so the heal skips them (R4-F4)", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    const OTHER_EVENT = "00000000-0000-4000-8000-000000000002";
+    const SENT_EVENT = "00000000-0000-4000-8000-000000000003";
+    const dmRow = (eventId: string, peer: string, deliveryState: "sending" | "failed" | "sent") => ({
+      ownerPubky: OWNER,
+      eventId,
+      conversationId: `dm:${peer}`,
+      peerPubky: peer,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: '{"k":1}',
+      body: "x",
+      sentAt: 40,
+      receivedAt: null,
+      deliveryState,
+    });
+    await StorageService.saveLinkMessage(dmRow(EVENT, PEER, "sending"));
+    await StorageService.saveLinkMessage(dmRow(SENT_EVENT, PEER, "sent"));
+    await StorageService.saveLinkMessage(dmRow(OTHER_EVENT, OTHER, "sending"));
+
+    await StorageService.abandonOwedLinkMessagesForPeer(OWNER, PEER);
+
+    // Heal only lists `sending`. The reset peer is now `failed`; the
+    // other peer's in-flight row is still owed.
+    const owed = await StorageService.listOwedOutboundLinkMessages(OWNER);
+    expect(owed).toHaveLength(1);
+    expect(owed[0]?.eventId).toBe(OTHER_EVENT);
+
+    // The abandoned row is terminally failed; the sent row is untouched.
+    const peerRows = await StorageService.getLinkMessagesForConversation(
+      OWNER,
+      `dm:${PEER}`,
+    );
+    const abandoned = peerRows.find((row) => row.eventId === EVENT);
+    const sent = peerRows.find((row) => row.eventId === SENT_EVENT);
+    expect(abandoned?.deliveryState).toBe("failed");
+    expect(sent?.deliveryState).toBe("sent");
   });
 });

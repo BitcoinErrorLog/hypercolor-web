@@ -242,3 +242,105 @@ existing user-facing escapes; `resetEncryptedLink` is the
 contained recovery primitive for a later settings action. A
 full in-app "Reset encrypted link" confirmation flow (copy,
 message-row fate, re-handshake UX) is deferred as product work.
+
+## R4-F1 (Kimi round 4, blocking): park at the attempt cap, never remove
+
+`RetryQueue.recordFailure` used to DELETE the queue row at the 10th
+failure, contradicting the park invariant above: from the 10th failure
+until the next `recoverPendingSends` (visibility/startup only — the 30s
+interval drain does not heal), the still-owed row was invisible to every
+drain including the send-path older-owed scan, so a new send could
+encrypt at a possibly-ambiguously-committed nonce.
+
+**Decision:** the attempt cap parks instead of removing
+(`deferQueueItem(id, now + RETIRED_ITEM_PARK_MS)`, the same ~1 year
+horizon `RetryQueue.park` uses). `getDue` keeps skipping the parked item;
+`listDeliveryQueue` (the send-path drain) keeps seeing it and keeps
+blocking newer same-peer encrypts; the `true` return still triggers
+`markFailed` so the row surfaces as failed. Because the queue row
+survives, `hasQueueItemForMessage` stays true and the lost-item heal can
+no longer resurrect a capped item with `attempts: 0` (the R4-F3
+cap-defeating loop). Group fan-out items were dropped by the same removal
+path, so parking preserves them too (the fan-out half of R4-F5).
+
+## R4-F2 (Kimi round 4): pre-encrypt re-scan + heal enqueues under the peer mutex
+
+`deliverQueuedPayloadLocked` ran the older-owed scan at entry, but the
+encrypt happens after `ensureLinkLocked` — a network-scale handshake
+window — and heal enqueues ran under `withDrainPass` only, so an older
+owed item could be inserted mid-delivery and encrypt out of order.
+
+**Decision:** two layers.
+
+1. Every encrypt path re-runs `drainOwedSamePeerWritesLocked` immediately
+   before the encrypt. `deliverQueuedPayloadLocked` re-scans after
+   `ensureLinkLocked` returns `ready` and self-defers when the re-scan is
+   not clear. `attemptPersistedSend`, `sendPersistedLinkJson`, and
+   `dispatchPreparedDm` — whose scan→encrypt windows are only
+   microtask/attachment-reconstruction scale because `ensureLinkLocked`
+   runs before their entry scan — re-scan right before
+   `sendPrivateMessageJson` anyway: the re-scan is one SELECT and does
+   not re-acquire `withQueue(peer)`, so there is no deadlock and no
+   reason to waive the window.
+2. The two heal enqueues (`reconcilePaymentPendingSends`,
+   `reconcileLostOwedDeliveries`) run their `hasQueueItemForMessage`
+   check + `StorageService.enqueue` inside `withQueue(peer)`, so a heal
+   insertion is ordered against in-flight deliveries for that peer.
+   Heals are the only writers of backdated (`createdAt = sentAt`) queue
+   items; live send intents always use `Date.now()` and can never be
+   older than an in-flight item.
+
+## R4-F4 (Kimi round 4): reset means "stop trying"
+
+**Decision:** `resetEncryptedLink` marks the peer's owed outbound DM rows
+terminally `failed` instead of letting the heal re-send owed history
+under the new link. No schema change.
+
+`pending_cleanup` cannot express this: it is the KeyStore/cache cleanup
+journal (`target_kind` `keystore` | `cache`), not a message-state table.
+The contract's `LinkDeliveryState` has no `abandoned` value, and adding
+one would edit pinned `src/types/link.ts`. Mobile's v14/v15 are
+handshake-budget columns (`pending_advances` / `link_handshake_budgets`)
+— unrelated, and web is pinned at v13 (`6185a6a`), so a web-only v14
+`abandoned_at` would also break `check:wire` and collide with mobile's
+already-shipped v14.
+
+The existing `failed` state is enough. After R4-F1, a cap-failed row
+keeps its parked queue item (`hasQueueItemForMessage` stays true), so
+healing `failed` was only the R4-F3 resurrection loop plus the reset
+re-send. `listOwedOutboundLinkMessages` therefore selects only
+`sending`. `abandonOwedLinkMessagesForPeer` flips the reset peer's
+in-flight rows to `failed`. Crash-loss of a parked failed queue item
+stays in the waived tail-loss class.
+
+This was chosen over documenting re-send-on-heal because silently
+delivering months-old failed messages after a "reset" is the surprising
+behavior; terminal failure is inspectable and inert. No UI is built for
+this; the rows simply render as failed.
+
+Group fan-out: `removeQueueItemsForRecipient` deletes the peer's fan-out
+queue items, which previously orphaned `group_messages` rows in `sending`
+forever (there is no group heal). Reset (and decline, which shares the
+queue-drop) now snapshots the peer's fan-out payloads before the delete
+and marks each affected group message failed when no other recipient's
+queue item remains owed (`markFailed` re-counts, so a message still owed
+to another recipient is left for that recipient's delivery to settle).
+
+## R4-F5 (Kimi round 4): heal scope note
+
+The lost-item heal (`reconcileLostOwedDeliveries` over
+`listOwedOutboundLinkMessages`) covers outbound DM rows only. Group
+fan-out deliveries rely on park persistence: with R4-F1 parking at the
+attempt cap (and the existing age-based park), a fan-out queue item is
+never removed while its write is still owed, so no fan-out heal is
+required. If a fan-out queue item were ever lost by a new code path, its
+`group_messages` row would sit in `sending` with no re-enqueue — any
+future queue-item deleter must settle fan-out rows the way reset does.
+
+## R4-F6 (Kimi round 4): `buildPreparedSendIntent` is async
+
+Confirmed. The only in-repo caller is the unit test, which `await`s it.
+Payment reconcile does not call it — it builds the queue payload inline
+from the persisted `link_messages` row. Full-repo `tsc --noEmit` is the
+gate that any out-of-bundle payment caller would fail if it dropped the
+`await`.

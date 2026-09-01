@@ -399,13 +399,36 @@ export const StorageService = {
 
   async listOwedOutboundLinkMessages(ownerPubky: PubkyKey): Promise<LinkMessage[]> {
     const db = await getDb();
+    // Heal covers in-flight (`sending`) rows whose queue item was lost.
+    // `failed` is terminal for heal (R4-F1/F3/F4): after the attempt-cap
+    // park the failed row still has a queue item, so the send-path drain
+    // keeps blocking; reset marks owed rows `failed` and drops the queue,
+    // and the heal must not resurrect them under a new link. No extra
+    // column: `failed` is already the contract's terminal delivery state.
     const result = db.executeSync(
       `SELECT * FROM link_messages
-       WHERE owner_pubky = ? AND direction = 'sent' AND delivery_state IN ('sending', 'failed')
+       WHERE owner_pubky = ? AND direction = 'sent' AND delivery_state = 'sending'
        ORDER BY sent_at ASC`,
       [ownerPubky],
     );
     return (result.rows ?? []).map(rowToLinkMessage);
+  },
+
+  /**
+   * Reset-means-stop-trying (R4-F4): flip a peer's in-flight outbound DM
+   * rows to the contract's terminal `failed`. Combined with
+   * `listOwedOutboundLinkMessages` selecting only `sending`, the lost-item
+   * heal never re-enqueues them under a new link. No schema change.
+   */
+  async abandonOwedLinkMessagesForPeer(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE link_messages
+       SET delivery_state = 'failed'
+       WHERE owner_pubky = ? AND peer_pubky = ? AND direction = 'sent'
+         AND delivery_state IN ('sending', 'failed')`,
+      [ownerPubky, peerPubky],
+    );
   },
 
   async removeQueueItemsForRecipient(recipientPubky: PubkyKey): Promise<void> {

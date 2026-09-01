@@ -50,11 +50,27 @@ describe("RetryQueue", () => {
     expect(after!.nextRetryAt).toBeGreaterThan(Date.now());
   });
 
-  it("caps attempts and removes the item so it is not auto-retried", async () => {
+  it("parks the item at the attempt cap instead of removing it (R4-F1)", async () => {
     await RetryQueue.enqueue(queueInput("q-cap"));
     const dropped = await RetryQueue.recordFailure("q-cap", MAX_ATTEMPTS - 1);
     expect(dropped).toBe(true);
-    expect(await StorageService.listDeliveryQueue()).toEqual([]);
+
+    // The row is still owed: it must stay visible to the send-path drain
+    // (listDeliveryQueue) so a newer same-peer encrypt stays blocked …
+    const remaining = await StorageService.listDeliveryQueue();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe("q-cap");
+    expect(remaining[0]?.nextRetryAt).toBeGreaterThan(
+      Date.now() + RETIRED_ITEM_PARK_MS - 5_000,
+    );
+
+    // … but parked out of the interval drain.
+    const due = await RetryQueue.getDue();
+    expect(due.find((item) => item.id === "q-cap")).toBeUndefined();
+
+    // The heal guard still sees a queue item for the message, so the
+    // lost-item heal cannot resurrect the capped item with attempts reset.
+    expect(await StorageService.hasQueueItemForMessage("evt-1")).toBe(true);
   });
 
   it("does not increment on defer", async () => {

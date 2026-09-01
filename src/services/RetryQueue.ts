@@ -21,6 +21,13 @@ import type { DeliveryQueueItem } from "../types";
  * Retirement (no further auto-retry; caller marks the row failed):
  *   - 10 attempts
  *   - 24 hours since `createdAt`
+ *
+ * Retirement PARKS the item (R4-F1): the row stays in `delivery_queue` so
+ * the send-path drain keeps seeing an owed write and keeps blocking newer
+ * same-peer encrypts. Removing it would empty the queue for a still-owed
+ * row and let a later send encrypt at a possibly-ambiguously-committed
+ * nonce. Parking also keeps `hasQueueItemForMessage` true, so the lost-item
+ * heal cannot resurrect a capped item with `attempts: 0`.
  */
 
 export const MAX_ATTEMPTS = 10;
@@ -58,7 +65,7 @@ export const RetryQueue = {
 
   async recordFailure(id: string, currentAttempts: number): Promise<boolean> {
     if (currentAttempts + 1 >= MAX_ATTEMPTS) {
-      await StorageService.removeFromQueue(id);
+      await StorageService.deferQueueItem(id, Date.now() + RETIRED_ITEM_PARK_MS);
       return true;
     }
     await StorageService.incrementAttempt(id, nextRetryMs(currentAttempts + 1));

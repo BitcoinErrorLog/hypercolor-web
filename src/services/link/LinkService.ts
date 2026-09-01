@@ -393,6 +393,13 @@ export const LinkService = {
           input.eventId,
           secretFingerprint,
         );
+        // R4-F2: re-scan just before the encrypt. The window since the entry
+        // scan is only attachment reconstruction, but the re-scan is one
+        // SELECT and does not re-acquire withQueue, so take it.
+        const recheck = await drainOwedSamePeerWritesLocked(input.peerPubky, {
+          beforeItem: queued,
+        });
+        if (recheck !== "clear") return "queued";
         const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
         await StorageService.finalizeLinkSend({
           ownerPubky,
@@ -446,6 +453,12 @@ export const LinkService = {
           input.eventId,
           secretFingerprint,
         );
+        // R4-F2: re-scan just before the encrypt (same rationale as
+        // attemptPersistedSend; fan-out shares the peer's nonce sequence).
+        const recheck = await drainOwedSamePeerWritesLocked(input.peerPubky, {
+          beforeItem: queued,
+        });
+        if (recheck !== "clear") return "queued";
         const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
         await StorageService.finalizeGroupFanoutSend({
           ownerPubky,
@@ -572,7 +585,9 @@ export const LinkService = {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
       if (stored) await wipeLinkState(stored);
+      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky);
       await StorageService.removeQueueItemsForRecipient(peerPubky);
+      await settleOrphanedFanout(orphanedFanout);
       await StorageService.deleteLinkStreamItemsForPeer(ownerPubky, peerPubky);
       await StorageService.deleteLinkMessagesForPeer(ownerPubky, peerPubky);
       const existing = await StorageService.getMessageRequest(ownerPubky, peerPubky);
@@ -592,13 +607,23 @@ export const LinkService = {
    * conversation history. Drops parked/owed queue items for that peer so a
    * permanently failing link is not bricked forever. The next send/ensure
    * starts a new handshake (new nonce sequence).
+   *
+   * Reset means "stop trying" (R4-F4): the peer's owed outbound DM rows are
+   * marked terminally `failed` so the lost-item heal (which only re-enqueues
+   * `sending` rows) does not re-send owed history under the new link. Group
+   * fan-out states for this recipient are settled the same way: with the
+   * queue items gone, a group row whose last owed recipient was this peer is
+   * marked failed instead of sitting in `sending` forever.
    */
   async resetEncryptedLink(peerPubky: PubkyKey): Promise<void> {
     return withQueue(peerPubky, async () => {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
       if (stored) await wipeLinkState(stored);
+      const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky);
       await StorageService.removeQueueItemsForRecipient(peerPubky);
+      await StorageService.abandonOwedLinkMessagesForPeer(ownerPubky, peerPubky);
+      await settleOrphanedFanout(orphanedFanout);
     });
   },
 };
@@ -1705,6 +1730,16 @@ async function deliverQueuedPayloadLocked(
     return "deferred";
   }
 
+  // R4-F2: the entry scan ran before `ensureLinkLocked` (a network-scale
+  // handshake window). An older owed item can be enqueued in between (heal,
+  // payment reconcile), so re-scan immediately before the encrypt. Not clear
+  // means self-defer — never encrypt ahead of an older owed same-peer write.
+  const recheck = await drainOwedSamePeerWritesLocked(payload.peerPubky, { beforeItem: item });
+  if (recheck !== "clear") {
+    await RetryQueue.defer(item.id, item.attempts);
+    return "deferred";
+  }
+
   try {
     const handle = requireEstablishedHandle(payload.ownerPubky, payload.peerPubky);
     const wireJson = await wireJsonForNativeSend(
@@ -1821,6 +1856,51 @@ async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
       payload.eventId,
       "failed",
     );
+  }
+}
+
+/**
+ * Snapshot the group fan-out payloads queued for `peerPubky` before their
+ * queue rows are deleted (`removeQueueItemsForRecipient`). Deleting them
+ * without settling would orphan `group_messages` rows in `sending` forever:
+ * the lost-item heal covers DM rows only (R4-F4/R4-F5).
+ */
+async function collectFanoutPayloadsForRecipient(
+  peerPubky: PubkyKey,
+): Promise<GroupFanoutRetryPayload[]> {
+  const items = await StorageService.listDeliveryQueue();
+  const out: GroupFanoutRetryPayload[] = [];
+  for (const item of items) {
+    if (item.recipientPubky !== peerPubky) continue;
+    const payload = parseRetryPayload(item.payload);
+    if (payload?.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) out.push(payload);
+  }
+  return out;
+}
+
+/**
+ * After this recipient's fan-out queue items are gone, mark each affected
+ * group message failed when no other recipient's item remains owed.
+ * `markFailed` re-counts the remaining queue rows, so a message still owed
+ * to another recipient is left for that recipient's delivery to settle.
+ */
+async function settleOrphanedFanout(payloads: GroupFanoutRetryPayload[]): Promise<void> {
+  for (const payload of payloads) {
+    try {
+      const row = await StorageService.getGroupMessage(
+        payload.ownerPubky,
+        payload.channelId,
+        payload.senderPubky,
+        payload.eventId,
+      );
+      if (!row || row.deliveryState === "sent" || row.deliveryState === "delivered") continue;
+      await markFailed(payload);
+    } catch (err) {
+      console.warn(
+        `[LinkService] Could not settle orphaned fan-out ${payload.eventId}:`,
+        errorMessage(err),
+      );
+    }
   }
 }
 
@@ -1964,26 +2044,30 @@ async function reconcilePaymentPendingSends(): Promise<void> {
       continue;
     }
     if (message.deliveryState !== "sending") continue;
-    if (await StorageService.hasQueueItemForMessage(eventId)) continue;
-    const ts = Date.now();
     const secretFingerprint = await fingerprintForRetryHeal(ownerPubky, ownerPubky, message.kind, eventId);
-    await StorageService.enqueue({
-      id: crypto.randomUUID(),
-      messageId: eventId,
-      recipientPubky: row.peerPubky,
-      payload: JSON.stringify(
-        retryPayload(
-          ownerPubky,
-          row.peerPubky,
-          eventId,
-          message.rawJson,
-          message.kind,
-          secretFingerprint,
+    // R4-F2: check + insert under the peer mutex so a heal enqueue is
+    // ordered against in-flight deliveries for that peer, never mid-encrypt.
+    await withQueue(row.peerPubky, async () => {
+      if (await StorageService.hasQueueItemForMessage(eventId)) return;
+      const ts = Date.now();
+      await StorageService.enqueue({
+        id: crypto.randomUUID(),
+        messageId: eventId,
+        recipientPubky: row.peerPubky,
+        payload: JSON.stringify(
+          retryPayload(
+            ownerPubky,
+            row.peerPubky,
+            eventId,
+            message.rawJson,
+            message.kind,
+            secretFingerprint,
+          ),
         ),
-      ),
-      attempts: 0,
-      nextRetryAt: ts,
-      createdAt: message.sentAt,
+        attempts: 0,
+        nextRetryAt: ts,
+        createdAt: message.sentAt,
+      });
     });
   }
 }
@@ -1993,31 +2077,38 @@ async function reconcileLostOwedDeliveries(): Promise<void> {
   if (!ownerPubky) return;
   const owed = await StorageService.listOwedOutboundLinkMessages(ownerPubky);
   for (const message of owed) {
-    if (await StorageService.hasQueueItemForMessage(message.eventId)) continue;
-    const ts = Date.now();
+    // Defense in depth (R4-F3/F4): `failed` is terminal for heal even if a
+    // caller ever widens `listOwedOutboundLinkMessages` again.
+    if (message.deliveryState !== "sending") continue;
     const secretFingerprint = await fingerprintForRetryHeal(
       ownerPubky,
       message.senderPubky,
       message.kind,
       message.eventId,
     );
-    await StorageService.enqueue({
-      id: crypto.randomUUID(),
-      messageId: message.eventId,
-      recipientPubky: message.peerPubky,
-      payload: JSON.stringify(
-        retryPayload(
-          ownerPubky,
-          message.peerPubky,
-          message.eventId,
-          message.rawJson,
-          message.kind,
-          secretFingerprint,
+    // R4-F2: check + insert under the peer mutex so a heal enqueue is
+    // ordered against in-flight deliveries for that peer, never mid-encrypt.
+    await withQueue(message.peerPubky, async () => {
+      if (await StorageService.hasQueueItemForMessage(message.eventId)) return;
+      const ts = Date.now();
+      await StorageService.enqueue({
+        id: crypto.randomUUID(),
+        messageId: message.eventId,
+        recipientPubky: message.peerPubky,
+        payload: JSON.stringify(
+          retryPayload(
+            ownerPubky,
+            message.peerPubky,
+            message.eventId,
+            message.rawJson,
+            message.kind,
+            secretFingerprint,
+          ),
         ),
-      ),
-      attempts: 0,
-      nextRetryAt: ts,
-      createdAt: message.sentAt,
+        attempts: 0,
+        nextRetryAt: ts,
+        createdAt: message.sentAt,
+      });
     });
   }
 }
@@ -2130,18 +2221,16 @@ async function dispatchPreparedDm(input: {
 
   if (input.outcome !== "ready") return message;
 
-  const prior = await drainOwedSamePeerWritesLocked(input.peerPubky, {
-    beforeItem: {
-      id: queueId,
-      messageId: input.eventId,
-      recipientPubky: input.peerPubky,
-      payload: "",
-      attempts: 0,
-      nextRetryAt: ts,
-      createdAt: ts,
-    },
-  });
-  if (prior !== "clear") {
+  const beforeItem: DeliveryQueueItem = {
+    id: queueId,
+    messageId: input.eventId,
+    recipientPubky: input.peerPubky,
+    payload: "",
+    attempts: 0,
+    nextRetryAt: ts,
+    createdAt: ts,
+  };
+  const markBlocked = async (): Promise<LinkMessage> => {
     const blocked = retryPayload(
       input.ownerPubky,
       input.peerPubky,
@@ -2160,7 +2249,10 @@ async function dispatchPreparedDm(input: {
       return message;
     }
     return { ...message, deliveryState: "failed" };
-  }
+  };
+
+  const prior = await drainOwedSamePeerWritesLocked(input.peerPubky, { beforeItem });
+  if (prior !== "clear") return markBlocked();
 
   try {
     const handle = requireEstablishedHandle(input.ownerPubky, input.peerPubky);
@@ -2172,6 +2264,11 @@ async function dispatchPreparedDm(input: {
       input.eventId,
       secretFingerprint,
     );
+    // R4-F2: re-scan just before the encrypt. The window since the entry
+    // scan is only attachment reconstruction, but the re-scan is one SELECT
+    // and does not re-acquire withQueue, so take it.
+    const recheck = await drainOwedSamePeerWritesLocked(input.peerPubky, { beforeItem });
+    if (recheck !== "clear") return markBlocked();
     const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
     await StorageService.finalizeLinkSend({
       ownerPubky: input.ownerPubky,
