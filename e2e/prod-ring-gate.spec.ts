@@ -52,10 +52,25 @@ function assertNoAbortedMarkerPublish(events: LoadingFailed[], label: string): v
   expect(hits, `${label} receiver-marker/homeserver write must not abort`).toEqual([]);
 }
 
+/**
+ * Optional copy that may never appear. Locator.textContent() with no timeout
+ * waits until the test timeout, which is how the last gate run sat for 15m
+ * after Continue as was already on screen.
+ */
+async function optionalText(
+  locator: ReturnType<Page["locator"]>,
+  timeoutMs = 1_000,
+): Promise<string | null> {
+  return locator.textContent({ timeout: timeoutMs }).catch(() => null);
+}
+
 function attachDiagnostics(page: Page, label: string): FailedRequest[] {
   const failures: FailedRequest[] = [];
   page.on("console", (msg) => {
-    if (msg.type() === "error") trace(label, `console-error ${msg.text()}`);
+    const type = msg.type();
+    if (type === "error" || type === "warning") {
+      trace(label, `console-${type} ${msg.text()}`);
+    }
   });
   page.on("pageerror", (error) => {
     trace(label, `pageerror ${error.message}`);
@@ -65,9 +80,13 @@ function attachDiagnostics(page: Page, label: string): FailedRequest[] {
   });
   page.on("response", (response) => {
     const status = response.status();
-    if (status >= 200 && status < 300) return;
-    if (status >= 300 && status < 400) return;
-    const entry = { method: response.request().method(), url: response.url(), status };
+    const method = response.request().method();
+    const url = response.url();
+    if (isHomeserverWrite(url, method)) {
+      trace(label, `HSWRITE ${status} ${method} ${url}`);
+    }
+    if (status >= 200 && status < 400) return;
+    const entry = { method, url, status };
     failures.push(entry);
     trace(label, `NON2XX ${entry.status} ${entry.method} ${entry.url}`);
   });
@@ -105,10 +124,22 @@ async function attachInitiatorTrace(page: Page, label: string): Promise<LoadingF
     });
   });
   cdp.on("Network.responseReceived", (event) => {
-    if (event.response.status < 400) return;
+    const status = event.response.status;
+    const url = event.response.url;
+    // Writes are the whole question for the abort fix, so log them at any
+    // status. A send that was never attempted produces no PUT at all, which
+    // is indistinguishable from a failed write if only failures are logged.
+    const request = requests.get(event.requestId);
+    if (request && (request.method === "PUT" || request.method === "DELETE")) {
+      trace(label, `WRITE ${request.method} ${status} ${request.url}`);
+    }
+    // 429s on pkarr.pubky.app omit ACAO, so Chrome reports CORS rather than
+    // the status. Log every pkarr non-2xx here so the rate-limit is visible.
+    const pkarrNon2xx = url.includes("pkarr.") && (status < 200 || status >= 300);
+    if (status < 400 && !pkarrNon2xx) return;
     trace(
       label,
-      `INITIATOR ${event.response.status} ${event.response.url} :: ${requests.get(event.requestId)?.initiator ?? "unknown"}`,
+      `INITIATOR ${status} ${url} :: ${requests.get(event.requestId)?.initiator ?? "unknown"}`,
     );
   });
   // The decisive signal for an aborted request: `canceled` marks a requester
@@ -164,19 +195,29 @@ async function completeRingOnboarding(
   const connectUrl = await visibleRingUrl(page, "pubkyring");
   trace(label, `approving paykit-connect after ${elapsed(start)}ms`);
   await identity.approvePaykitConnect(connectUrl);
-  await Promise.race([
-    page.getByText("Continue as").waitFor({ state: "visible", timeout: 20_000 }),
-    page.locator("p.text-red-400").first().waitFor({ state: "visible", timeout: 20_000 }),
-  ]).catch(() => undefined);
-  const postApproveError = await page.locator("p.text-red-400").first().textContent().catch(() => null);
-  const adoptCount = await page.getByText("Continue as").count();
+  trace(label, `paykit-connect approved after ${elapsed(start)}ms`);
+
+  // Adoption (`pendingPubky`) is independent of the QR TTL. The expired
+  // banner is muted copy, not `p.text-red-400`, so do not wait on that
+  // locator — it never appears on the success path and used to hang the gate.
+  const continueAs = page.getByText("Continue as");
+  try {
+    await expect(continueAs).toBeVisible({ timeout: 90_000 });
+  } catch (error) {
+    const expired = await page.getByText("This paykit-connect link expired").count();
+    const postApproveError = await optionalText(page.locator("p.text-red-400").first());
+    trace(
+      label,
+      `adopt missing expired=${expired} error=${postApproveError ?? "(none)"} path=${new URL(page.url()).pathname}`,
+    );
+    throw error;
+  }
+  const expired = await page.getByText("This paykit-connect link expired").count();
+  const postApproveError = await optionalText(page.locator("p.text-red-400").first());
   trace(
     label,
-    `post-approve adopt=${adoptCount} error=${postApproveError ?? "(none)"} path=${new URL(page.url()).pathname}`,
+    `post-approve expired=${expired} error=${postApproveError ?? "(none)"} path=${new URL(page.url()).pathname}`,
   );
-
-  // Ring answered: the app offers to continue as the approved identity.
-  await expect(page.getByText(`Continue as`)).toBeVisible({ timeout: 90_000 });
   await expect(page.getByText(identity.pubky, { exact: false }).first()).toBeVisible();
   trace(label, `adoption offered after ${elapsed(start)}ms`);
   await page.getByRole("button", { name: "Continue" }).click({ noWaitAfter: true });
@@ -230,13 +271,16 @@ async function startThread(page: Page, peerPubky: string, label: string): Promis
  * receiver-marker discovery on the homeserver, so a send can legitimately fail
  * once before the peer's marker resolves.
  */
-async function sendMessage(page: Page, body: string, label: string): Promise<void> {
+async function sendMessage(
+  page: Page,
+  body: string,
+  label: string,
+  pokePeer?: () => Promise<void>,
+): Promise<void> {
   const deadline = Date.now() + 120_000;
   let lastError = "";
   for (let attempt = 1; Date.now() < deadline; attempt += 1) {
     await page.getByPlaceholder("Message").fill(body);
-    // Bounded: a stuck send leaves the composer disabled, and an unbounded
-    // click would wait on it forever instead of reporting.
     const clicked = await page
       .getByRole("button", { name: "Send", exact: true })
       .click({ timeout: 10_000 })
@@ -253,9 +297,10 @@ async function sendMessage(page: Page, body: string, label: string): Promise<voi
         `composer stayed disabled after a send; delivery labels ${JSON.stringify(labels)}`,
       );
     }
-    // The body renders immediately from the optimistic local row, so it proves
-    // nothing. The visible delivery label is the only signal that the payload
-    // actually left this device.
+    if (pokePeer) {
+      await page.waitForTimeout(2_000);
+      await pokePeer();
+    }
     const landed = await page
       .getByText(/·\s*(sent|delivered|read)\b/)
       .first()
@@ -270,7 +315,7 @@ async function sendMessage(page: Page, body: string, label: string): Promise<voi
     }
     const labels = await page.getByText(/·\s*\w+$/).allTextContents();
     lastError =
-      (await page.locator("p.text-red-400").first().textContent().catch(() => null)) ??
+      (await optionalText(page.locator("p.text-red-400").first())) ??
       `delivery label never reached sent (saw ${JSON.stringify(labels)})`;
     trace(label, `send attempt ${attempt} failed: ${lastError}`);
     await page.waitForTimeout(3_000);
@@ -343,6 +388,9 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
   );
 
   const identityA = await createStagingIdentity();
+  // pkarr.pubky.app allows 10 req/window and 429s without ACAO. Two back-to-back
+  // signups starve the browser's later homeserver lookup; pause so the window recovers.
+  await new Promise((resolve) => setTimeout(resolve, 3_000));
   const identityB = await createStagingIdentity();
   expect(identityA.pubky).not.toBe(identityB.pubky);
   trace("setup", `A=${identityA.pubky} B=${identityB.pubky}`);
@@ -385,18 +433,31 @@ test("production: Ring approval, Enable, Chats, and a first DM through explicit 
     await openChatsFromEnable(pageB, "B");
     await pageB.screenshot({ path: "/tmp/hc-gate/leg2-b-chats.png", fullPage: true });
 
-    // Leg 2b: first DM A -> B, held as a request until B accepts on screen.
+    // Leg 2b: both sides must open the peer thread before the first payload.
+    // Inbox/handshake polling only covers known peers (ADR 0004); A sending
+    // while B has never opened the thread leaves the row at "sending".
     await startThread(pageA, identityB.pubky, "A");
-    await sendMessage(pageA, "gate-hello-from-a", "A");
+    await startThread(pageB, identityA.pubky, "B");
+    await sendMessage(pageA, "gate-hello-from-a", "A", async () => {
+      // B's thread only syncInbox()s on mount. A's handshake PUT lands after
+      // that, so reload B so it sees the mailbox write and completes the link.
+      await pageB.reload({ waitUntil: "domcontentloaded" });
+      await expect(
+        pageB.getByRole("heading", { name: identityA.pubky, level: 2 }),
+      ).toBeVisible({ timeout: 30_000 });
+    });
     await pageA.screenshot({ path: "/tmp/hc-gate/leg2-a-sent.png", fullPage: true });
 
-    await startThread(pageB, identityA.pubky, "B");
     await acceptRequestFor(pageB, identityA.pubky, "B");
     await expectMessageVisible(pageB, "gate-hello-from-a", "B");
     await pageB.screenshot({ path: "/tmp/hc-gate/leg2-b-received.png", fullPage: true });
 
     // Reverse direction. B already accepted, so no second gate is expected.
     await sendMessage(pageB, "gate-hello-from-b", "B");
+    await pageA.reload({ waitUntil: "domcontentloaded" });
+    await expect(
+      pageA.getByRole("heading", { name: identityB.pubky, level: 2 }),
+    ).toBeVisible({ timeout: 30_000 });
     await expectMessageVisible(pageA, "gate-hello-from-b", "A");
     await pageA.screenshot({ path: "/tmp/hc-gate/leg2-a-received.png", fullPage: true });
     assertNoAbortedMarkerPublish(loadingFailedA, "A-final");

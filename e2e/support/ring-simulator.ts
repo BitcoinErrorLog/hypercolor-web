@@ -110,13 +110,21 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): P
   }
 }
 
+async function backoffDelay(attempt: number, baseMs: number, capMs: number): Promise<void> {
+  const exp = Math.min(capMs, baseMs * 2 ** Math.max(0, attempt - 1));
+  const jitter = Math.floor(Math.random() * Math.min(500, exp / 2));
+  await sleep(exp + jitter);
+}
+
 async function waitUntilHomeserverPublished(
   client: PubkyFacade,
   userPk: PubkyPublicKey,
 ): Promise<void> {
   const deadline = Date.now() + 60_000;
   let last = "unresolved";
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     try {
       const resolved = await withTimeout(
         client.getHomeserverOf(userPk),
@@ -129,7 +137,7 @@ async function waitUntilHomeserverPublished(
     } catch (error) {
       last = error instanceof Error ? error.message : "resolve failed";
     }
-    await sleep(1_500);
+    await backoffDelay(attempt, 2_000, 8_000);
   }
   throw new Error(`PKDNS homeserver did not become resolvable (${last})`);
 }
@@ -141,7 +149,9 @@ async function waitUntilPublicHandoff(
 ): Promise<void> {
   const address = `pubky${pubky}${path}`;
   const deadline = Date.now() + 30_000;
+  let attempt = 0;
   while (Date.now() < deadline) {
+    attempt += 1;
     try {
       const json = await withTimeout(
         client.publicStorage.getJson(address),
@@ -154,7 +164,7 @@ async function waitUntilPublicHandoff(
     } catch {
       // Homeserver/pkarr can lag immediately after signup.
     }
-    await sleep(1_000);
+    await backoffDelay(attempt, 1_500, 6_000);
   }
   throw new Error("handoff is not publicly readable yet");
 }
