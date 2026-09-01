@@ -63,6 +63,29 @@ Confirmed on the build machine (`rustc --version`, `wasm-pack --version`,
 | Node (smoke test) | v22.14.0 |
 | Build command | `wasm-pack build paykit-wasm --target web --out-dir pkg --release` |
 | Source smoke | `node paykit-wasm/scripts/smoke.mjs` (17/17, WASM_EXIT=0) |
+| `cargo` | 1.93.1 (083ac5135 2025-12-15) |
+
+## Independent rebuild verification
+
+The artifacts here were not taken on trust from a prebuilt `pkg`. They were
+reproduced from source on a second machine state and matched byte for byte:
+
+- Checkout at `cae1a8f` with a clean working tree (`git status --porcelain`
+  empty), the commit verified reachable from the public branch with
+  `git ls-remote origin refs/heads/fix/wasm-homeserver-write-abort` plus
+  `git merge-base --is-ancestor`.
+- `rustup target add wasm32-unknown-unknown`, then the recorded build command.
+- Forced recompile: after `touch`ing
+  `vendor/pubky/src/client/http_targets/browser.rs` and
+  `paykit-wasm/src/lib.rs`, cargo rebuilt `pubky`, `paykit-lib`, and
+  `paykit-wasm`, and `wasm-opt` still produced the same
+  `paykit_wasm_bg.wasm` SHA-256 recorded below.
+- `node paykit-wasm/scripts/smoke.mjs`: 17/17.
+- `npm run check:wasm` against the vendored copy in this repo: passed.
+
+`wasm-opt` output is not guaranteed bit-identical across platforms and
+toolchains, so treat these checksums as a record of this build rather than a
+cross-platform guarantee.
 
 ## Artifact checksums (SHA-256)
 
