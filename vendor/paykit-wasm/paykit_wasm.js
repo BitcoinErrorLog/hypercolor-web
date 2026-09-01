@@ -566,6 +566,29 @@ export class PubkyClient {
         wasm.__wbg_pubkyclient_free(ptr, 0);
     }
     /**
+     * Move an existing identity to `homeserverZ32` and republish `_pubky`.
+     *
+     * Dev/test helper. Signs up on that host, or signs in there if the user
+     * already exists (HTTP 409). Host-local data is not copied.
+     * @param {Uint8Array} identity_secret_key
+     * @param {string} homeserver_z32
+     * @param {string | null} [signup_token]
+     * @returns {Promise<any>}
+     */
+    migrateHomeserverWithSecret(identity_secret_key, homeserver_z32, signup_token) {
+        const ptr0 = passArray8ToWasm0(identity_secret_key, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(homeserver_z32, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(signup_token) ? 0 : passStringToWasm0(signup_token, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        const ret = wasm.pubkyclient_migrateHomeserverWithSecret(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Construct with mainnet defaults.
      */
     constructor() {
@@ -576,6 +599,23 @@ export class PubkyClient {
         this.__wbg_ptr = ret[0] >>> 0;
         PubkyClientFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * Force a fresh `_pubky` lookup for `pubkyZ32` from relays/DHT.
+     *
+     * Call after a counterparty migrates homeserver so subsequent requests
+     * do not keep using a cached mailbox pointer.
+     * @param {string} pubky_z32
+     * @returns {Promise<any>}
+     */
+    resolveMostRecentHomeserver(pubky_z32) {
+        const ptr0 = passStringToWasm0(pubky_z32, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.pubkyclient_resolveMostRecentHomeserver(this.__wbg_ptr, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Restore a homeserver session from metadata previously produced by
@@ -1499,42 +1539,6 @@ export function signOutSession(session) {
 }
 
 /**
- * Verify a UKD AppCert signature.
- *
- * Binds `pubky_crypto::ukd::verify_app_cert`. `issuerPubky` accepts z-base-32
- * or 64-hex (the root PKARR identity that signed the cert). Returns the
- * lowercase 32-character `cert_id` hex on success.
- * @param {string} issuer_pubky
- * @param {string} cert_body_hex
- * @param {string} sig_hex
- * @returns {string}
- */
-export function verifyAppCert(issuer_pubky, cert_body_hex, sig_hex) {
-    let deferred5_0;
-    let deferred5_1;
-    try {
-        const ptr0 = passStringToWasm0(issuer_pubky, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ptr1 = passStringToWasm0(cert_body_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len1 = WASM_VECTOR_LEN;
-        const ptr2 = passStringToWasm0(sig_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len2 = WASM_VECTOR_LEN;
-        const ret = wasm.verifyAppCert(ptr0, len0, ptr1, len1, ptr2, len2);
-        var ptr4 = ret[0];
-        var len4 = ret[1];
-        if (ret[3]) {
-            ptr4 = 0; len4 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred5_0 = ptr4;
-        deferred5_1 = len4;
-        return getStringFromWasm0(ptr4, len4);
-    } finally {
-        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
-    }
-}
-
-/**
  * Generate a random X25519 keypair.
  *
  * Returns `{ publicKey, secretKey }` as lowercase 64-character hex strings.
@@ -1618,6 +1622,14 @@ function __wbg_get_imports() {
             const ret = arg0.byteOffset;
             return ret;
         },
+        __wbg_call_4f2f92601568b772: function() { return handleError(function (arg0, arg1, arg2, arg3) {
+            const ret = arg0.call(arg1, arg2, arg3);
+            return ret;
+        }, arguments); },
+        __wbg_call_6ae20895a60069a2: function() { return handleError(function (arg0, arg1) {
+            const ret = arg0.call(arg1);
+            return ret;
+        }, arguments); },
         __wbg_call_8f5d7bb070283508: function() { return handleError(function (arg0, arg1, arg2) {
             const ret = arg0.call(arg1, arg2);
             return ret;
@@ -1741,6 +1753,24 @@ function __wbg_get_imports() {
         __wbg_new_4a843fe2ee4082a9: function(arg0, arg1) {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return ret;
+        },
+        __wbg_new_694161c660bbefba: function(arg0, arg1) {
+            try {
+                var state0 = {a: arg0, b: arg1};
+                var cb0 = (arg0, arg1) => {
+                    const a = state0.a;
+                    state0.a = 0;
+                    try {
+                        return wasm_bindgen__convert__closures_____invoke__h31c10299f3023db4(a, state0.b, arg0, arg1);
+                    } finally {
+                        state0.a = a;
+                    }
+                };
+                const ret = new Promise(cb0);
+                return ret;
+            } finally {
+                state0.a = 0;
+            }
         },
         __wbg_new_ce17f0bcfcc7b8ef: function() { return handleError(function () {
             const ret = new AbortController();
@@ -1931,12 +1961,12 @@ function __wbg_get_imports() {
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1252, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1272, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h0c1430703438ec11);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1078, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 1098, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h7d83aa45adf6d0a1);
             return ret;
         },
