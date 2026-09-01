@@ -9,7 +9,7 @@ import {
 } from "./PaykitLinkWeb";
 import { StorageService } from "../StorageService";
 import { KeyStore } from "../KeyStore";
-import { RetryQueue } from "../RetryQueue";
+import { RetryQueue, isRetired } from "../RetryQueue";
 import { hexToBytes } from "@/lib/hex";
 import {
   RING_GRANT_CAPABILITIES,
@@ -448,7 +448,7 @@ export const LinkService = {
         );
         if (!row || row.deliveryState !== "sending") continue;
       }
-      await deliverQueuedPayload(item, payload);
+      await deliverQueuedPayloadWithBudget(item, payload);
     }
   },
 
@@ -457,7 +457,7 @@ export const LinkService = {
     for (const item of due) {
       const payload = parseRetryPayload(item.payload);
       if (!payload || !(await isCurrentOwner(payload.ownerPubky))) continue;
-      await deliverQueuedPayload(item, payload);
+      await deliverQueuedPayloadWithBudget(item, payload);
     }
   },
 
@@ -1396,10 +1396,49 @@ async function routeUnprocessedStreamItems(
   return received;
 }
 
+/**
+ * Per-item wait budget for a drain/recover pass.
+ *
+ * Does not abort the in-flight send. Aborting would drop the per-peer
+ * `withQueue` wait and let a later item for the same peer start while the
+ * first PUT is still live — that reorders the outbox and can double-send
+ * the same ciphertext. When the budget expires we move on to the next
+ * item; the first call keeps the mutex until it settles. Other peers are
+ * not blocked. 20s is above the 5s wasm write-body drain bound plus
+ * encrypt/PUT slack.
+ */
+const DRAIN_ITEM_BUDGET_MS = 20_000;
+
+async function deliverQueuedPayloadWithBudget(
+  item: DeliveryQueueItem,
+  payload: AnyLinkRetryPayload,
+): Promise<void> {
+  const work = deliverQueuedPayload(item, payload);
+  const winner = await Promise.race([
+    work.then(() => "done" as const),
+    new Promise<"timeout">((resolve) => {
+      setTimeout(() => resolve("timeout"), DRAIN_ITEM_BUDGET_MS);
+    }),
+  ]);
+  if (winner === "timeout") {
+    console.warn(
+      `[LinkService] drain item ${item.id} exceeded ${DRAIN_ITEM_BUDGET_MS}ms; leaving in-flight send running so same-peer queue order is preserved`,
+    );
+    void work.catch((err) => {
+      console.warn(`[LinkService] background drain item ${item.id} failed:`, errorMessage(err));
+    });
+  }
+}
+
 async function deliverQueuedPayload(
   item: DeliveryQueueItem,
   payload: AnyLinkRetryPayload,
 ): Promise<void> {
+  if (isRetired(item)) {
+    await RetryQueue.recordSuccess(item.id);
+    await markFailed(payload);
+    return;
+  }
   await withQueue(payload.peerPubky, async () => {
     if (payload.type === LINK_RETRY_PAYLOAD_TYPE) {
       const row = await StorageService.getLinkMessage(

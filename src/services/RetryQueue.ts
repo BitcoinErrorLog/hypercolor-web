@@ -8,19 +8,31 @@ import type { DeliveryQueueItem } from "../types";
  * Items survive restarts because they live in SQLite. The queue is drained
  * by LinkService.drainRetries (and after syncInbox).
  *
+ * Call sites pass `item.attempts` un-incremented. Increment and the attempt
+ * cap live here (`recordFailure` → `StorageService.incrementAttempt`).
+ *
  * Backoff schedule (capped at 30 minutes):
  *   attempt 1 → 30 s
  *   attempt 2 → 1 min
  *   attempt 3 → 2 min
  *   attempt 4 → 4 min
  *   attempt N → min(2^N × 15 s, 1800 s)
+ *
+ * Retirement (no further auto-retry; caller marks the row failed):
+ *   - 10 attempts
+ *   - 24 hours since `createdAt`
  */
 
-const MAX_ATTEMPTS = 10;
+export const MAX_ATTEMPTS = 10;
+export const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function nextRetryMs(attempts: number): number {
   const delayMs = Math.min(15_000 * Math.pow(2, attempts), 30 * 60 * 1000);
   return Date.now() + delayMs;
+}
+
+export function isRetired(item: DeliveryQueueItem, now = Date.now()): boolean {
+  return item.attempts >= MAX_ATTEMPTS || now - item.createdAt >= MAX_AGE_MS;
 }
 
 export const RetryQueue = {
