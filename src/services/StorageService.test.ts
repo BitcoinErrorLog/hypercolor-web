@@ -377,4 +377,44 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(await StorageService.getContact(PEER, OWNER)).toBeNull();
     expect(await StorageService.getMessageRequest(OWNER, PEER)).toBeNull();
   });
+
+  it("lists owed outbound DMs and looks up a queue item by id", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.persistLinkSendIntent({
+      message: {
+        ownerPubky: OWNER,
+        eventId: EVENT,
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        direction: "sent",
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: '{"k":1}',
+        body: "owed",
+        sentAt: 40,
+        receivedAt: null,
+        deliveryState: "failed",
+      },
+      queueItem: {
+        id: "q-owed",
+        messageId: EVENT,
+        recipientPubky: PEER,
+        payload: '{"type":"link.chat.message"}',
+        attempts: 1,
+        nextRetryAt: 40,
+        createdAt: 40,
+      },
+    });
+    const owed = await StorageService.listOwedOutboundLinkMessages(OWNER);
+    expect(owed).toHaveLength(1);
+    expect(owed[0]?.eventId).toBe(EVENT);
+    expect(owed[0]?.sentAt).toBe(40);
+    const queued = await StorageService.getDeliveryQueueItem("q-owed");
+    expect(queued?.messageId).toBe(EVENT);
+    await StorageService.removeQueueItemsForRecipient(PEER);
+    expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
+    expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toHaveLength(1);
+  });
 });

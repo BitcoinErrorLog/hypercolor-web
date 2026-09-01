@@ -390,6 +390,29 @@ export const StorageService = {
     return (result.rows ?? []).map(rowToQueueItem);
   },
 
+  async getDeliveryQueueItem(id: string): Promise<DeliveryQueueItem | null> {
+    const db = await getDb();
+    const result = db.executeSync('SELECT * FROM delivery_queue WHERE id = ?', [id]);
+    const row = result.rows?.[0];
+    return row ? rowToQueueItem(row) : null;
+  },
+
+  async listOwedOutboundLinkMessages(ownerPubky: PubkyKey): Promise<LinkMessage[]> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM link_messages
+       WHERE owner_pubky = ? AND direction = 'sent' AND delivery_state IN ('sending', 'failed')
+       ORDER BY sent_at ASC`,
+      [ownerPubky],
+    );
+    return (result.rows ?? []).map(rowToLinkMessage);
+  },
+
+  async removeQueueItemsForRecipient(recipientPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync('DELETE FROM delivery_queue WHERE recipient_pubky = ?', [recipientPubky]);
+  },
+
   async removeFromQueue(id: string): Promise<void> {
     const db = await getDb();
     db.executeSync('DELETE FROM delivery_queue WHERE id = ?', [id]);

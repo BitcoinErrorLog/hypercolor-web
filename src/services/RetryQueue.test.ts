@@ -7,7 +7,13 @@ import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
 import { runMigrations } from "../db/migrations";
 import type { DeliveryQueueItem } from "../types";
 import { StorageService } from "./StorageService";
-import { MAX_AGE_MS, MAX_ATTEMPTS, RetryQueue, isRetired } from "./RetryQueue";
+import {
+  MAX_AGE_MS,
+  MAX_ATTEMPTS,
+  RETIRED_ITEM_PARK_MS,
+  RetryQueue,
+  isRetired,
+} from "./RetryQueue";
 
 const PEER = "z".repeat(52);
 
@@ -56,6 +62,16 @@ describe("RetryQueue", () => {
     await RetryQueue.defer("q-defer", 0);
     const after = (await StorageService.listDeliveryQueue())[0];
     expect(after?.attempts).toBe(0);
+  });
+
+  it("parks past the backoff cap so getDue does not resurface the item", async () => {
+    await RetryQueue.enqueue(queueInput("q-park"));
+    await RetryQueue.park("q-park");
+    const due = await RetryQueue.getDue();
+    expect(due.find((item) => item.id === "q-park")).toBeUndefined();
+    const parked = (await StorageService.listDeliveryQueue())[0];
+    expect(parked?.nextRetryAt).toBeGreaterThan(Date.now() + RETIRED_ITEM_PARK_MS - 5_000);
+    expect(parked?.nextRetryAt).toBeGreaterThan(Date.now() + 30 * 60 * 1000);
   });
 
   it("retires items that exceed max age", () => {

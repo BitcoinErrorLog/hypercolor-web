@@ -119,12 +119,13 @@ another pass — the new encrypt is **blocked**. The new row is marked
 encrypt a second plaintext at a nonce a prior undelivered `wireJson`
 already used.
 
-Retired items are **parked** (`defer` far in the future) instead of
-removed. Removing them would empty the queue and let a later send
-encrypt at the still-unadvanced nonce. The interval drain skips them
-(`getDue` uses `next_retry_at`); the send-path drain still sees them
-via `listDeliveryQueue` and either completes the write or keeps
-blocking new encrypts.
+Retired items are **parked** via `RetryQueue.park` (writes
+`next_retry_at` directly to ~1 year out). `defer` cannot do this:
+its second argument is `currentAttempts`, and `nextRetryMs` caps at
+30 minutes. The interval drain skips parked items (`getDue` uses
+`next_retry_at`); the send-path drain still sees them via
+`listDeliveryQueue` and either completes the write or keeps blocking
+new encrypts.
 
 Group fan-out to a peer is the same nonce sequence as DMs to that
 peer (`sendPrivateMessageJson` on the same handle). Fan-out therefore
@@ -150,3 +151,94 @@ cannot re-send or double-`recordFailure` an in-flight item. An
 expired claim can be stolen; the per-peer mutex still serializes
 the actual PUT. Fan-out re-checks `getGroupMessage` sent-state and
 whether the queue row still exists before sending.
+
+## R3-F1 (Kimi round 3): per-peer oldest-first inside every delivery
+
+The send-path drain (R2-F1) was not enough. `drainRetries` /
+`recoverPendingSends` delivered in `getDue` / `nextRetryAt` order.
+Sequence: A owed at nonce N (ambiguous commit, deferred with
+backoff); B blocked pre-encrypt and marked owed with
+`nextRetryAt = now`; the next interval pass delivered B first and
+encrypted B at N.
+
+**Decision:** two layers, both inside `withQueue(peer)`:
+
+1. Pass-level: group by peer, process each peer's items strictly
+   oldest-first (`createdAt`, then `id`). Covers group fan-out
+   (same nonce sequence as DMs to that peer) when both items are due.
+2. Delivery-level: `deliverQueuedPayloadLocked` runs
+   `drainOwedSamePeerWritesLocked({ beforeItem })` before any
+   sent-state / retire / encrypt work. The older-owed scan uses
+   `listDeliveryQueue`, not `getDue`, so an item that is not due
+   (A on backoff) still precedes a newer item that is due (B). If
+   that drain is not `clear`, the current item is deferred and
+   never encrypted. Claim-steal redelivery hits the same guard:
+   a stolen newer claim still cannot encrypt before older owed
+   writes on that peer.
+
+`beforeItem` replaced `excludeEventId`. The current row is excluded
+because it is not older than itself, so repeats of
+`attemptPersistedSend` / `sendPersistedLinkJson` cannot drain
+*newer* owed items ahead of their own retry.
+
+## R3-F3: ordering metadata and lost-queue heal
+
+`reconcilePaymentPendingSends` re-enqueues with `createdAt =
+message.sentAt` (the original enqueue time), not `Date.now()`.
+Startup/recover also scans owed outbound DM rows (`sending` /
+`failed`) with no queue item and re-enqueues them with
+`createdAt = sentAt` so they sort into the original sequence.
+
+## R3-F4: persisted fingerprint on live retry-shaped paths
+
+`attemptPersistedSend` and `sendPersistedLinkJson` look up the
+queue row by `queueId` and pass **its** stored `secretFingerprint`
+into reconstruction. They do not recompute from live KeyStore.
+An attachment row without a stored fingerprint fails closed
+(`validation`) and does not encrypt.
+
+## R3-F5: live writers persist the fingerprint
+
+`buildPreparedSendIntent` and the payment / lost-DM reconcile
+enqueues thread `secretFingerprint` through `retryPayload`. The
+"legacy payloads" waiver does not apply to these writers.
+
+## R3-F7: pass-level try/catch
+
+`reconcilePaymentPendingSends`, `reconcileLostOwedDeliveries`,
+`listDeliveryQueue`, and `RetryQueue.getDue` sit in a pass-level
+try/catch so one throw cannot abort the interval. The `void`
+`drainRetries` / `recoverPendingSends` calls from the visibility
+and interval timers `.catch` so rejections are not unhandled.
+
+## R3-F8 (paykit `wasm_sleep`): waived
+
+Not changed in this round; wasm pin stays rc50. If `setTimeout`
+lookup/`call2` fails, the executor resolves immediately → every
+drain races to an instant `Timeout` (fail-closed, total liveness
+loss on that platform). Node's `setTimeout` returns an object so
+`handle.as_f64()` is `None` and `WasmTimeoutGuard` is inert off
+browser. Reason to skip: this is a Low optional; the shipped
+surface is the browser wasm-bindgen build where `setTimeout`
+returns a numeric id. A rc51 rebuild + re-vendor would expand
+scope past the High/Medium close-out. Revisit if a Node-hosted
+wasm write path ships.
+
+## Reset encrypted link (Kimi Medium recommendation)
+
+A permanently failing peer bricks later sends (parked retire
+blocks the send-path drain; new rows keep accumulating). The
+primitives already existed (`wipeLinkState` +
+`PaykitLinkWeb.clearLinkOutbox`). This round adds:
+
+- `LinkService.resetEncryptedLink(peer)` — wipe the link, drop
+  that peer's queue items, **keep** conversation history. The next
+  `ensureLink` / send starts a new handshake (new nonce sequence).
+- `declineMessageRequest` now also drops that peer's queue items
+  (it already wiped the link and deleted messages).
+
+No UI is wired in this round. Decline / sign-out remain the
+existing user-facing escapes; `resetEncryptedLink` is the
+contained recovery primitive for a later settings action. A
+full in-app "Reset encrypted link" confirmation flow (copy,
+message-row fate, re-handshake UX) is deferred as product work.

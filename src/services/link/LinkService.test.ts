@@ -54,6 +54,15 @@ vi.mock("@/services/StorageService", () => ({
     persistLinkSendIntent: (...args: unknown[]) => persistIntent(...args),
     finalizeLinkSend: (...args: unknown[]) => finalizeSend(...args),
     listDeliveryQueue: vi.fn(async () => []),
+    getDeliveryQueueItem: vi.fn(async () => null),
+    listOwedOutboundLinkMessages: vi.fn(async () => []),
+    enqueue: vi.fn(),
+    hasQueueItemForMessage: vi.fn(async () => false),
+    getLinkMessageByEventId: vi.fn(),
+    clearPaymentPendingEvent: vi.fn(),
+    removeQueueItemsForRecipient: vi.fn(),
+    deleteLinkStreamItemsForPeer: vi.fn(),
+    deleteLinkMessagesForPeer: vi.fn(),
     getGroupMessage: vi.fn(),
     removeFromQueue: vi.fn(),
     getMessageRequest: (...args: unknown[]) => getMessageRequest(...args),
@@ -96,6 +105,7 @@ vi.mock("@/services/RetryQueue", () => ({
     recordSuccess: vi.fn(),
     recordFailure: vi.fn(),
     defer: vi.fn(),
+    park: vi.fn(),
   },
 }));
 
@@ -135,9 +145,11 @@ import {
   LINK_GROUP_FANOUT_PAYLOAD_TYPE,
   LINK_RETRY_PAYLOAD_TYPE,
   LinkService,
+  buildPreparedSendIntent,
   resetLinkServiceHarnessState,
 } from "./LinkService";
 import { CHAT_MESSAGE_KIND, LINK_RECEIVER_PATH } from "../../types/link";
+import { CHAT_ATTACHMENT_KIND } from "../../types/attachment";
 
 const OWNER = "a".repeat(52);
 const PEER = "z".repeat(52);
@@ -188,6 +200,7 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
     vi.mocked(RetryQueue.recordFailure).mockReset().mockResolvedValue(false);
     vi.mocked(RetryQueue.defer).mockReset();
+    vi.mocked(RetryQueue.park).mockReset();
     vi.mocked(RetryQueue.recordSuccess).mockReset();
     vi.mocked(isRetired).mockReset().mockReturnValue(false);
     vi.mocked(StorageService.updateGroupMessageDeliveryState).mockReset();
@@ -195,6 +208,12 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(StorageService.getLinkMessage).mockReset();
     vi.mocked(StorageService.getGroupMessage).mockReset();
     vi.mocked(StorageService.listDeliveryQueue).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.enqueue).mockReset();
+    vi.mocked(StorageService.hasQueueItemForMessage).mockReset().mockResolvedValue(false);
+    vi.mocked(StorageService.getLinkMessageByEventId).mockReset();
+    vi.mocked(StorageService.listPaymentRequestsWithPendingEvent).mockReset().mockResolvedValue([]);
     vi.mocked(StorageService.updateAttachmentDelivery).mockReset();
     vi.mocked(StorageService.countDeliveryQueueForMessage).mockReset().mockResolvedValue(0);
     vi.mocked(reconstructAttachmentWireJson).mockReset().mockImplementation(async (raw: string) => raw);
@@ -611,6 +630,334 @@ describe("LinkService persist-then-send", () => {
       EVENT_ID,
       "failed",
     );
+  });
+
+  function dmQueueItem(input: {
+    id: string;
+    eventId: string;
+    body: string;
+    createdAt: number;
+    nextRetryAt: number;
+  }) {
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: input.eventId,
+      sent_at: input.createdAt,
+      body: input.body,
+    });
+    return {
+      id: input.id,
+      messageId: input.eventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_RETRY_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: input.eventId,
+        rawJson,
+      }),
+      attempts: 1,
+      nextRetryAt: input.nextRetryAt,
+      createdAt: input.createdAt,
+      rawJson,
+    };
+  }
+
+  it("encrypts the older owed same-peer item before a newer item that is due first", async () => {
+    const eventA = "00000000-0000-4000-8000-00000000000a";
+    const eventB = "00000000-0000-4000-8000-00000000000b";
+    const itemA = dmQueueItem({
+      id: "q-a",
+      eventId: eventA,
+      body: "older-owed",
+      createdAt: NOW - 2_000,
+      nextRetryAt: NOW + 30_000,
+    });
+    const itemB = dmQueueItem({
+      id: "q-b",
+      eventId: eventB,
+      body: "newer-due",
+      createdAt: NOW - 1_000,
+      nextRetryAt: NOW,
+    });
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([itemB]);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([itemA, itemB]);
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      deliveryState: "failed",
+    } as never);
+
+    let releaseA!: (value: { snapshot: string }) => void;
+    sendPrivate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseA = resolve;
+        }),
+    );
+
+    const drain = LinkService.drainRetries();
+    await vi.waitFor(() => expect(sendPrivate).toHaveBeenCalledTimes(1));
+    expect(sendPrivate.mock.calls[0]?.[1]).toBe(itemA.rawJson);
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+
+    releaseA({ snapshot: "est-a" });
+    await drain;
+
+    expect(sendPrivate).toHaveBeenCalledTimes(2);
+    expect(sendPrivate.mock.calls[1]?.[1]).toBe(itemB.rawJson);
+  });
+
+  it("encrypts an older owed group fan-out before a newer same-peer item due first", async () => {
+    const channelId = `${OWNER}:chan-1`;
+    const eventA = "00000000-0000-4000-8000-00000000000c";
+    const eventB = "00000000-0000-4000-8000-00000000000d";
+    const jsonA = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: eventA,
+      sent_at: NOW - 2_000,
+      body: "older-group",
+    });
+    const jsonB = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: eventB,
+      sent_at: NOW - 1_000,
+      body: "newer-group",
+    });
+    const itemA = {
+      id: "g-a",
+      messageId: eventA,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: eventA,
+        channelId,
+        rawJson: jsonA,
+      }),
+      attempts: 1,
+      nextRetryAt: NOW + 30_000,
+      createdAt: NOW - 2_000,
+    };
+    const itemB = {
+      id: "g-b",
+      messageId: eventB,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        eventId: eventB,
+        channelId,
+        rawJson: jsonB,
+      }),
+      attempts: 1,
+      nextRetryAt: NOW,
+      createdAt: NOW - 1_000,
+    };
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([itemB]);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([itemA, itemB]);
+    vi.mocked(StorageService.getGroupMessage).mockResolvedValue({
+      deliveryState: "sending",
+    } as never);
+
+    await LinkService.drainRetries();
+
+    expect(sendPrivate).toHaveBeenCalledTimes(2);
+    expect(sendPrivate.mock.calls[0]?.[1]).toBe(jsonA);
+    expect(sendPrivate.mock.calls[1]?.[1]).toBe(jsonB);
+  });
+
+  it("re-enqueues a payment pending send with the original sentAt createdAt", async () => {
+    const sentAt = NOW - 8_000;
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_ATTACHMENT_KIND,
+      event_id: EVENT_ID,
+    });
+    vi.mocked(StorageService.listPaymentRequestsWithPendingEvent).mockResolvedValue([
+      { peerPubky: PEER, pendingEventId: EVENT_ID },
+    ] as never);
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue({
+      eventId: EVENT_ID,
+      peerPubky: PEER,
+      rawJson,
+      kind: CHAT_ATTACHMENT_KIND,
+      deliveryState: "sending",
+      sentAt,
+    } as never);
+    vi.mocked(StorageService.hasQueueItemForMessage).mockResolvedValue(false);
+
+    await LinkService.recoverPendingSends();
+
+    expect(StorageService.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: EVENT_ID,
+        createdAt: sentAt,
+        payload: expect.stringContaining('"secretFingerprint":"fp-test"'),
+      }),
+    );
+  });
+
+  it("re-enqueues an owed DM whose queue item was lost, using original sentAt", async () => {
+    const sentAt = NOW - 12_000;
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: EVENT_ID,
+      sent_at: sentAt,
+      body: "lost-queue",
+    });
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        eventId: EVENT_ID,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson,
+        sentAt,
+        deliveryState: "failed",
+      },
+    ] as never);
+    vi.mocked(StorageService.hasQueueItemForMessage).mockResolvedValue(false);
+
+    await LinkService.recoverPendingSends();
+
+    expect(StorageService.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        createdAt: sentAt,
+      }),
+    );
+  });
+
+  it("rejects attachment rotation on attemptPersistedSend using the stored fingerprint", async () => {
+    const rawJson = JSON.stringify({ kind: CHAT_ATTACHMENT_KIND, event_id: EVENT_ID });
+    const queued = {
+      id: QUEUE_ID,
+      messageId: EVENT_ID,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_RETRY_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_ATTACHMENT_KIND,
+        eventId: EVENT_ID,
+        rawJson,
+        secretFingerprint: "fp-stored",
+      }),
+      attempts: 0,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(queued);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([queued]);
+    vi.mocked(reconstructAttachmentWireJson).mockImplementation(
+      async (_raw, _ref, expected) => {
+        if (expected === "fp-stored") {
+          throw new Error("Attachment key material changed");
+        }
+        return _raw;
+      },
+    );
+
+    const result = await LinkService.attemptPersistedSend({
+      peerPubky: PEER,
+      kind: CHAT_ATTACHMENT_KIND,
+      eventId: EVENT_ID,
+      queueId: QUEUE_ID,
+      rawJson,
+    });
+
+    expect(result).toBe("queued");
+    expect(reconstructAttachmentWireJson).toHaveBeenCalledWith(
+      rawJson,
+      expect.any(String),
+      "fp-stored",
+    );
+    expect(sendPrivate).not.toHaveBeenCalled();
+  });
+
+  it("rejects attachment rotation on sendPersistedLinkJson using the stored fingerprint", async () => {
+    const rawJson = JSON.stringify({ kind: CHAT_ATTACHMENT_KIND, event_id: EVENT_ID });
+    const queued = {
+      id: QUEUE_ID,
+      messageId: EVENT_ID,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_GROUP_FANOUT_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_ATTACHMENT_KIND,
+        eventId: EVENT_ID,
+        channelId: `${OWNER}:chan-1`,
+        rawJson,
+        secretFingerprint: "fp-stored",
+      }),
+      attempts: 0,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(queued);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([queued]);
+    vi.mocked(reconstructAttachmentWireJson).mockImplementation(
+      async (_raw, _ref, expected) => {
+        if (expected === "fp-stored") {
+          throw new Error("Attachment key material changed");
+        }
+        return _raw;
+      },
+    );
+
+    const result = await LinkService.sendPersistedLinkJson({
+      peerPubky: PEER,
+      queueId: QUEUE_ID,
+      kind: CHAT_ATTACHMENT_KIND,
+      eventId: EVENT_ID,
+      rawJson,
+      channelId: `${OWNER}:chan-1`,
+    });
+
+    expect(result).toBe("queued");
+    expect(reconstructAttachmentWireJson).toHaveBeenCalledWith(
+      rawJson,
+      expect.any(String),
+      "fp-stored",
+    );
+    expect(sendPrivate).not.toHaveBeenCalled();
+  });
+
+  it("persists secretFingerprint on buildPreparedSendIntent", async () => {
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_ATTACHMENT_KIND,
+      event_id: EVENT_ID,
+      key: "deadbeef",
+    });
+    const intent = await buildPreparedSendIntent({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      kind: CHAT_ATTACHMENT_KIND,
+      eventId: EVENT_ID,
+      rawJson,
+      body: "Attachment",
+      sentAt: NOW,
+      queueId: QUEUE_ID,
+    });
+    const payload = JSON.parse(intent.queueItem.payload) as { secretFingerprint?: string };
+    expect(payload.secretFingerprint).toBe("fp-test");
   });
 });
 

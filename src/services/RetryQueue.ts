@@ -25,6 +25,10 @@ import type { DeliveryQueueItem } from "../types";
 
 export const MAX_ATTEMPTS = 10;
 export const MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/** Retired items stay in the queue (send-path drain must still see them) but
+ * must not consume `getDue` slots. Backoff is capped at 30 minutes, so park
+ * writes `next_retry_at` directly instead of going through `defer`. */
+export const RETIRED_ITEM_PARK_MS = 365 * 24 * 60 * 60 * 1000;
 
 function nextRetryMs(attempts: number): number {
   const delayMs = Math.min(15_000 * Math.pow(2, attempts), 30 * 60 * 1000);
@@ -63,6 +67,10 @@ export const RetryQueue = {
 
   async defer(id: string, currentAttempts: number): Promise<void> {
     await StorageService.deferQueueItem(id, nextRetryMs(currentAttempts));
+  },
+
+  async park(id: string, untilMs = Date.now() + RETIRED_ITEM_PARK_MS): Promise<void> {
+    await StorageService.deferQueueItem(id, untilMs);
   },
 
   async recordSuccess(id: string): Promise<void> {

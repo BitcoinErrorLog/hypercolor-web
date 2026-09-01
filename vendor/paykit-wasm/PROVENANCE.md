@@ -101,6 +101,16 @@ Performed for `d4a73a5` on 2026-09-01, same machine as the source build:
   That is the documented `wasm-opt` non-determinism across compile
   contexts (different target dir / cold LLVM), not a source drift.
   `node paykit-wasm/scripts/smoke.mjs` on the clean rebuild: 17/17.
+- Section-level comparison (2026-09-01; `wasm2wat` is not installed on
+  this machine, so this is a WASM section walk of the same two
+  binaries). Both files have 13 sections. Every section id and length
+  matches except `data` (id 11): pinned `335922` bytes vs clean
+  `335716` bytes. `type`, `import`, `func`, `table`, `memory`,
+  `global`, `export`, `elem`, `datacount`, `code`, and both `custom`
+  sections are length-identical. File sizes: pinned `1825200`, clean
+  `1824994`. The bit-difference is confined to the data segment — the
+  shape a substituted binary would have to fake if it used
+  "wasm-opt nondeterminism" as cover. Smoke 17/17 on both artifacts.
 - `node paykit-wasm/scripts/smoke.mjs` on the source `pkg`: 17/17.
 - `npm run check:wasm` against the vendored copy in this repo: passed.
 
