@@ -20,6 +20,7 @@ import {
   CHAT_MESSAGE_KIND,
   coerceReceiverPath,
   decodeLinkEnvelope,
+  type LinkDeliveryState,
   type LinkMessage,
   type LinkReceiver,
   type LinkRecord,
@@ -44,7 +45,10 @@ import {
   redactAttachmentRawJson,
 } from "../../types/attachment";
 import { applyAttachmentInbound } from "../attachments/applyAttachmentInbound";
-import { reconstructAttachmentWireJson } from "../attachments/redaction";
+import {
+  fingerprintStoredAttachmentSecret,
+  reconstructAttachmentWireJson,
+} from "../attachments/redaction";
 import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
@@ -89,6 +93,7 @@ interface LinkRetryPayload {
   kind: string;
   eventId: string;
   rawJson: string;
+  secretFingerprint?: string;
 }
 
 interface GroupFanoutRetryPayload {
@@ -100,6 +105,7 @@ interface GroupFanoutRetryPayload {
   eventId: string;
   channelId: string;
   rawJson: string;
+  secretFingerprint?: string;
 }
 
 type AnyLinkRetryPayload = LinkRetryPayload | GroupFanoutRetryPayload;
@@ -117,6 +123,18 @@ const liveHandles = new Map<string, LiveHandle>();
 const queues = new Map<string, Promise<unknown>>();
 let drainTimer: ReturnType<typeof setInterval> | null = null;
 const inboxSyncListeners = new Set<(ownerPubky: PubkyKey) => void>();
+/** Serializes drain/recover loops. One wedged item cannot latch this: the
+ * per-item budget detaches work and the loop continues. */
+let drainPassChain: Promise<void> = Promise.resolve();
+/**
+ * In-flight claim on a queue item id → claim timestamp.
+ * A second drain pass (or a send-path drain) cannot re-send or
+ * double-`recordFailure` an item a first pass still holds. TTL lets a
+ * wedged claim be stolen so one hung PUT cannot park the item forever.
+ */
+const drainItemClaims = new Map<string, number>();
+const DRAIN_CLAIM_TTL_MS = 60_000;
+const RETIRED_ITEM_PARK_MS = 365 * 24 * 60 * 60 * 1000;
 
 export const LinkService = {
   async signinWithSecret(identitySecretHex: string): Promise<{ pubky: string }> {
@@ -336,57 +354,66 @@ export const LinkService = {
     queueId: string;
     rawJson: string;
   }): Promise<"sent" | "queued"> {
-    let outcome: EnsureOutcome;
-    try {
-      outcome = await ensureLinkLocked(input.peerPubky, true, false);
-    } catch {
-      return "queued";
-    }
-    if (
-      outcome !== "ready" &&
-      outcome !== "handshaking-initiator" &&
-      outcome !== "handshaking-responder"
-    ) {
-      return "queued";
-    }
-    const ownerForRequest = await requireOwner();
-    const pending = await StorageService.getMessageRequest(ownerForRequest, input.peerPubky);
-    if (pending?.status === "pending") {
-      await StorageService.upsertMessageRequest({
-        ...pending,
-        status: "accepted",
-        updatedAt: Date.now(),
-      });
-    }
-    if (outcome !== "ready") return "queued";
-    try {
-      const ownerPubky = await requireOwner();
-      const handle = requireEstablishedHandle(ownerPubky, input.peerPubky);
-      const wireJson = await wireJsonForNativeSend(
-        input.kind,
-        input.rawJson,
-        ownerPubky,
-        ownerPubky,
-        input.eventId,
-      );
-      const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
-      await StorageService.finalizeLinkSend({
-        ownerPubky,
-        peerPubky: input.peerPubky,
-        senderPubky: ownerPubky,
-        kind: input.kind,
-        eventId: input.eventId,
-        snapshot,
-        queueId: input.queueId,
-      });
-      return "sent";
-    } catch (err) {
-      console.warn(
-        `[LinkService] Persisted send failed for ${input.peerPubky}:`,
-        errorMessage(err),
-      );
-      return "queued";
-    }
+    return withQueue(input.peerPubky, async () => {
+      let outcome: EnsureOutcome;
+      try {
+        outcome = await ensureLinkLocked(input.peerPubky, true, false);
+      } catch {
+        return "queued";
+      }
+      if (
+        outcome !== "ready" &&
+        outcome !== "handshaking-initiator" &&
+        outcome !== "handshaking-responder"
+      ) {
+        return "queued";
+      }
+      const ownerForRequest = await requireOwner();
+      const pending = await StorageService.getMessageRequest(ownerForRequest, input.peerPubky);
+      if (pending?.status === "pending") {
+        await StorageService.upsertMessageRequest({
+          ...pending,
+          status: "accepted",
+          updatedAt: Date.now(),
+        });
+      }
+      if (outcome !== "ready") return "queued";
+      const prior = await drainOwedSamePeerWritesLocked(input.peerPubky, input.eventId);
+      if (prior !== "clear") return "queued";
+      try {
+        const ownerPubky = await requireOwner();
+        const handle = requireEstablishedHandle(ownerPubky, input.peerPubky);
+        const secretFingerprint =
+          input.kind === CHAT_ATTACHMENT_KIND
+            ? await fingerprintStoredAttachmentSecret(ownerPubky, ownerPubky, input.eventId)
+            : undefined;
+        const wireJson = await wireJsonForNativeSend(
+          input.kind,
+          input.rawJson,
+          ownerPubky,
+          ownerPubky,
+          input.eventId,
+          secretFingerprint,
+        );
+        const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
+        await StorageService.finalizeLinkSend({
+          ownerPubky,
+          peerPubky: input.peerPubky,
+          senderPubky: ownerPubky,
+          kind: input.kind,
+          eventId: input.eventId,
+          snapshot,
+          queueId: input.queueId,
+        });
+        return "sent";
+      } catch (err) {
+        console.warn(
+          `[LinkService] Persisted send failed for ${input.peerPubky}:`,
+          errorMessage(err),
+        );
+        return "queued";
+      }
+    });
   },
 
   async sendPersistedLinkJson(input: {
@@ -405,15 +432,22 @@ export const LinkService = {
         return "queued";
       }
       if (outcome !== "ready") return "queued";
+      const prior = await drainOwedSamePeerWritesLocked(input.peerPubky, input.eventId);
+      if (prior !== "clear") return "queued";
       try {
         const ownerPubky = await requireOwner();
         const handle = requireEstablishedHandle(ownerPubky, input.peerPubky);
+        const secretFingerprint =
+          input.kind === CHAT_ATTACHMENT_KIND
+            ? await fingerprintStoredAttachmentSecret(ownerPubky, ownerPubky, input.eventId)
+            : undefined;
         const wireJson = await wireJsonForNativeSend(
           input.kind,
           input.rawJson,
           ownerPubky,
           ownerPubky,
           input.eventId,
+          secretFingerprint,
         );
         const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
         await StorageService.finalizeGroupFanoutSend({
@@ -434,31 +468,46 @@ export const LinkService = {
   },
 
   async recoverPendingSends(): Promise<void> {
-    await reconcilePaymentPendingSends();
-    const items = await StorageService.listDeliveryQueue();
-    for (const item of items) {
-      const payload = parseRetryPayload(item.payload);
-      if (!payload || !(await isCurrentOwner(payload.ownerPubky))) continue;
-      if (payload.type === LINK_RETRY_PAYLOAD_TYPE) {
-        const row = await StorageService.getLinkMessage(
-          payload.ownerPubky,
-          payload.senderPubky,
-          payload.kind,
-          payload.eventId,
-        );
-        if (!row || row.deliveryState !== "sending") continue;
+    await withDrainPass(async () => {
+      await reconcilePaymentPendingSends();
+      const items = await StorageService.listDeliveryQueue();
+      for (const item of items) {
+        try {
+          const payload = parseRetryPayload(item.payload);
+          if (!payload || !(await isCurrentOwner(payload.ownerPubky))) continue;
+          if (payload.type === LINK_RETRY_PAYLOAD_TYPE) {
+            const row = await StorageService.getLinkMessage(
+              payload.ownerPubky,
+              payload.senderPubky,
+              payload.kind,
+              payload.eventId,
+            );
+            if (!row || !isDeliveryOwed(row.deliveryState)) continue;
+          }
+          await deliverQueuedPayloadWithBudget(item, payload);
+        } catch (err) {
+          console.warn(
+            `[LinkService] recoverPendingSends item ${item.id} rejected:`,
+            errorMessage(err),
+          );
+        }
       }
-      await deliverQueuedPayloadWithBudget(item, payload);
-    }
+    });
   },
 
   async drainRetries(): Promise<void> {
-    const due = await RetryQueue.getDue();
-    for (const item of due) {
-      const payload = parseRetryPayload(item.payload);
-      if (!payload || !(await isCurrentOwner(payload.ownerPubky))) continue;
-      await deliverQueuedPayloadWithBudget(item, payload);
-    }
+    await withDrainPass(async () => {
+      const due = await RetryQueue.getDue();
+      for (const item of due) {
+        try {
+          const payload = parseRetryPayload(item.payload);
+          if (!payload || !(await isCurrentOwner(payload.ownerPubky))) continue;
+          await deliverQueuedPayloadWithBudget(item, payload);
+        } catch (err) {
+          console.warn(`[LinkService] drainRetries item ${item.id} rejected:`, errorMessage(err));
+        }
+      }
+    });
   },
 
   async retryPendingSends(): Promise<void> {
@@ -588,6 +637,8 @@ export function resetLinkServiceHarnessState(): void {
   session = null;
   liveHandles.clear();
   queues.clear();
+  drainItemClaims.clear();
+  drainPassChain = Promise.resolve();
 }
 
 function currentSession(): ActiveSession | null {
@@ -1245,17 +1296,20 @@ async function syncPeerLocked(peerPubky: PubkyKey): Promise<LinkMessage[]> {
   }
   try {
     const outcome = await ensureLinkLocked(peerPubky, false, false);
-    const priorMessageCount = await StorageService.countLinkMessagesForPeer(ownerPubky, peerPubky);
-    const hasEstablishedConversation = priorMessageCount > 0;
+    const priorRoutedConversationCount = await StorageService.countLinkMessagesForPeer(
+      ownerPubky,
+      peerPubky,
+    );
+    const hasPriorRoutedConversation = priorRoutedConversationCount > 0;
     const isNewInbound =
       prior === null &&
-      !hasEstablishedConversation &&
+      !hasPriorRoutedConversation &&
       (outcome === "ready" || outcome === "handshaking-responder");
 
     if (isNewInbound && existingRequest?.status !== "accepted") {
       const contact = await StorageService.getContact(peerPubky, ownerPubky);
       const decision = classifyInboundPeer(
-        wotInputFromContact(contact, hasEstablishedConversation),
+        wotInputFromContact(contact, hasPriorRoutedConversation),
       );
       if (decision === "request") {
         await holdAsMessageRequest(ownerPubky, peerPubky);
@@ -1409,17 +1463,46 @@ async function routeUnprocessedStreamItems(
  */
 const DRAIN_ITEM_BUDGET_MS = 20_000;
 
+type DrainItemResult = "sent" | "settled" | "deferred" | "failed";
+
+async function withDrainPass<T>(fn: () => Promise<T>): Promise<T> {
+  let release!: () => void;
+  const previous = drainPassChain;
+  drainPassChain = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
+function tryClaimDrainItem(id: string, now = Date.now()): boolean {
+  const existing = drainItemClaims.get(id);
+  if (existing !== undefined && now - existing < DRAIN_CLAIM_TTL_MS) return false;
+  drainItemClaims.set(id, now);
+  return true;
+}
+
+function releaseDrainItem(id: string): void {
+  drainItemClaims.delete(id);
+}
+
 async function deliverQueuedPayloadWithBudget(
   item: DeliveryQueueItem,
   payload: AnyLinkRetryPayload,
 ): Promise<void> {
   const work = deliverQueuedPayload(item, payload);
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const winner = await Promise.race([
     work.then(() => "done" as const),
     new Promise<"timeout">((resolve) => {
-      setTimeout(() => resolve("timeout"), DRAIN_ITEM_BUDGET_MS);
+      timer = setTimeout(() => resolve("timeout"), DRAIN_ITEM_BUDGET_MS);
     }),
   ]);
+  if (timer !== undefined) clearTimeout(timer);
   if (winner === "timeout") {
     console.warn(
       `[LinkService] drain item ${item.id} exceeded ${DRAIN_ITEM_BUDGET_MS}ms; leaving in-flight send running so same-peer queue order is preserved`,
@@ -1433,115 +1516,194 @@ async function deliverQueuedPayloadWithBudget(
 async function deliverQueuedPayload(
   item: DeliveryQueueItem,
   payload: AnyLinkRetryPayload,
-): Promise<void> {
-  if (isRetired(item)) {
-    await RetryQueue.recordSuccess(item.id);
-    await markFailed(payload);
-    return;
+): Promise<DrainItemResult> {
+  if (!tryClaimDrainItem(item.id)) return "deferred";
+  try {
+    return await withQueue(payload.peerPubky, () => deliverQueuedPayloadLocked(item, payload));
+  } finally {
+    releaseDrainItem(item.id);
   }
-  await withQueue(payload.peerPubky, async () => {
-    if (payload.type === LINK_RETRY_PAYLOAD_TYPE) {
-      const row = await StorageService.getLinkMessage(
-        payload.ownerPubky,
-        payload.senderPubky,
-        payload.kind,
-        payload.eventId,
-      );
-      if (!row || row.deliveryState !== "sending") {
-        await RetryQueue.recordSuccess(item.id);
-        return;
-      }
-    } else {
-      const exists = await StorageService.hasGroupMessage(
-        payload.ownerPubky,
-        payload.channelId,
-        payload.senderPubky,
-        payload.eventId,
-      );
-      if (!exists) {
-        await RetryQueue.recordSuccess(item.id);
-        return;
-      }
-    }
+}
 
-    let outcome: EnsureOutcome;
+/**
+ * Retry-first drain of owed same-peer writes. Caller already holds
+ * `withQueue(peerPubky)`. Must run before any new plaintext is encrypted
+ * for this peer: an ambiguous prior PUT may have committed at nonce N
+ * without advancing the client ratchet.
+ *
+ * Any unsuccessful drain (deferred, failed, or another pass holding the
+ * item) blocks the new encrypt — never produce a second plaintext at N.
+ * Retired items stay parked in the queue so a later send still sees them.
+ */
+async function drainOwedSamePeerWritesLocked(
+  peerPubky: PubkyKey,
+  excludeEventId?: string,
+): Promise<"clear" | "blocked"> {
+  const items = await StorageService.listDeliveryQueue();
+  const owed: { item: DeliveryQueueItem; payload: AnyLinkRetryPayload }[] = [];
+  for (const item of items) {
+    const payload = parseRetryPayload(item.payload);
+    if (!payload || payload.peerPubky !== peerPubky) continue;
+    if (!(await isCurrentOwner(payload.ownerPubky))) continue;
+    if (excludeEventId && payload.eventId === excludeEventId) continue;
+    owed.push({ item, payload });
+  }
+  owed.sort((a, b) => a.item.createdAt - b.item.createdAt);
+  for (const { item, payload } of owed) {
+    if (!tryClaimDrainItem(item.id)) return "blocked";
     try {
-      outcome = await ensureLinkLocked(payload.peerPubky, true, false);
-    } catch (err) {
-      if (isTransientLinkError(err)) {
-        await RetryQueue.defer(item.id, item.attempts);
-        return;
-      }
-      const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
-      if (dropped) await markFailed(payload);
-      return;
+      const result = await deliverQueuedPayloadLocked(item, payload);
+      if (result !== "sent" && result !== "settled") return "blocked";
+    } finally {
+      releaseDrainItem(item.id);
     }
+  }
+  return "clear";
+}
 
-    if (outcome !== "ready") {
+async function queueItemStillPresent(id: string): Promise<boolean> {
+  const items = await StorageService.listDeliveryQueue();
+  return items.some((row) => row.id === id);
+}
+
+async function deliverQueuedPayloadLocked(
+  item: DeliveryQueueItem,
+  payload: AnyLinkRetryPayload,
+): Promise<DrainItemResult> {
+  if (payload.type === LINK_RETRY_PAYLOAD_TYPE) {
+    const row = await StorageService.getLinkMessage(
+      payload.ownerPubky,
+      payload.senderPubky,
+      payload.kind,
+      payload.eventId,
+    );
+    if (!row || !isDeliveryOwed(row.deliveryState)) {
+      await RetryQueue.recordSuccess(item.id);
+      return "settled";
+    }
+    if (isRetired(item)) {
+      await parkRetiredItem(item);
+      await markFailed(payload);
+      return "failed";
+    }
+  } else {
+    const row = await StorageService.getGroupMessage(
+      payload.ownerPubky,
+      payload.channelId,
+      payload.senderPubky,
+      payload.eventId,
+    );
+    if (!row || row.deliveryState === "sent" || row.deliveryState === "delivered") {
+      await RetryQueue.recordSuccess(item.id);
+      return "settled";
+    }
+    if (!(await queueItemStillPresent(item.id))) {
+      await RetryQueue.recordSuccess(item.id);
+      return "settled";
+    }
+    if (isRetired(item)) {
+      await parkRetiredItem(item);
+      await markFailed(payload);
+      return "failed";
+    }
+  }
+
+  let outcome: EnsureOutcome;
+  try {
+    outcome = await ensureLinkLocked(payload.peerPubky, true, false);
+  } catch (err) {
+    if (isTransientLinkError(err)) {
       await RetryQueue.defer(item.id, item.attempts);
-      return;
+      return "deferred";
     }
+    const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
+    if (dropped) await markFailed(payload);
+    return "failed";
+  }
 
-    try {
-      const handle = requireEstablishedHandle(payload.ownerPubky, payload.peerPubky);
-      const wireJson = await wireJsonForNativeSend(
-        payload.kind,
-        payload.rawJson,
-        payload.ownerPubky,
-        payload.senderPubky,
-        payload.eventId,
-      );
-      const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
-      if (payload.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
-        await StorageService.finalizeGroupFanoutSend({
-          ownerPubky: payload.ownerPubky,
-          peerPubky: payload.peerPubky,
-          snapshot,
-          queueId: item.id,
-        });
-        const remaining = await StorageService.countDeliveryQueueForMessage(payload.eventId);
-        if (remaining === 0) {
-          await StorageService.updateGroupMessageDeliveryState(
+  if (outcome !== "ready") {
+    await RetryQueue.defer(item.id, item.attempts);
+    return "deferred";
+  }
+
+  try {
+    const handle = requireEstablishedHandle(payload.ownerPubky, payload.peerPubky);
+    const wireJson = await wireJsonForNativeSend(
+      payload.kind,
+      payload.rawJson,
+      payload.ownerPubky,
+      payload.senderPubky,
+      payload.eventId,
+      payload.secretFingerprint,
+    );
+    const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
+    if (payload.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
+      await StorageService.finalizeGroupFanoutSend({
+        ownerPubky: payload.ownerPubky,
+        peerPubky: payload.peerPubky,
+        snapshot,
+        queueId: item.id,
+      });
+      const remaining = await StorageService.countDeliveryQueueForMessage(payload.eventId);
+      if (remaining === 0) {
+        await StorageService.updateGroupMessageDeliveryState(
+          payload.ownerPubky,
+          payload.channelId,
+          payload.senderPubky,
+          payload.eventId,
+          "sent",
+        );
+        if (payload.kind === CHAT_ATTACHMENT_KIND) {
+          await StorageService.updateAttachmentDelivery(
             payload.ownerPubky,
-            payload.channelId,
             payload.senderPubky,
             payload.eventId,
             "sent",
           );
-          if (payload.kind === CHAT_ATTACHMENT_KIND) {
-            await StorageService.updateAttachmentDelivery(
-              payload.ownerPubky,
-              payload.senderPubky,
-              payload.eventId,
-              "sent",
-            );
-          }
         }
-      } else {
-        await StorageService.finalizeLinkSend({
-          ownerPubky: payload.ownerPubky,
-          peerPubky: payload.peerPubky,
-          senderPubky: payload.senderPubky,
-          kind: payload.kind,
-          eventId: payload.eventId,
-          snapshot,
-          queueId: item.id,
-        });
       }
-      await RetryQueue.recordSuccess(item.id);
-    } catch (err) {
-      if (isTransientLinkError(err)) {
-        await RetryQueue.defer(item.id, item.attempts);
-        return;
-      }
-      const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
-      if (dropped) await markFailed(payload);
+    } else {
+      await StorageService.finalizeLinkSend({
+        ownerPubky: payload.ownerPubky,
+        peerPubky: payload.peerPubky,
+        senderPubky: payload.senderPubky,
+        kind: payload.kind,
+        eventId: payload.eventId,
+        snapshot,
+        queueId: item.id,
+      });
     }
-  });
+    await RetryQueue.recordSuccess(item.id);
+    return "sent";
+  } catch (err) {
+    if (isTransientLinkError(err)) {
+      await RetryQueue.defer(item.id, item.attempts);
+      return "deferred";
+    }
+    const dropped = await RetryQueue.recordFailure(item.id, item.attempts);
+    if (dropped) await markFailed(payload);
+    return "failed";
+  }
+}
+
+async function parkRetiredItem(item: DeliveryQueueItem): Promise<void> {
+  await RetryQueue.defer(item.id, Date.now() + RETIRED_ITEM_PARK_MS);
 }
 
 function isTransientLinkError(err: unknown): boolean {
   return isLinkNativeError(err) && (err.code === "unavailable" || err.code === "network");
+}
+
+/**
+ * A queued write is still owed while the row has not been confirmed sent.
+ *
+ * `failed` counts as owed: the row is marked failed so the sender sees the
+ * failure and gets a Retry control, but the queue item is what re-attempts the
+ * write. Treating `failed` as settled would drop the queue item and leave the
+ * message permanently undeliverable.
+ */
+function isDeliveryOwed(state: LinkDeliveryState): boolean {
+  return state === "sending" || state === "failed";
 }
 
 async function markFailed(payload: AnyLinkRetryPayload): Promise<void> {
@@ -1646,11 +1808,13 @@ async function wireJsonForNativeSend(
   ownerPubky: PubkyKey,
   senderPubky: PubkyKey,
   eventId: string,
+  expectedFingerprint?: string,
 ): Promise<string> {
   if (kind !== CHAT_ATTACHMENT_KIND) return persistedRawJson;
   return reconstructAttachmentWireJson(
     persistedRawJson,
     attachmentKeyRef(ownerPubky, senderPubky, eventId),
+    expectedFingerprint,
   );
 }
 
@@ -1732,6 +1896,7 @@ function retryPayload(
   eventId: string,
   rawJson: string,
   kind: string = CHAT_MESSAGE_KIND,
+  secretFingerprint?: string,
 ): LinkRetryPayload {
   return {
     type: LINK_RETRY_PAYLOAD_TYPE,
@@ -1741,6 +1906,7 @@ function retryPayload(
     kind,
     eventId,
     rawJson,
+    ...(secretFingerprint ? { secretFingerprint } : {}),
   };
 }
 
@@ -1757,6 +1923,10 @@ async function dispatchPreparedDm(input: {
   const queueId = crypto.randomUUID();
   const persistJson =
     input.kind === CHAT_ATTACHMENT_KIND ? redactAttachmentRawJson(input.rawJson) : input.rawJson;
+  const secretFingerprint =
+    input.kind === CHAT_ATTACHMENT_KIND
+      ? await fingerprintStoredAttachmentSecret(input.ownerPubky, input.ownerPubky, input.eventId)
+      : undefined;
   const message: LinkMessage = {
     ownerPubky: input.ownerPubky,
     eventId: input.eventId,
@@ -1779,7 +1949,14 @@ async function dispatchPreparedDm(input: {
       messageId: input.eventId,
       recipientPubky: input.peerPubky,
       payload: JSON.stringify(
-        retryPayload(input.ownerPubky, input.peerPubky, input.eventId, persistJson, input.kind),
+        retryPayload(
+          input.ownerPubky,
+          input.peerPubky,
+          input.eventId,
+          persistJson,
+          input.kind,
+          secretFingerprint,
+        ),
       ),
       attempts: 0,
       nextRetryAt: ts,
@@ -1789,6 +1966,28 @@ async function dispatchPreparedDm(input: {
 
   if (input.outcome !== "ready") return message;
 
+  const prior = await drainOwedSamePeerWritesLocked(input.peerPubky, input.eventId);
+  if (prior !== "clear") {
+    const blocked = retryPayload(
+      input.ownerPubky,
+      input.peerPubky,
+      input.eventId,
+      persistJson,
+      input.kind,
+      secretFingerprint,
+    );
+    try {
+      await markFailed(blocked);
+    } catch (markErr) {
+      console.warn(
+        `[LinkService] Could not mark blocked send failed for ${input.peerPubky}:`,
+        errorMessage(markErr),
+      );
+      return message;
+    }
+    return { ...message, deliveryState: "failed" };
+  }
+
   try {
     const handle = requireEstablishedHandle(input.ownerPubky, input.peerPubky);
     const wireJson = await wireJsonForNativeSend(
@@ -1797,6 +1996,7 @@ async function dispatchPreparedDm(input: {
       input.ownerPubky,
       input.ownerPubky,
       input.eventId,
+      secretFingerprint,
     );
     const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, wireJson);
     await StorageService.finalizeLinkSend({
@@ -1811,7 +2011,29 @@ async function dispatchPreparedDm(input: {
     return { ...message, deliveryState: "sent" };
   } catch (err) {
     console.warn(`[LinkService] Send failed for ${input.peerPubky}:`, errorMessage(err));
-    return message;
+    // A transient failure is worth waiting on: the queue item is already due and
+    // the sender sees the message as still on its way. Anything else has to
+    // surface, or the message sits at "sending" with no failure and no retry
+    // control for as long as the conversation is open.
+    if (isTransientLinkError(err)) return message;
+    const failedPayload = retryPayload(
+      input.ownerPubky,
+      input.peerPubky,
+      input.eventId,
+      persistJson,
+      input.kind,
+      secretFingerprint,
+    );
+    try {
+      await markFailed(failedPayload);
+    } catch (markErr) {
+      console.warn(
+        `[LinkService] Could not mark send failed for ${input.peerPubky}:`,
+        errorMessage(markErr),
+      );
+      return message;
+    }
+    return { ...message, deliveryState: "failed" };
   }
 }
 
@@ -1830,6 +2052,8 @@ function parseRetryPayload(payload: string): AnyLinkRetryPayload | null {
   if (typeof candidate.kind !== "string") return null;
   if (typeof candidate.eventId !== "string") return null;
   if (typeof candidate.rawJson !== "string") return null;
+  const secretFingerprint =
+    typeof candidate.secretFingerprint === "string" ? candidate.secretFingerprint : undefined;
   if (candidate.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
     if (typeof candidate.channelId !== "string") return null;
     return {
@@ -1841,6 +2065,7 @@ function parseRetryPayload(payload: string): AnyLinkRetryPayload | null {
       eventId: candidate.eventId,
       channelId: candidate.channelId,
       rawJson: candidate.rawJson,
+      ...(secretFingerprint ? { secretFingerprint } : {}),
     };
   }
   if (candidate.type !== LINK_RETRY_PAYLOAD_TYPE) return null;
@@ -1852,6 +2077,7 @@ function parseRetryPayload(payload: string): AnyLinkRetryPayload | null {
     kind: candidate.kind,
     eventId: candidate.eventId,
     rawJson: candidate.rawJson,
+    ...(secretFingerprint ? { secretFingerprint } : {}),
   };
 }
 

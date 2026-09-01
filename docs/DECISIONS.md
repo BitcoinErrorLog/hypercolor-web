@@ -1,5 +1,46 @@
 # Decisions and audit waivers
 
+## Kimi web session/SW audit close-out (branch fix/sw-rsc-chats-nav, final verdict SHIP at bf41ee2)
+
+The blocking finding (orphaned receiver secret from a failed marker
+publish reading as "enabled" forever) was fixed by the scoped rollback
+in `provisionReceiver`. The following non-blocking findings are waived
+in writing:
+
+**Revoked session shows "Session offline" until sign-out.** A grant
+that can never resume (unauthorized / pubky mismatch / scope missing)
+keeps its durable evidence and reports `session-offline` rather than
+downgrading to `needs-enable`. Recovery is the sign-out button. Waived:
+fail-safe direction (never silently discards a working receiver), and
+auto-downgrade risks discarding a valid grant on a transient
+misclassification. Revisit if support burden appears.
+
+**Pagehide tail-write window.** `closeDb` on pagehide flushes
+persistently after every mutating statement, but a page killed
+mid-write can lose the final mutation(s) since the last flush. Waived:
+bounded to the tail, no cross-account or security impact.
+
+**Crash-mid-provision orphan (crash-class residual).** A tab death
+inside the ~15s publish window, or a throw inside `mintReceiver`
+between the KeyStore write and the SQL write, can still leave an
+orphaned secret that reads as "enabled" until the user re-runs Enable.
+No in-process rollback can cover process death. Waived: crash-in-a-
+narrow-window frequency (vs. the fixed finding's routine-network-
+failure certainty); the accepted fix if it ever bites is
+publish-then-persist ordering in `mintReceiver`, which converts the
+crash window to fail-closed. A self-heal inside `getEnableStatus` was
+rejected because it would reintroduce the SQLite read that previously
+wedged the Enable CTA behind a DB lock.
+
+**Preview-URL cache keying.** The service worker keys cached
+navigations by full URL, including `?x-vercel-protection-bypass=` on
+preview deployments. Harmless on production, same-device only.
+
+**Alias future-proofing nit.** `rollbackUnpublishedReceiver` deletes
+the default receiver alias while the reuse path reads
+`existing.receiverAlias`; every writer uses the default alias today.
+Tighten if a second alias writer ever appears.
+
 ## F3 (Kimi paykit-wasm rc48): ratchet rollback + keystream reuse is unreachable
 
 Kimi asked whether a failed send that advanced the in-memory ratchet, then
@@ -54,10 +95,58 @@ in-memory ratchet state on failure. The 2xx-body-timeout window
 that to `HomeserverWriteError`; nonce still does not advance; the
 write stays owed and retries the same ciphertext onto the same slot.
 
-Not claimed: a *new* message sent while a prior `put` reported
-failure but the homeserver actually stored the first ciphertext
-(same nonce, different plaintext) is a pubky-noise slot-overwrite
-question, not a snapshot-rollback one. Per-peer `withQueue` plus
-retry-of-same-`wireJson` is what the web path does. No persist-
-before-write journal was added because the rollback + different-
-plaintext path is not reachable on this stack.
+The F2 typed-timeout path manufactures the case this waiver originally
+declined to claim: a 2xx write that the client records as failure
+leaves nonce and slot un-advanced. A *new* encrypt for that peer
+before the owed retry would reuse the nonce. That hole is closed by
+retry-first ordering (see below). Restore-from-snapshot remains
+unreachable as documented above.
+
+## R2-F1 (Kimi round 2): retry-first before a new same-peer encrypt
+
+**Decision:** after `withQueue(peer)` is held and before any new
+plaintext is encrypted for that peer (`dispatchPreparedDm`,
+`sendPersistedLinkJson`, `attemptPersistedSend` — including group
+fan-out, which shares the same Encrypted Link nonce sequence), drain
+every owed same-peer queue item oldest-first. Only if that drain
+returns `clear` (each item `sent` or already `settled`) may the new
+message be encrypted.
+
+If an owed retry is still unsuccessful — transient `deferred`,
+non-transient `failed`, retired-and-parked, or claimed in-flight by
+another pass — the new encrypt is **blocked**. The new row is marked
+`failed` (still owed via its queue item) and is not sent. Never
+encrypt a second plaintext at a nonce a prior undelivered `wireJson`
+already used.
+
+Retired items are **parked** (`defer` far in the future) instead of
+removed. Removing them would empty the queue and let a later send
+encrypt at the still-unadvanced nonce. The interval drain skips them
+(`getDue` uses `next_retry_at`); the send-path drain still sees them
+via `listDeliveryQueue` and either completes the write or keeps
+blocking new encrypts.
+
+Group fan-out to a peer is the same nonce sequence as DMs to that
+peer (`sendPrivateMessageJson` on the same handle). Fan-out therefore
+runs the same retry-first drain.
+
+**Attachment reconstruction:** `reconstructAttachmentWireJson` is
+deterministic given unchanged KeyStore state (same redacted envelope
++ same secret → same `JSON.stringify`). Eviction throws `not-found`.
+Retry payloads persist `secretFingerprint` (SHA-256 of key/nonce/
+algorithm/thumbnail). A rotated secret fails closed with
+`validation` — the retry never reaches `sendPrivateMessageJson`.
+Legacy payloads without a fingerprint still fail on eviction; they
+cannot detect rotation and must not be treated as a license to
+re-encrypt blindly once a fingerprint exists.
+
+## R2-F4: one drain pass at a time, per-item claims
+
+Drain/recover loops share a module-level promise chain so only one
+pass's loop runs. Per-item 20s budget still detaches a wedged send
+so the pass cannot latch on one peer. Each queue item is claimed
+with a timestamp (`DRAIN_CLAIM_TTL_MS` = 60s) so a second pass
+cannot re-send or double-`recordFailure` an in-flight item. An
+expired claim can be stolen; the per-peer mutex still serializes
+the actual PUT. Fan-out re-checks `getGroupMessage` sent-state and
+whether the queue row still exists before sending.
