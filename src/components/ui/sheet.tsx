@@ -9,6 +9,12 @@ import { cn } from "@/lib/utils";
 export type SheetRole = "dialog" | "alertdialog" | "menu";
 export type SheetLayer = "sheet" | "gate";
 
+function isUsefulRestoreTarget(el: HTMLElement | null): el is HTMLElement {
+  if (!el?.isConnected) return false;
+  if (el === document.body || el === document.documentElement) return false;
+  return true;
+}
+
 function inertBackground(overlay: HTMLElement): () => void {
   const blocked: HTMLElement[] = [];
   for (const child of Array.from(document.body.children)) {
@@ -34,6 +40,7 @@ export function ModalSheet({
   role = "dialog",
   layer = "sheet",
   initialFocusRef,
+  restoreFocus,
   children,
   testId,
   closeOnBackdrop = true,
@@ -46,6 +53,7 @@ export function ModalSheet({
   role?: SheetRole;
   layer?: SheetLayer;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
+  restoreFocus?: () => HTMLElement | null;
   children: ReactNode;
   testId?: string;
   closeOnBackdrop?: boolean;
@@ -81,9 +89,16 @@ export function ModalSheet({
       window.clearTimeout(timer);
       releaseInert();
       if (document.querySelector('[aria-modal="true"]')) return;
-      restoreRef.current?.focus();
+      const captured = restoreRef.current;
+      const fallback = restoreFocus?.() ?? null;
+      const main = document.getElementById("main-content");
+      const target =
+        (isUsefulRestoreTarget(captured) ? captured : null) ??
+        (isUsefulRestoreTarget(fallback) ? fallback : null) ??
+        (main instanceof HTMLElement ? main : null);
+      target?.focus();
     };
-  }, [open, initialFocusRef]);
+  }, [open, initialFocusRef, restoreFocus]);
 
   if (!open) return null;
 

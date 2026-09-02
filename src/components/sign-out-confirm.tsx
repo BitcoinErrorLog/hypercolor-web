@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ModalSheet } from "@/components/ui/sheet";
 import { formatRelativeTime } from "@/lib/format";
-import { readLastBackupAt } from "@/lib/backup-gate";
+import { parkGateRestoreFocus, readLastBackupAt } from "@/lib/backup-gate";
 import { CUSTODY_LINE } from "@/lib/session-ui";
 
 export function SignOutConfirm({
@@ -20,6 +20,7 @@ export function SignOutConfirm({
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const restoreTrigger = useCallback(() => triggerRef.current, []);
 
   function close() {
     setOpen(false);
@@ -48,6 +49,7 @@ export function SignOutConfirm({
         titleId="sign-out-title"
         descriptionId="sign-out-body"
         initialFocusRef={cancelRef}
+        restoreFocus={restoreTrigger}
         testId="signOutDialog"
       >
         <h2 id="sign-out-title" className="text-lg font-semibold">
@@ -84,6 +86,7 @@ export function SignOutConfirm({
             onClick={() => {
               const proceeded = onSignOut();
               if (proceeded === false) {
+                parkGateRestoreFocus(triggerRef.current);
                 setOpen(false);
               }
             }}
