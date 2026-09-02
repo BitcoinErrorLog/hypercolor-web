@@ -126,11 +126,25 @@ test.describe("empty-state product screens", () => {
     expect(box!.width).toBeGreaterThanOrEqual(44);
   });
 
-  test("reduced motion removes transforms", async ({ page }) => {
+  test("reduced motion stops decorative motion and keeps layout transforms", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/chats");
     await expect(page.getByRole("heading", { name: "Chats" })).toBeVisible({ timeout: 30_000 });
-    const transform = await page.locator("body").evaluate((el) => getComputedStyle(el).transform);
-    expect(transform).toBe("none");
+    const styles = await page.evaluate(() => {
+      const pulse = document.createElement("div");
+      pulse.className = "animate-pulse";
+      const layout = document.createElement("div");
+      layout.style.transform = "translateX(-50%)";
+      document.body.append(pulse, layout);
+      const result = {
+        pulseTransform: getComputedStyle(pulse).transform,
+        layoutTransform: getComputedStyle(layout).transform,
+      };
+      pulse.remove();
+      layout.remove();
+      return result;
+    });
+    expect(styles.pulseTransform).toBe("none");
+    expect(styles.layoutTransform).not.toBe("none");
   });
 });

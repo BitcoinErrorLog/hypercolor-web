@@ -6,3 +6,11 @@ export function prefersReducedMotion(): boolean {
   }
   return window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
+
+export function scriptedScrollBehavior(): ScrollBehavior {
+  return prefersReducedMotion() ? "auto" : "smooth";
+}
+
+export function scriptedMotionMs(durationMs: number): number {
+  return prefersReducedMotion() ? 0 : durationMs;
+}

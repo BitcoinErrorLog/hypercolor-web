@@ -42,6 +42,9 @@
   --radius-lg: calc(var(--radius) + 4px);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --z-index-40: 40;
+  --z-index-50: 50;
+  --z-index-60: 60;
 }
 
 body {
@@ -54,13 +57,17 @@ body {
   html:focus-within {
     scroll-behavior: auto;
   }
-  *,
-  *::before,
-  *::after {
+  .animate-pulse,
+  .sheet-enter,
+  .transition-colors {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  .animate-pulse,
+  .sheet-enter {
+    animation: none !important;
     transform: none !important;
   }
 }
