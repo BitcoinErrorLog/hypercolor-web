@@ -20,7 +20,7 @@ vi.mock("./PaykitLinkWeb", () => ({
   },
 }));
 
-import { provisionReceiver } from "./provisionReceiver";
+import { provisionReceiver, RECEIVER_MARKER_PUBLISH_BUDGET_MS } from "./provisionReceiver";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 
@@ -82,6 +82,7 @@ describe("provisionReceiver", () => {
   });
 
   it("fails fast when publishReceiverMarker hangs", async () => {
+    expect(RECEIVER_MARKER_PUBLISH_BUDGET_MS).toBe(15_000);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
@@ -89,10 +90,22 @@ describe("provisionReceiver", () => {
       publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
       const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
       await waitForPublishToStart();
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(14_900);
+      await Promise.resolve();
+      expect(settled).toBe(false);
       const assertion = expect(pending).rejects.toMatchObject({
         name: "SessionResumeTimeout",
       });
-      await vi.advanceTimersByTimeAsync(15_100);
+      await vi.advanceTimersByTimeAsync(200);
       await assertion;
     } finally {
       vi.useRealTimers();
@@ -107,10 +120,22 @@ describe("provisionReceiver", () => {
       publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
       const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
       await waitForPublishToStart();
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(14_900);
+      await Promise.resolve();
+      expect(settled).toBe(false);
       const assertion = expect(pending).rejects.toMatchObject({
         name: "SessionResumeTimeout",
       });
-      await vi.advanceTimersByTimeAsync(15_100);
+      await vi.advanceTimersByTimeAsync(200);
       await assertion;
     } finally {
       vi.useRealTimers();
