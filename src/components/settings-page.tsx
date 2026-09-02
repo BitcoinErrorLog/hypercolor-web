@@ -17,7 +17,6 @@ import {
   rememberBackupCreated,
   setBackupGate,
 } from "@/lib/backup-gate";
-import { isE2eHarnessEnabled } from "@/lib/e2e-harness";
 import { BACKUP_CUSTODY_LINE, CUSTODY_LINE, sessionStatusLabel } from "@/lib/session-ui";
 import { BackupService } from "@/services/backup/BackupService";
 import { emit } from "@/services/vibeware/collector";
@@ -55,7 +54,7 @@ export function SettingsPage() {
   }, [recoveryCode, confirmedSaved]);
 
   useEffect(() => {
-    if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
+    if (!__HYPERCOLOR_E2E_HARNESS__ || typeof window === "undefined") return;
     const host = window as Window & {
       __hypercolorShowRecovery?: (code: string) => void;
     };
@@ -122,7 +121,6 @@ export function SettingsPage() {
               .then((result) => {
                 setRecoveryCode(result.recoveryCode);
                 setBackupGate({ recoveryCode: result.recoveryCode, confirmedSaved: false });
-                rememberBackupCreated();
                 void emit("app.backup.export_outcome", { outcome: "shown" });
               })
               .catch((err) => {
@@ -171,6 +169,7 @@ export function SettingsPage() {
               data-testid="recoveryCodeDone"
               onClick={() => {
                 void emit("app.backup.export_outcome", { outcome: "confirmed" });
+                rememberBackupCreated();
                 clearBackupGate();
                 setRecoveryCode(null);
                 setConfirmedSaved(false);

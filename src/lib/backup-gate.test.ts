@@ -92,6 +92,14 @@ describe("backup-gate", () => {
     expect(readLastBackupAt()).toBe(1_700_000_000_000);
   });
 
+  it("Leave anyway does not write or clear a previous last-backup timestamp", () => {
+    rememberBackupCreated(1_700_000_000_000);
+    setBackupGate({ recoveryCode: "abcd1234wxyz", confirmedSaved: false });
+    confirmPendingBackupLeave();
+    expect(readLastBackupAt()).toBe(1_700_000_000_000);
+    expect(getBackupGate().recoveryCode).toBeNull();
+  });
+
   it("ignores hash-only hrefs and holds guarded navigation until Leave anyway", () => {
     setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
     expect(shouldBlockHref("#backup", "/settings")).toBe(false);
