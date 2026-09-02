@@ -68,9 +68,32 @@ async function readGate(page: Page) {
 }
 
 async function expectNoBackupGateInHistory(page: Page) {
-  const origin = page.url();
-  const length = await page.evaluate(() => history.length);
-  for (let i = 0; i < length + 2; i += 1) {
+  const startHref = page.url();
+  const appOrigin = new URL(startHref).origin;
+
+  const onApp = () => {
+    const href = page.url();
+    return href.startsWith(appOrigin) && !href.startsWith("about:");
+  };
+
+  const recoverApp = async () => {
+    for (let i = 0; i < 8; i += 1) {
+      if (onApp()) return;
+      try {
+        await page.goForward({ waitUntil: "commit", timeout: 2000 });
+      } catch {
+        break;
+      }
+    }
+    if (!onApp()) {
+      await page.goto(startHref, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+    }
+  };
+
+  const assertClean = async (label: string) => {
+    if (!onApp()) {
+      await recoverApp();
+    }
     const probe = await page.evaluate(() => {
       const state = history.state as {
         backupGate?: boolean;
@@ -85,20 +108,98 @@ async function expectNoBackupGateInHistory(page: Page) {
         serialized: JSON.stringify(state),
       };
     });
-    expect(probe.backupGate, `backupGate still set at ${probe.href}`).toBe(false);
-    expect(probe.backupGateDepth, `backupGateDepth still set at ${probe.href}`).toBeNull();
+    expect(probe.backupGate, `${label}: backupGate still set at ${probe.href}`).toBe(false);
+    expect(probe.backupGateDepth, `${label}: backupGateDepth still set at ${probe.href}`).toBeNull();
     expect(probe.recoveryCode).toBeNull();
     expect(probe.serialized ?? "null").not.toMatch(/abcd1234wxyz/);
-    const before = page.url();
-    await page.goBack();
-    await page.waitForTimeout(80);
-    if (page.url() === before) break;
+  };
+
+  const traverse = async (delta: -1 | 1): Promise<boolean> => {
+    if (!onApp()) return false;
+    const before = await page.evaluate(() => ({
+      href: location.href,
+      state: JSON.stringify(history.state),
+    }));
+    let sameDocumentPop = false;
+    try {
+      sameDocumentPop = await page.evaluate(async (step) => {
+        return await new Promise<boolean>((resolve) => {
+          let settled = false;
+          const done = (didMove: boolean) => {
+            if (settled) return;
+            settled = true;
+            window.removeEventListener("popstate", onPop);
+            resolve(didMove);
+          };
+          const onPop = () => done(true);
+          window.addEventListener("popstate", onPop);
+          history.go(step);
+          window.setTimeout(() => done(false), 200);
+        });
+      }, delta);
+    } catch {
+      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+    }
+    if (!sameDocumentPop) {
+      await page.waitForTimeout(80);
+    }
+    if (!onApp()) {
+      await recoverApp();
+      return false;
+    }
+    const after = await page.evaluate(() => ({
+      href: location.href,
+      state: JSON.stringify(history.state),
+    }));
+    return sameDocumentPop || before.href !== after.href || before.state !== after.state;
+  };
+
+  await assertClean("origin");
+  const max = (await page.evaluate(() => history.length)) + 2;
+  let backs = 0;
+  for (let i = 0; i < max; i += 1) {
+    const moved = await traverse(-1);
+    if (!onApp()) {
+      await recoverApp();
+      break;
+    }
+    if (!moved) break;
+    backs += 1;
+    await assertClean(`back ${backs}`);
   }
-  while (page.url() !== origin) {
-    const before = page.url();
-    await page.goForward();
-    await page.waitForTimeout(80);
-    if (page.url() === before) break;
+  if (!onApp()) await recoverApp();
+  let forwards = 0;
+  for (let i = 0; i < max + backs; i += 1) {
+    const moved = await traverse(1);
+    if (!moved) break;
+    forwards += 1;
+    await assertClean(`forward ${forwards}`);
+  }
+  const net = forwards - backs;
+  if (net !== 0) {
+    const restore = net > 0 ? (-1 as const) : (1 as const);
+    for (let i = 0; i < Math.abs(net); i += 1) {
+      const moved = await traverse(restore);
+      if (!moved) break;
+    }
+  }
+  if (page.url() !== startHref && onApp()) {
+    for (let i = 0; i < max; i += 1) {
+      if (page.url() === startHref) break;
+      const moved = await traverse(1);
+      if (!moved) break;
+    }
+    for (let i = 0; i < max; i += 1) {
+      if (page.url() === startHref) break;
+      const moved = await traverse(-1);
+      if (!moved) break;
+    }
+  }
+  if (page.url() !== startHref) {
+    await recoverApp();
+    if (page.url() !== startHref) {
+      await page.goto(startHref, { waitUntil: "domcontentloaded" });
+    }
   }
 }
 
@@ -430,6 +531,27 @@ test.describe("recovery-code gate attack matrix", () => {
     await page.goBack();
     await expect(page).toHaveURL(/\/profile/);
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await expectNoBackupGateInHistory(page);
+    await expect(page).toHaveURL(/\/profile/);
+  });
+
+  test("reload while parked then one Back is the previous real route", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.goBack();
+    await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await page.waitForFunction(() => {
+      const state = history.state as { backupGate?: boolean; backupGateDepth?: unknown } | null;
+      return !state || (state.backupGate !== true && state.backupGateDepth == null);
+    });
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
     await expectNoBackupGateInHistory(page);
     await expect(page).toHaveURL(/\/profile/);
   });

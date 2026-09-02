@@ -45,6 +45,36 @@ function readHistoryState(): Record<string, unknown> {
     : {};
 }
 
+function currentEntryHasBackupGate(state: unknown): boolean {
+  if (!state || typeof state !== "object") return false;
+  const record = state as BackupGateHistoryState;
+  return record.backupGate === true || record.backupGateDepth != null;
+}
+
+function historyStateWithoutBackupGate(
+  state: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const next: Record<string, unknown> = { ...state };
+  delete next.backupGate;
+  delete next.backupGateDepth;
+  return Object.keys(next).length === 0 ? null : next;
+}
+
+/** Strip trap flags from the current entry. Never write the recovery code. */
+function scrubBackupGateFromCurrentEntry(): boolean {
+  if (typeof history === "undefined" || typeof history.replaceState !== "function") {
+    return false;
+  }
+  const state = readHistoryState();
+  if (!currentEntryHasBackupGate(state)) return false;
+  history.replaceState(
+    historyStateWithoutBackupGate(state),
+    "",
+    typeof window !== "undefined" ? window.location.href : "",
+  );
+  return true;
+}
+
 /** Depth encoded on each trap entry. Never store the recovery code here. */
 function trapDepthFromState(state: unknown): number {
   if (!state || typeof state !== "object") return 0;
@@ -85,10 +115,12 @@ export function armHistoryTrap(): void {
 
 /**
  * Pop remaining same-URL trap entries without treating them as a leave.
- * Depth comes from the landed history entry, not the in-memory counter, so a
- * Back that left stale trap stops still drains them. Popstates are suppressed
- * for the whole drain; a user Back in that window is folded into the leftover
- * depth instead of re-arming. `done` runs after the pops settle.
+ * Before leaving each trap entry, `replaceState` removes `backupGate` /
+ * `backupGateDepth` so those flags cannot remain on the forward stack.
+ * Then traverse one entry and wait for its `popstate` before the next step.
+ * Popstates are suppressed for the whole drain; a user Back in that window is
+ * folded into the leftover depth instead of re-arming. `done` runs after the
+ * pops settle.
  */
 function consumeHistoryTrapThen(done: () => void): void {
   if (typeof window === "undefined") {
@@ -96,15 +128,7 @@ function consumeHistoryTrapThen(done: () => void): void {
     done();
     return;
   }
-  const onSettings =
-    new URL(window.location.href, "https://hypercolor.app").pathname === "/settings";
-  const n = trapDepthFromState(history.state);
   trapPushed = 0;
-  if (!onSettings || n <= 0) {
-    done();
-    return;
-  }
-  consumingTrap = true;
   let finished = false;
   const finish = () => {
     if (finished) return;
@@ -115,42 +139,68 @@ function consumeHistoryTrapThen(done: () => void): void {
     }
     done();
   };
-  const popLeftover = () => {
-    if (finished) return false;
-    const leftover = trapDepthFromState(history.state);
-    if (leftover > 0 && currentPathname() === "/settings") {
-      history.go(-leftover);
-      return true;
+  const drainStep = () => {
+    if (finished) return;
+    if (currentPathname() !== "/settings") {
+      scrubBackupGateFromCurrentEntry();
+      finish();
+      return;
     }
-    return false;
+    if (trapDepthFromState(history.state) <= 0) {
+      scrubBackupGateFromCurrentEntry();
+      finish();
+      return;
+    }
+    scrubBackupGateFromCurrentEntry();
+    history.go(-1);
   };
   const onPop = () => {
     if (finished) return;
     if (typeof window.setTimeout === "function") {
-      window.setTimeout(() => {
-        if (!popLeftover()) finish();
-      }, 0);
+      window.setTimeout(drainStep, 0);
       return;
     }
-    if (!popLeftover()) finish();
+    drainStep();
   };
-  if (typeof window.addEventListener === "function") {
-    window.addEventListener("popstate", onPop);
-  }
-  history.go(-n);
   if (typeof window.addEventListener !== "function") {
-    popLeftover();
+    consumingTrap = true;
+    drainStep();
+    while (
+      !finished &&
+      currentPathname() === "/settings" &&
+      trapDepthFromState(history.state) > 0
+    ) {
+      drainStep();
+    }
     finish();
     return;
   }
-  window.setTimeout(() => {
-    if (finished) return;
-    if (popLeftover()) {
+  consumingTrap = true;
+  window.addEventListener("popstate", onPop);
+  drainStep();
+  if (typeof window.setTimeout === "function") {
+    window.setTimeout(() => {
+      if (finished) return;
+      drainStep();
       window.setTimeout(finish, 250);
-      return;
-    }
-    finish();
-  }, 250);
+    }, 250);
+  }
+}
+
+/**
+ * Reload leftover: trap flags can survive in `history.state` after module
+ * memory is gone. The user is not gated. Scrub the current entry and drain
+ * remaining trap stops so the next Back is the real previous route.
+ */
+function scrubOrphanBackupGateHistory(): void {
+  if (typeof window === "undefined") return;
+  if (isBackupLeaveBlocked()) return;
+  if (consumingTrap) return;
+  if (trapDepthFromState(history.state) <= 0) {
+    scrubBackupGateFromCurrentEntry();
+    return;
+  }
+  consumeHistoryTrapThen(() => undefined);
 }
 
 function consumeHistoryTrap(): void {
@@ -264,6 +314,7 @@ function parkEscapedBackupLeave(): void {
 export function onBackupGateRouteChange(pathname: string): void {
   if (pathname === "/settings") {
     if (isBackupLeaveBlocked()) armHistoryTrap();
+    else scrubOrphanBackupGateHistory();
     return;
   }
   if (isBackupLeaveBlocked()) {
@@ -272,13 +323,18 @@ export function onBackupGateRouteChange(pathname: string): void {
   }
   if (snapshot.recoveryCode) {
     clearBackupGate();
+    return;
   }
+  scrubOrphanBackupGateHistory();
 }
 
 /** popstate. Refill the trap when still on Settings; otherwise park in place. */
 export function onBackupGatePopState(): void {
   if (consumingTrap) return;
-  if (!isBackupLeaveBlocked()) return;
+  if (!isBackupLeaveBlocked()) {
+    scrubBackupGateFromCurrentEntry();
+    return;
+  }
   if (isHashOnlyHistoryChange()) {
     armHistoryTrap();
     return;
