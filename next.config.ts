@@ -11,6 +11,11 @@ const nextConfig: NextConfig = {
       ...config.experiments,
       asyncWebAssembly: true,
     };
+    config.plugins.push(
+      new webpack.DefinePlugin({
+        __HYPERCOLOR_E2E_HARNESS__: JSON.stringify(process.env.NEXT_PUBLIC_E2E_HARNESS === "1"),
+      }),
+    );
     if (!isServer) {
       config.plugins.push(
         new webpack.NormalModuleReplacementPlugin(/^node:/, (resource: { request: string }) => {

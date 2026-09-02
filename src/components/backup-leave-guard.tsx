@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ModalSheet } from "@/components/ui/sheet";
 import { useBlockingGate } from "@/hooks/useBlockingGate";
-import { isE2eHarnessEnabled } from "@/lib/e2e-harness";
 import {
   BACKUP_LEAVE_BODY,
   BACKUP_LEAVE_CONFIRM,
@@ -37,7 +36,7 @@ export function BackupLeaveGuard() {
   const { pending, stay, leaveAnyway, stayRef, blocked } = useBlockingGate();
 
   useEffect(() => {
-    if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
+    if (!__HYPERCOLOR_E2E_HARNESS__ || typeof window === "undefined") return;
     const host = window as Window & {
       __hypercolorSetBackupGate?: typeof setBackupGate;
       __hypercolorGetBackupGate?: typeof getBackupGate;

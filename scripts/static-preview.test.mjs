@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +12,11 @@ import {
   resolveOutFile,
   startStaticPreview,
 } from "./static-preview.mjs";
+import {
+  classifyHarnessHookInSource,
+  findE2eHarnessHookSymbols,
+  listE2eHarnessHookSymbols,
+} from "./e2e-harness-symbols.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const temps = [];
@@ -80,7 +85,32 @@ describe("static preview rewrites", () => {
   it("refuses path traversal", () => {
     const root = tempDir();
     writeFileSync(path.join(root, "index.html"), "ok");
+    const rootResolved = path.resolve(root);
+    const assertInsideOrMissing = (urlPath) => {
+      const file = resolveOutFile(root, urlPath);
+      if (file === null || file === BAD_URL_ENCODING) return;
+      const rel = path.relative(rootResolved, file);
+      expect(rel.startsWith("..") || path.isAbsolute(rel)).toBe(false);
+    };
     expect(resolveOutFile(root, "/../package.json")).toBeNull();
+    expect(resolveOutFile(root, "/%2e%2e/package.json")).toBeNull();
+    expect(resolveOutFile(root, "/%252e%252e/package.json")).toBeNull();
+    expect(resolveOutFile(root, "/..%5cpackage.json")).toBeNull();
+    assertInsideOrMissing("/foo/bar/../..");
+    assertInsideOrMissing("/..");
+  });
+
+  it("parses CACHE from public/sw.js as the single source of truth", () => {
+    const parse = (file) => {
+      const match = readFileSync(file, "utf8").match(/^\s*const CACHE = "([^"]+)";/m);
+      if (!match?.[1]) throw new Error(`no CACHE in ${file}`);
+      return match[1];
+    };
+    const current = parse(path.join(REPO_ROOT, "public", "sw.js"));
+    const v3 = parse(path.join(REPO_ROOT, "e2e", "fixtures", "sw-v3.js"));
+    expect(current).toBe("hypercolor-shell-v4");
+    expect(v3).toBe("hypercolor-shell-v3");
+    expect(current).not.toBe(v3);
   });
 
   it("returns a sentinel for malformed percent encoding", () => {
@@ -148,6 +178,48 @@ describe("static preview rewrites", () => {
       expect(await res.text()).toContain("harness");
     } finally {
       await preview.close();
+    }
+  });
+
+  it("refuses an unmarked export whose chunks contain a harness hook symbol", async () => {
+    const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+    expect(symbols).toContain("__hypercolorSetBackupGate");
+    expect(symbols).toContain("__hypercolorShowRecovery");
+    const root = tempDir();
+    writeFileSync(path.join(root, "index.html"), "<html>unmarked</html>");
+    mkdirSync(path.join(root, "_next", "static", "chunks"), { recursive: true });
+    writeFileSync(
+      path.join(root, "_next", "static", "chunks", "fake.js"),
+      `window.__hypercolorSetBackupGate=function(){}`,
+    );
+    await expect(startStaticPreview({ root, port: 0, rewrites: [] })).rejects.toThrow(
+      /unmarked e2e-harness|__hypercolorSetBackupGate/,
+    );
+    const preview = await startStaticPreview({
+      root,
+      port: 0,
+      rewrites: [],
+      allowE2eHarness: true,
+    });
+    try {
+      const res = await fetch(`${preview.url}/`);
+      expect(res.status).toBe(200);
+    } finally {
+      await preview.close();
+    }
+  });
+
+  it("production out/ has no live __hypercolor hook registration", () => {
+    const out = path.join(REPO_ROOT, "out");
+    if (!existsSync(out) || existsSync(path.join(out, E2E_HARNESS_MARKER))) return;
+    const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+    const hits = findE2eHarnessHookSymbols(out, symbols);
+    for (const hit of hits) {
+      const source = readFileSync(hit.file, "utf8");
+      const kind = classifyHarnessHookInSource(source, hit.symbol);
+      if (kind === "live") {
+        expect(source, `${hit.symbol} in ${hit.file}`).toMatch(/NEXT_PUBLIC_E2E_HARNESS/);
+      }
     }
   });
 });

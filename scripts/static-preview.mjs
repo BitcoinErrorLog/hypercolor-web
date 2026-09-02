@@ -8,6 +8,10 @@ import http from "node:http";
 import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  findE2eHarnessHookSymbols,
+  listE2eHarnessHookSymbols,
+} from "./e2e-harness-symbols.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -76,6 +80,32 @@ export function isE2eHarnessExport(root) {
 }
 
 /**
+ * Unmarked `NEXT_PUBLIC_E2E_HARNESS=1` exports still ship live window hooks.
+ * @param {string} root
+ * @returns {string[]}
+ */
+export function harnessHookSymbolsInExport(root) {
+  const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+  const hits = findE2eHarnessHookSymbols(root, symbols);
+  return [...new Set(hits.map((hit) => hit.symbol))].sort();
+}
+
+function assertPreviewAllowed(root, allowE2eHarness) {
+  if (allowE2eHarness) return;
+  if (isE2eHarnessExport(root)) {
+    throw new Error(
+      `static preview: refusing to serve e2e-harness export at ${root} as production. Use --root out-e2e --allow-e2e-harness (npm run test:e2e:static), or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
+    );
+  }
+  const symbols = harnessHookSymbolsInExport(root);
+  if (symbols.length > 0) {
+    throw new Error(
+      `static preview: refusing to serve unmarked e2e-harness export at ${root} (found ${symbols.join(", ")}). Use --root out-e2e --allow-e2e-harness, or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
+    );
+  }
+}
+
+/**
  * @param {string} root
  * @param {string} urlPath
  * @returns {string | null | typeof BAD_URL_ENCODING}
@@ -103,7 +133,8 @@ export function resolveOutFile(root, urlPath) {
   }
   for (const candidate of candidates) {
     const resolved = path.resolve(candidate);
-    if (!resolved.startsWith(rootResolved)) continue;
+    const rel = path.relative(rootResolved, resolved);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) continue;
     if (!existsSync(resolved)) continue;
     const stat = statSync(resolved);
     if (stat.isFile()) return resolved;
@@ -135,12 +166,10 @@ export function startStaticPreview(options) {
   const root = path.resolve(options.root);
   const host = options.host ?? "127.0.0.1";
   const rewrites = options.rewrites ?? loadVercelRewrites(REPO_ROOT);
-  if (isE2eHarnessExport(root) && !options.allowE2eHarness) {
-    return Promise.reject(
-      new Error(
-        `static preview: refusing to serve e2e-harness export at ${root} as production. Use --root out-e2e --allow-e2e-harness (npm run test:e2e:static), or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
-      ),
-    );
+  try {
+    assertPreviewAllowed(root, options.allowE2eHarness === true);
+  } catch (err) {
+    return Promise.reject(err);
   }
   const server = http.createServer((req, res) => {
     try {
@@ -214,10 +243,10 @@ async function main() {
     console.error(`static preview: missing ${root} — run npm run build first`);
     process.exit(1);
   }
-  if (isE2eHarnessExport(root) && !allowE2eHarness) {
-    console.error(
-      `static preview: refusing to serve e2e-harness export at ${root} as production. Use --root out-e2e --allow-e2e-harness, or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
-    );
+  try {
+    assertPreviewAllowed(root, allowE2eHarness);
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
   const preview = await startStaticPreview({ root, port, host, allowE2eHarness });
