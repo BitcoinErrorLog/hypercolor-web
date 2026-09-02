@@ -24,12 +24,12 @@ function buildAuthPanel(url: string): ReactNode {
     <AuthUrlPanel
       url={url}
       title="Paykit-connect link"
-      hint="Scan with Pubky Ring on this or another device."
+        hint="Approve the request in Pubky Ring, or scan the code on another device."
       testIdPrefix="welcome"
       actions={
         <AuthUrlActions
           url={url}
-          copyLabel="Copy URL"
+          copyLabel="Copy paykit-connect URL"
           openLabel="Open Pubky Ring"
           testIdPrefix="welcome"
         />
@@ -121,7 +121,11 @@ export function WelcomePageHost() {
       pendingPubky={pending?.params.pubky ?? null}
       adopting={adopting}
       authPanel={!connect.isExpired ? buildAuthPanel(connect.url) : null}
-      onGenerateLink={() => void connect.start()}
+      linkLive={Boolean(connect.url) && !connect.isExpired}
+      onGenerateLink={() => {
+        if (connect.url && !connect.isExpired) return;
+        void connect.start();
+      }}
       onConfirmAdoption={() => void confirmAdoption(true)}
       onCancelAdoption={() => void confirmAdoption(false)}
     />

@@ -16,15 +16,17 @@ import { buildDmConversationId } from "@/types/link";
 import { parsePubky } from "@/utils/pubkyId";
 
 export function mapInboxRowsToChatsPageRows(rows: InboxRow[]): ChatsPageRow[] {
-  return rows.map((row) => ({
-    key: `${row.kind}:${row.id}`,
-    href: row.href,
-    title: row.title,
-    kind: row.kind,
-    preview: row.preview,
-    lastMessageAt: row.lastMessageAt,
-    unreadCount: row.unreadCount,
-  }));
+  return rows
+    .filter((row) => row.kind === "dm")
+    .map((row) => ({
+      key: row.id,
+      href: row.href,
+      title: row.title,
+      kind: "dm" as const,
+      preview: row.preview,
+      lastMessageAt: row.lastMessageAt,
+      unreadCount: row.unreadCount,
+    }));
 }
 
 export function ChatsPageHost() {
@@ -100,9 +102,11 @@ export function ChatsPageHost() {
       rows={mapInboxRowsToChatsPageRows(inbox.rows)}
       pendingRequests={inbox.pendingRequests}
       inboxError={inbox.error}
+      inboxLoading={inbox.loading}
       peerDraft={peerDraft}
       starting={starting}
       startError={startError}
+      status={inbox.status}
       emptyStateHint={emptyStateHint}
       onChangePeerDraft={setPeerDraft}
       onStartChat={() => {

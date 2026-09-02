@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { DetailBackLink } from "@/components/detail-back";
 import { sanitizePublicName, sanitizePublicPost, sanitizePublicTag } from "@/lib/public-text";
 import { formatRelativeTime, shortPubky } from "@/lib/format";
+import { PUBLIC_GRAPH_WARNING } from "@/lib/session-ui";
 import { TagChannelReader } from "@/services/nexus/tagChannel";
 import type { NexusPublicPost } from "@/services/nexus/NexusDiscoveryClient";
 
@@ -18,11 +20,16 @@ export function TagChannelView({ tag }: { tag: string | null }) {
 }
 
 function TagChannelTimeline({ tag }: { tag: string }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [posts, setPosts] = useState<NexusPublicPost[]>([]);
   const [unavailable, setUnavailable] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(false);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [tag]);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,7 +41,7 @@ function TagChannelTimeline({ tag }: { tag: string }) {
         setError(
           result.kind === "invalid"
             ? result.message
-            : "The public index is unreachable or returned unusable data. This is not your message history.",
+            : "Could not reach the public index.",
         );
         return;
       }
@@ -48,31 +55,24 @@ function TagChannelTimeline({ tag }: { tag: string }) {
   }, [tag]);
 
   return (
-    <article className="space-y-4" data-testid="tagChannelView">
+    <article className="space-y-4" data-testid="tagChannelView" aria-busy={loading || undefined}>
       <div>
+        <DetailBackLink href="/channels?mode=public" listLabel="Channels" />
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Public topic</p>
-        <h2 className="text-xl font-semibold">#{sanitizePublicTag(tag)}</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Opening this view is a public read. The index operator sees this tag lookup. These
-          posts are world-readable. They are not a Hypercolor chat.
-        </p>
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
+          #{sanitizePublicTag(tag)}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">{PUBLIC_GRAPH_WARNING}</p>
       </div>
       <div
         className="rounded-md border border-border bg-card p-4"
         data-testid="tagChannelComposerDisabled"
       >
-        <p className="text-sm font-medium">Posting is disabled</p>
+        <p className="text-sm font-medium">Posting is not available here</p>
         <p className="mt-1 text-sm text-muted-foreground">
           Posting here publishes to the public graph. Publishing is not available in this
-          release.
+          release. This is not a private Hypercolor chat.
         </p>
-        <button
-          type="button"
-          disabled
-          className="mt-3 inline-flex h-8 items-center rounded-md bg-secondary px-3 text-xs text-muted-foreground opacity-60"
-        >
-          Write a public post
-        </button>
       </div>
       {loading ? <p className="text-sm text-muted-foreground">Loading public posts…</p> : null}
       {error ? (

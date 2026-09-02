@@ -1,16 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { DetailBackLink } from "@/components/detail-back";
+import { TruncatedPubky } from "@/components/truncated-pubky";
 import { sanitizeDisplayName } from "@/lib/display-name";
-import { shortPubky } from "@/lib/format";
 import { relationshipBadges } from "@/lib/contacts-sort";
-import { formatTipIdentifierDisplay, payloadPreview } from "@/utils/displaySanitize";
 import { StorageService } from "@/services/StorageService";
 import { TrustEngine, type TrustExplanation } from "@/services/TrustEngine";
-import { PaykitLinkWeb } from "@/services/link/PaykitLinkWeb";
-import { LINK_RECEIVER_PATH } from "@/types/link";
 import { buildDmConversationId } from "@/types/link";
 import type { Contact } from "@/types";
 import type { LinkRecord } from "@/types/link";
@@ -22,13 +20,15 @@ export function ContactDetail({
   ownerPubky: string | null;
   pubky: string;
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [contact, setContact] = useState<Contact | null>(null);
   const [link, setLink] = useState<LinkRecord | null>(null);
   const [trust, setTrust] = useState<TrustExplanation | null>(null);
-  const [methods, setMethods] = useState<string[]>([]);
-  const [endpoints, setEndpoints] = useState<Record<string, string>>({});
-  const [payError, setPayError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [pubky]);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,19 +46,6 @@ export function ContactDetail({
       setContact(row);
       setLink(storedLink);
       setTrust(explanation);
-      try {
-        const [ids, list] = await Promise.all([
-          PaykitLinkWeb.listPaymentMethods(pubky, LINK_RECEIVER_PATH),
-          PaykitLinkWeb.getPaymentList(pubky, LINK_RECEIVER_PATH),
-        ]);
-        if (cancelled) return;
-        setMethods(ids);
-        setEndpoints(list);
-      } catch (err) {
-        if (!cancelled) {
-          setPayError(err instanceof Error ? err.message : "Could not read payment methods");
-        }
-      }
       setLoading(false);
     })();
     return () => {
@@ -67,17 +54,36 @@ export function ContactDetail({
   }, [ownerPubky, pubky]);
 
   if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading contact…</p>;
+    return (
+      <p className="text-sm text-muted-foreground" aria-busy="true">
+        Loading contact…
+      </p>
+    );
   }
 
   return (
     <article className="space-y-6" data-testid="contactDetail">
+      <DetailBackLink href="/contacts" listLabel="Contacts" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-        <h2 className="text-xl font-semibold">
-          {contact?.displayName ? sanitizeDisplayName(contact.displayName) : shortPubky(pubky)}
+        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
+          {contact?.displayName ? sanitizeDisplayName(contact.displayName) : (
+            <TruncatedPubky pubky={pubky} />
+          )}
         </h2>
-        <p className="mt-1 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
+        <p className="mt-2 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          aria-label="Copy full pubky"
+          onClick={() => {
+            void navigator.clipboard.writeText(pubky);
+          }}
+        >
+          Copy
+        </Button>
       </div>
 
       <section className="space-y-2">
@@ -120,33 +126,8 @@ export function ContactDetail({
         ) : null}
       </section>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-medium">Public payment methods</h3>
-        <p className="text-sm text-muted-foreground">
-          Read-only from their Paykit receiver. This app does not send payments.
-        </p>
-        {payError ? <p className="text-sm text-red-400">{payError}</p> : null}
-        {methods.length === 0 && Object.keys(endpoints).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No public methods published.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {Object.entries(endpoints).map(([id, payload]) => (
-              <li key={id} className="rounded-md border border-border p-2">
-                <p className="font-medium">{formatTipIdentifierDisplay(id)}</p>
-                <p className="break-all text-muted-foreground">{payloadPreview(payload)}</p>
-              </li>
-            ))}
-            {methods
-              .filter((id) => !(id in endpoints))
-              .map((id) => (
-                <li key={id}>{formatTipIdentifierDisplay(id)}</li>
-              ))}
-          </ul>
-        )}
-      </section>
-
       <Button asChild>
-        <Link href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}>Open chat</Link>
+        <Link href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}>Message</Link>
       </Button>
     </article>
   );

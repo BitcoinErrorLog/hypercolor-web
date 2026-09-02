@@ -117,7 +117,7 @@ async function expectChatsSettled(page: Page): Promise<void> {
     timeout: 60_000,
   });
   await expect(page.getByPlaceholder("Paste a pubky to start a chat")).toBeVisible();
-  await expect(page.getByText("No conversations yet.")).toBeVisible();
+  await expect(page.getByText("No chats yet.")).toBeVisible();
   // Messaging is enabled, so the chats screen must not still be asking for it.
   await expect(
     page.getByText("Encrypted chats need a Ring-approved Paykit session on this device."),

@@ -13,14 +13,12 @@ const view = readFileSync(
 );
 
 describe("discover-page public surface", () => {
-  it("states that Discover is a public index and is skippable", () => {
-    const text = source.replace(/\s+/g, " ");
+  it("states that Public mode is a public index and is skippable until load", () => {
     expect(source).toContain("data-testid=\"discoverPrivacyCopy\"");
-    expect(text).toContain("global public index");
-    expect(text).toContain("Skip this page");
-    expect(text).toContain("Private DMs and groups");
+    expect(source).toContain("PUBLIC_GRAPH_WARNING");
+    expect(source).toContain("PUBLIC_SUBSTRATE_LINE");
     expect(source).toContain("data-testid=\"discoverLoadTopics\"");
-    expect(source).toContain("Retry public topics");
+    expect(source).toContain("Load public topics");
     expect(source).toContain("createDiscoverTopicsLoader");
     expect(source).toContain("normalizeTagLabel");
     expect(source).not.toMatch(/useEffect\s*\(/);
@@ -35,9 +33,8 @@ describe("discover-page public surface", () => {
     expect(source).not.toContain("hypercolor.app/v1/group");
   });
 
-  it("keeps the composer disabled and labeled as a public publish", () => {
+  it("keeps posting informational and labeled as a public publish", () => {
     expect(view).toContain("data-testid=\"tagChannelComposerDisabled\"");
     expect(view).toContain("Posting here publishes to the public graph");
-    expect(view).toContain("disabled");
   });
 });

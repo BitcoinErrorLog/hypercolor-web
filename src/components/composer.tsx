@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -13,6 +13,7 @@ export function Composer({
   onSend,
   onAttach,
   testIdPrefix,
+  liveStatus,
 }: {
   draft: string;
   sending: boolean;
@@ -22,13 +23,23 @@ export function Composer({
   onSend: () => void;
   onAttach?: (file: File) => void;
   testIdPrefix: string;
+  liveStatus?: string | null;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [accept, setAccept] = useState<string | undefined>(undefined);
+  const [menuOpen, setMenuOpen] = useState(false);
   const blocked = Boolean(disabled) || sending;
+
+  function pick(kind: "photo" | "file") {
+    setAccept(kind === "photo" ? "image/*" : undefined);
+    setMenuOpen(false);
+    window.setTimeout(() => fileRef.current?.click(), 0);
+  }
 
   return (
     <form
-      className="flex items-end gap-2 border-t border-border pt-3"
+      className="flex flex-wrap items-end gap-2 border-t border-border pt-3"
+      aria-busy={sending || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         if (!blocked && draft.trim()) onSend();
@@ -39,7 +50,9 @@ export function Composer({
           <input
             ref={fileRef}
             type="file"
+            accept={accept}
             className="sr-only"
+            aria-label="Choose attachment"
             data-testid={`${testIdPrefix}AttachInput`}
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -47,17 +60,51 @@ export function Composer({
               if (file) onAttach(file);
             }}
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            disabled={blocked}
-            aria-label="Attach file"
-            data-testid={`${testIdPrefix}Attach`}
-            onClick={() => fileRef.current?.click()}
-          >
-            +
-          </Button>
+          <div className="relative">
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              disabled={blocked}
+              aria-label="Attach file"
+              aria-expanded={menuOpen}
+              data-testid={`${testIdPrefix}Attach`}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              +
+            </Button>
+            {menuOpen ? (
+              <div
+                role="menu"
+                className="absolute bottom-12 left-0 z-20 min-w-40 rounded-md border border-border bg-card p-1 shadow"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex min-h-11 w-full items-center px-3 text-left text-sm"
+                  onClick={() => pick("photo")}
+                >
+                  Photo
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex min-h-11 w-full items-center px-3 text-left text-sm"
+                  onClick={() => pick("file")}
+                >
+                  File
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex min-h-11 w-full items-center px-3 text-left text-sm text-muted-foreground"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : null}
+          </div>
         </>
       ) : null}
       <Input
@@ -74,6 +121,9 @@ export function Composer({
       >
         {sending ? "Sending…" : "Send"}
       </Button>
+      <p className="sr-only" role="status" aria-live="polite">
+        {sending ? "Message sending" : liveStatus ?? ""}
+      </p>
     </form>
   );
 }

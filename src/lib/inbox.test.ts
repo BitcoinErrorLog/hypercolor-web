@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { GroupChannel } from "@/types/group";
 import type { LinkConversationSummary } from "@/types/link";
 import {
+  dmInboxRows,
+  channelListRows,
   groupConversationId,
   mergeInboxRows,
   messagePreview,
@@ -41,7 +43,7 @@ function channel(partial: Partial<GroupChannel> & Pick<GroupChannel, "channelId"
 describe("inbox", () => {
   it("previews attachment, payment, and membership kinds", () => {
     expect(messagePreview("chat.attachment.v0", "ignored")).toBe("Attachment");
-    expect(messagePreview("paykit.payment_request", "ignored")).toBe("Payment");
+    expect(messagePreview("paykit.payment_request", "ignored")).toBe("Payment request");
     expect(messagePreview("chat.group.membership.v0", "create")).toBe("Group created");
     expect(messagePreview("chat.message.v0", "  hi  ")).toBe("hi");
   });
@@ -92,5 +94,36 @@ describe("inbox", () => {
     };
     const b = { ...a, id: "b", href: "/chats/b" };
     expect(sortInboxRows([a, b]).map((row) => row.id)).toEqual(["a", "b"]);
+  });
+
+  it("builds DM-only inbox rows and maps payment lastKind to a notice preview", () => {
+    const rows = dmInboxRows([
+      dm({
+        conversationId: "dm:pay",
+        lastKind: "paykit.payment_request",
+        lastMessage: "Payment",
+      }),
+      dm({ conversationId: "dm:text", lastMessage: "hello" }),
+    ]);
+    expect(rows.every((row) => row.kind === "dm")).toBe(true);
+    expect(rows.find((row) => row.id === "dm:pay")?.preview).toBe("Payment request");
+    expect(rows.find((row) => row.id === "dm:text")?.preview).toBe("hello");
+  });
+
+  it("builds channel list rows from private groups", () => {
+    const rows = channelListRows([
+      {
+        channel: channel({
+          channelId: `${OWNER}:11111111-1111-1111-1111-111111111111`,
+          name: "Crew",
+        }),
+        preview: "hi crew",
+        unreadCount: 0,
+      },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind).toBe("group");
+    expect(rows[0]?.title).toBe("Crew");
+    expect(rows[0]?.href).toContain("/channels/");
   });
 });

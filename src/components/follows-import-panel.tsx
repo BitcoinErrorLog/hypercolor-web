@@ -36,20 +36,24 @@ export function FollowsImportPanel({
       className="mt-4 space-y-3 rounded-md border border-border bg-card p-4"
       data-testid="followsImportPanel"
     >
-      <p className="text-sm font-medium">pubky.app follows</p>
-      <p className="text-sm text-muted-foreground" data-testid="followsImportCopy">
-        Follows at <span className="font-mono">/pub/pubky.app/follows/</span> are already
-        world-readable. Importing them does not publish a new list — Hypercolor only reads
-        what anyone can already see. Acting on a suggestion (adding them, or messaging them)
-        may tell others you use this messenger. This is not your contact list. People who
-        follow you, but whom you do not follow, are not added. Hypercolor will not write a
-        follow. Inbound chats from people you follow may be accepted automatically. While
-        this is on, opening Contacts re-reads that homeserver listing. The public index
-        (Nexus) is asked for your following list only if the homeserver listing is
-        unavailable; each Nexus name is then re-checked against your homeserver. Hypercolor
-        does not ask Nexus who follows you. Stopping import clears follow recognition so it
-        cannot keep auto-accepting.
-      </p>
+      <p className="text-sm font-medium">Use your pubky.app follows</p>
+      <div className="space-y-2 text-sm text-muted-foreground" data-testid="followsImportCopy">
+        <p>
+          Your follows at <span className="font-mono">/pub/pubky.app/follows/</span> are already
+          world-readable. Hypercolor only reads what anyone can already see, and never writes a
+          follow.
+        </p>
+        <p>
+          Imported follows become suggestions, not contacts, and they never auto-accept a message —
+          every new inbound chat still waits in Message requests.
+        </p>
+        <p>
+          While this is on, opening Contacts re-reads that listing from your homeserver. If the
+          homeserver listing is unavailable, the public index (Nexus) is asked for your following
+          list and each name is re-checked against your homeserver. Hypercolor never asks Nexus who
+          follows you.
+        </p>
+      </div>
       {enabled ? (
         <div className="space-y-2">
           <p className="text-sm" data-testid="followsImportStatus">
@@ -75,8 +79,8 @@ export function FollowsImportPanel({
                     if (result.skipped) return;
                     setNote(
                       result.source === "homeserver"
-                        ? `Read ${result.confirmedCount} follows from your homeserver.`
-                        : `Confirmed ${result.confirmedCount} follows against your homeserver after the public index listed candidates.`,
+                        ? `Imported ${result.confirmedCount} confirmed follows as suggestions.`
+                        : `Imported ${result.confirmedCount} confirmed follows as suggestions. Read from the public index and re-checked against your homeserver.`,
                     );
                     return onImported();
                   })
@@ -103,9 +107,7 @@ export function FollowsImportPanel({
                 void FollowsImporter.clearImportedRelationshipFlags(ownerPubky)
                   .then(() => {
                     if (generation !== importGeneration.current) return;
-                    setNote(
-                      "Import is off. Follow recognition was cleared. Inbound chats from those follows need an explicit accept unless you added them or already have a conversation.",
-                    );
+                    setNote("Import is off. Imported suggestions were cleared.");
                     return onImported();
                   })
                   .finally(() => {
@@ -119,14 +121,14 @@ export function FollowsImportPanel({
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="flex items-start gap-2 text-sm">
+          <label className="flex min-h-11 items-start gap-2 text-sm">
             <input
               type="checkbox"
               checked={understood}
               onChange={(event) => setUnderstood(event.target.checked)}
               data-testid="followsImportUnderstand"
             />
-            I understand follows are public, that import does not hide them, and that
+            I understand my follows are public, that importing does not hide them, and that
             messaging someone may reveal I use Hypercolor.
           </label>
           <Button
@@ -160,7 +162,16 @@ export function FollowsImportPanel({
                 });
             }}
           >
-            {busy ? "Reading…" : "Use my pubky.app follows to recognise people"}
+            {busy ? "Reading…" : "Use my follows"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="followsImportNotNow"
+            onClick={() => setUnderstood(false)}
+          >
+            Not now
           </Button>
         </div>
       )}

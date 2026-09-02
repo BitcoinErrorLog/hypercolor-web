@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ContactDetail } from "@/components/contact-detail";
 import { FollowsImportPanel } from "@/components/follows-import-panel";
+import { ErrorDetails } from "@/components/error-details";
+import { rememberAndOpen } from "@/components/detail-back";
 import { PubkyAnchors } from "@/components/pubky-anchors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +18,7 @@ import {
 } from "@/lib/contacts-sort";
 import { sanitizePublicBio, sanitizePublicName } from "@/lib/public-text";
 import { shortPubky } from "@/lib/format";
+import { contactRowDomId, takeListRow } from "@/lib/list-detail-focus";
 import { addManualContact } from "@/services/contacts/addManualContact";
 import {
   isFollowsImportEnabled,
@@ -38,7 +41,6 @@ export function ContactsPage() {
   const ownerPubky = useAuthStore((s) => s.pubky);
   const upsertContact = useContactStore((s) => s.upsertContact);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [pending, setPending] = useState(0);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -48,16 +50,11 @@ export function ContactsPage() {
   const reload = useCallback(async () => {
     if (!ownerPubky) {
       setContacts([]);
-      setPending(0);
       return;
     }
-    const [rows, count] = await Promise.all([
-      StorageService.getAllContacts(ownerPubky),
-      StorageService.countPendingMessageRequests(ownerPubky),
-    ]);
+    const rows = await StorageService.getAllContacts(ownerPubky);
     rows.forEach(upsertContact);
     setContacts(rows);
-    setPending(count);
   }, [ownerPubky, upsertContact]);
 
   useEffect(() => {
@@ -72,6 +69,14 @@ export function ContactsPage() {
 
   const roster = rosterContacts(contacts);
   const suggestions = followSuggestionContacts(contacts);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (selected) return;
+    const rowId = takeListRow("contacts");
+    const node = rowId ? document.getElementById(rowId) : headingRef.current;
+    node?.focus();
+  }, [selected]);
 
   async function addPeer(raw: string, displayName?: string): Promise<void> {
     if (!ownerPubky) {
@@ -112,14 +117,14 @@ export function ContactsPage() {
     >
       <aside className={selected ? "hidden md:block" : undefined}>
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Contacts</h1>
-          <Link
-            href="/requests"
-            className="text-sm text-brand underline-offset-4 hover:underline"
-            data-testid="contactsRequests"
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            id="contactsHeading"
+            className="text-2xl font-semibold tracking-tight"
           >
-            Requests{pending > 0 ? ` (${pending})` : ""}
-          </Link>
+            Contacts
+          </h1>
         </div>
 
         <FollowsImportPanel key={ownerPubky ?? "none"} ownerPubky={ownerPubky} onImported={reload} />
@@ -203,7 +208,7 @@ export function ContactsPage() {
               </>
             )}
           </div>
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {error ? <ErrorDetails fallback="Could not load contacts." details={error} /> : null}
         </form>
 
         {hits && hits.length > 0 ? (
@@ -240,9 +245,9 @@ export function ContactsPage() {
 
         {suggestions.length > 0 ? (
           <div className="mt-6" data-testid="followSuggestions">
-            <p className="text-sm font-medium">Suggestions from pubky.app follows</p>
+            <p className="text-sm font-medium">Suggestions from your follows</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Not your contact list. Add one to keep them. Hypercolor does not write a follow.
+              Not your contact list. Add one to keep them. Hypercolor never writes a follow.
             </p>
             <ul className="mt-2 divide-y divide-border">
               {suggestions.map((contact) => (
@@ -269,18 +274,28 @@ export function ContactsPage() {
         ) : null}
 
         {roster.length === 0 ? (
-          <p className="mt-8 text-muted-foreground" data-testid="contactsEmpty">
-            No contacts yet.
-          </p>
+          <div className="mt-8 space-y-2" data-testid="contactsEmpty">
+            <p className="text-muted-foreground">No contacts yet.</p>
+            <p className="text-sm text-muted-foreground">
+              Add someone by pubky, or use your public pubky.app follows to recognise people you
+              already know.
+            </p>
+          </div>
         ) : (
           <ul className="mt-4 divide-y divide-border">
             {roster.map((contact) => (
               <li key={contact.pubky}>
                 <Link
+                  id={contactRowDomId(contact.pubky)}
                   href={`/contacts/${encodeURIComponent(contact.pubky)}`}
                   data-testid="contactRow"
-                  aria-label={contact.pubky}
-                  className="block py-3 hover:bg-accent/40"
+                  aria-label={`Open contact ${
+                    contact.displayName
+                      ? sanitizeDisplayName(contact.displayName)
+                      : shortPubky(contact.pubky)
+                  }`}
+                  className="block min-h-11 py-3 hover:bg-accent/40"
+                  onClick={() => rememberAndOpen("contacts", contactRowDomId(contact.pubky))}
                 >
                   <span className="font-medium">
                     {contact.displayName

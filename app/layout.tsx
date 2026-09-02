@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
+import { BackupLeaveGuard } from "@/components/backup-leave-guard";
 import { PwaRegister } from "@/components/pwa-register";
 import { SessionBanner } from "@/components/session-banner";
 import { SessionBootstrap } from "@/components/session-bootstrap";
@@ -51,9 +52,16 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <SessionBootstrap />
-        <PwaRegister />
-        <TabLockBanner />
+        <BackupLeaveGuard />
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-white"
+        >
+          Skip to main content
+        </a>
         <SessionBanner />
+        <TabLockBanner />
+        <PwaRegister />
         <header className="border-b border-border">
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-3 px-6 py-4">
             <p className="text-sm font-medium tracking-wide text-muted-foreground">
@@ -62,7 +70,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <SiteNav />
           </div>
         </header>
-        <main className="mx-auto w-full max-w-5xl flex-1 px-6 py-8">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-5xl flex-1 px-6 py-8 pb-24 md:pb-8"
+        >
           {children}
         </main>
       </body>

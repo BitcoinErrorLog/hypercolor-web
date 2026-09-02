@@ -7,7 +7,6 @@ import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import { createInboxRefresher } from "@/lib/inbox-refresh";
 import { LinkService } from "@/services/link/LinkService";
-import { subscribeGroupEvents } from "@/services/group/GroupService";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function useInbox() {
@@ -56,12 +55,8 @@ export function useInbox() {
     const stopInbox = LinkService.subscribeInboxSynced((owner) => {
       if (owner === ownerPubky) reload();
     });
-    const stopGroups = subscribeGroupEvents((owner) => {
-      if (owner === ownerPubky) reload();
-    });
     return () => {
       stopInbox();
-      stopGroups();
     };
   }, [ownerPubky, refresher]);
 

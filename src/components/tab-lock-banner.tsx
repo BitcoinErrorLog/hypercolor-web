@@ -30,9 +30,9 @@ export function TabLockBanner() {
       className="border-b border-border bg-card px-6 py-3 text-sm text-card-foreground"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
-        <p>Hypercolor is open in another tab — take over?</p>
+        <p>Hypercolor is open in another tab. Only one tab can send.</p>
         <Button type="button" size="sm" onClick={() => current.requestTakeover()}>
-          Take over
+          Use this tab
         </Button>
       </div>
     </div>

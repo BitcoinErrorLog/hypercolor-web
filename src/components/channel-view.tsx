@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Composer } from "@/components/composer";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { AttachmentBubble } from "@/components/attachment-bubble";
+import { DetailBackLink } from "@/components/detail-back";
 import { GroupMessageBubble } from "@/components/message-bubble";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +17,11 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
   const channel = useChannel(channelId);
   const [addDraft, setAddDraft] = useState("");
   const [showMembers, setShowMembers] = useState(false);
+
+  useEffect(() => {
+    if (!channelId) return;
+    document.querySelector<HTMLElement>("[data-testid=channelName]")?.focus();
+  }, [channelId]);
 
   if (!channelId) {
     return (
@@ -32,6 +38,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
   if (!channel.channel) {
     return (
       <article className="space-y-3">
+        <DetailBackLink href="/channels" listLabel="Channels" />
         <h2 className="text-lg font-semibold">Channel not found</h2>
         <p className="text-sm text-muted-foreground">
           This group is not on this device. You must be invited over an Encrypted Link.
@@ -50,8 +57,9 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
     <article className="flex h-full min-h-[28rem] flex-col" data-testid="channelScreen">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div>
+          <DetailBackLink href="/channels" listLabel="Channels" />
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Private group</p>
-          <h2 className="text-lg font-semibold" data-testid="channelName">
+          <h2 className="text-lg font-semibold" data-testid="channelName" tabIndex={-1}>
             {sanitizeDisplayName(channel.channel.name)}
           </h2>
         </div>

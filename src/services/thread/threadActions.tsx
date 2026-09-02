@@ -4,15 +4,24 @@ import { AttachmentBubble } from "@/components/attachment-bubble";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { ThreadView } from "@/components/thread-view";
 import { useThread } from "@/hooks/useThread";
+import { useContactStore } from "@/stores/contactStore";
 import type { AttachmentRecord } from "@/types/attachment";
 
 export function ThreadViewHost({ conversationId }: { conversationId: string | null }) {
   const thread = useThread(conversationId);
+  const contact = useContactStore((s) =>
+    thread.participantPubky ? s.contacts[thread.participantPubky] : undefined,
+  );
 
   return (
     <ThreadView
       conversationId={conversationId}
       participantPubky={thread.participantPubky}
+      displayName={
+        contact && (contact.addedManually || contact.lastInteractionAt)
+          ? contact.displayName
+          : null
+      }
       localPubky={thread.localPubky}
       messages={thread.messages}
       attachments={thread.attachments}

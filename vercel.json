@@ -3,6 +3,7 @@
   "rewrites": [
     { "source": "/chats/:conversationId", "destination": "/chats" },
     { "source": "/channels/:id", "destination": "/channels" },
-    { "source": "/contacts/:pubky", "destination": "/contacts" }
+    { "source": "/contacts/:pubky", "destination": "/contacts" },
+    { "source": "/discover/:tag", "destination": "/discover" }
   ]
 }

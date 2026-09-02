@@ -1,9 +1,9 @@
-import { DiscoverPage } from "@/components/discover-page";
+import { DiscoverRedirect } from "@/components/discover-redirect";
 
 export function generateStaticParams() {
   return [{ tag: [] }];
 }
 
 export default function DiscoverRoute() {
-  return <DiscoverPage />;
+  return <DiscoverRedirect />;
 }

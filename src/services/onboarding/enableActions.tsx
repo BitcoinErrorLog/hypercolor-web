@@ -1,12 +1,14 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
+import { KeyStore } from "@/services/KeyStore";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
-import { getEnableStatus, signOut } from "@/services/link/session";
+import { getEnableStatus } from "@/services/link/session";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
@@ -18,7 +20,7 @@ function buildAuthPanel(url: string): ReactNode {
     <AuthUrlPanel
       url={url}
       title="Authorization URL"
-      hint="Scan with Pubky Ring on this or another device."
+      hint="Approve the request in Pubky Ring, or scan the code on another device."
       testIdPrefix="enableMessaging"
       actions={
         <AuthUrlActions
@@ -33,9 +35,9 @@ function buildAuthPanel(url: string): ReactNode {
 }
 
 export function EnablePageHost() {
+  const router = useRouter();
   const status = useSessionStatusStore((s) => s.status);
   const setEnabled = useSessionStatusStore((s) => s.setEnabled);
-  const reset = useSessionStatusStore((s) => s.reset);
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
 
@@ -79,34 +81,63 @@ export function EnablePageHost() {
     },
   );
 
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void (async () => {
+        const enable = await getEnableStatus();
+        const pubky =
+          (status.kind === "enabled" ||
+          status.kind === "live" ||
+          status.kind === "session-offline"
+            ? status.pubky
+            : null) ?? (await KeyStore.getPubky());
+        if (enable === "enabled" && pubky) {
+          setEnabled(pubky);
+        }
+      })();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [status, setEnabled]);
+
   const enabled = status.kind === "enabled";
   const offline = status.kind === "session-offline";
+  const denied = Boolean(error && /denied|declined|not grant/i.test(error));
   const identityLabel =
     status.kind === "enabled" || status.kind === "live" || status.kind === "session-offline"
       ? status.pubky
       : null;
 
+  function leave() {
+    router.push("/chats");
+  }
+
   return (
     <EnablePage
       enabled={enabled}
       offline={offline}
-      isLoading={auth.isLoading}
+      isLoading={auth.isLoading && !enabled}
       isExpired={auth.isExpired}
+      denied={denied}
       error={error}
       identityLabel={identityLabel}
       provisionedPath={provisionedPath}
-      authPanel={!enabled && !auth.isExpired ? buildAuthPanel(auth.url) : null}
+      authPanel={!enabled && !auth.isExpired && !denied ? buildAuthPanel(auth.url) : null}
       onRegenerate={() => void auth.fetchUrl()}
       onRetry={() => {
+        setError(null);
         void getEnableStatus();
         void auth.fetchUrl();
       }}
-      onSignOut={() => {
-        void signOut().then(() => {
-          reset();
-          void auth.fetchUrl();
-        });
+      onOpenChats={() => {
+        router.replace("/chats");
       }}
+      onDone={() => {
+        router.back();
+      }}
+      onNotNow={leave}
+      onCancel={leave}
     />
   );
 }
