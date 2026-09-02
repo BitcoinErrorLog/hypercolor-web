@@ -34,10 +34,25 @@ let gateRestoreFocus: HTMLElement | null = null;
 let trapPushed = 0;
 const HISTORY_TRAP_DEPTH = 3;
 
+type BackupGateHistoryState = {
+  backupGate?: boolean;
+  backupGateDepth?: unknown;
+};
+
 function readHistoryState(): Record<string, unknown> {
   return history.state && typeof history.state === "object"
     ? { ...(history.state as Record<string, unknown>) }
     : {};
+}
+
+/** Depth encoded on each trap entry. Never store the recovery code here. */
+function trapDepthFromState(state: unknown): number {
+  if (!state || typeof state !== "object") return 0;
+  const record = state as BackupGateHistoryState;
+  if (record.backupGate !== true) return 0;
+  const depth = record.backupGateDepth;
+  if (depth === 1 || depth === 2 || depth === 3) return depth;
+  return 1;
 }
 
 function notify(): void {
@@ -52,32 +67,30 @@ export function hasPendingBackupLeave(): boolean {
   return pendingIntent !== null;
 }
 
-export function isConsumingHistoryTrap(): boolean {
-  return consumingTrap;
-}
-
-export function acknowledgeConsumedHistoryTrap(): void {
-  consumingTrap = false;
-}
-
 export function armHistoryTrap(): void {
   if (typeof window === "undefined") return;
   if (!isBackupLeaveBlocked()) return;
   trapHref = window.location.href;
+  trapPushed = trapDepthFromState(history.state);
   while (trapPushed < HISTORY_TRAP_DEPTH) {
-    history.pushState({ ...readHistoryState(), backupGate: true }, "", window.location.href);
-    trapPushed += 1;
+    const nextDepth = trapPushed + 1;
+    history.pushState(
+      { ...readHistoryState(), backupGate: true, backupGateDepth: nextDepth },
+      "",
+      window.location.href,
+    );
+    trapPushed = nextDepth;
   }
 }
 
 /**
  * Pop remaining same-URL trap entries without treating them as a leave.
- * Must run after the snapshot is already unblocked so a stray popstate cannot
- * re-open the dialog. `done` runs after the pops settle (or immediately when
- * there is nothing to consume) so a following router navigation cannot race
- * `history.go`.
+ * Depth comes from the landed history entry, not the in-memory counter, so a
+ * Back that left stale trap stops still drains them. Popstates are suppressed
+ * for the whole drain; a user Back in that window is folded into the leftover
+ * depth instead of re-arming. `done` runs after the pops settle.
  */
-export function consumeHistoryTrapThen(done: () => void): void {
+function consumeHistoryTrapThen(done: () => void): void {
   if (typeof window === "undefined") {
     trapPushed = 0;
     done();
@@ -85,10 +98,9 @@ export function consumeHistoryTrapThen(done: () => void): void {
   }
   const onSettings =
     new URL(window.location.href, "https://hypercolor.app").pathname === "/settings";
-  const n = trapPushed;
+  const n = trapDepthFromState(history.state);
   trapPushed = 0;
-  const state = history.state as { backupGate?: boolean } | null;
-  if (!onSettings || n <= 0 || !state?.backupGate) {
+  if (!onSettings || n <= 0) {
     done();
     return;
   }
@@ -103,22 +115,45 @@ export function consumeHistoryTrapThen(done: () => void): void {
     }
     done();
   };
+  const popLeftover = () => {
+    if (finished) return false;
+    const leftover = trapDepthFromState(history.state);
+    if (leftover > 0 && currentPathname() === "/settings") {
+      history.go(-leftover);
+      return true;
+    }
+    return false;
+  };
   const onPop = () => {
-    finish();
+    if (finished) return;
+    if (typeof window.setTimeout === "function") {
+      window.setTimeout(() => {
+        if (!popLeftover()) finish();
+      }, 0);
+      return;
+    }
+    if (!popLeftover()) finish();
   };
   if (typeof window.addEventListener === "function") {
     window.addEventListener("popstate", onPop);
   }
   history.go(-n);
   if (typeof window.addEventListener !== "function") {
+    popLeftover();
     finish();
     return;
   }
-  window.setTimeout(finish, 250);
+  window.setTimeout(() => {
+    if (finished) return;
+    if (popLeftover()) {
+      window.setTimeout(finish, 250);
+      return;
+    }
+    finish();
+  }, 250);
 }
 
-/** Pop remaining trap entries. Prefer `consumeHistoryTrapThen` when a navigation follows. */
-export function consumeHistoryTrap(): void {
+function consumeHistoryTrap(): void {
   consumeHistoryTrapThen(() => undefined);
 }
 
@@ -128,8 +163,8 @@ export function consumeHistoryTrap(): void {
  */
 export function runGatedHistoryLeave(): void {
   if (typeof window === "undefined") return;
-  const state = history.state as { backupGate?: boolean } | null;
-  const n = state?.backupGate ? trapPushed + 1 : 1;
+  const depth = trapDepthFromState(history.state);
+  const n = depth > 0 ? depth + 1 : 1;
   trapPushed = 0;
   history.go(-n);
 }
@@ -242,17 +277,13 @@ export function onBackupGateRouteChange(pathname: string): void {
 
 /** popstate. Refill the trap when still on Settings; otherwise park in place. */
 export function onBackupGatePopState(): void {
-  if (isConsumingHistoryTrap()) {
-    acknowledgeConsumedHistoryTrap();
-    return;
-  }
+  if (consumingTrap) return;
   if (!isBackupLeaveBlocked()) return;
   if (isHashOnlyHistoryChange()) {
     armHistoryTrap();
     return;
   }
   if (currentPathname() === "/settings") {
-    trapPushed = (history.state as { backupGate?: boolean } | null)?.backupGate ? 1 : 0;
     armHistoryTrap();
     requestGuardedNavigation(() => {
       runGatedHistoryLeave();

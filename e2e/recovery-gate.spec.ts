@@ -67,6 +67,41 @@ async function readGate(page: Page) {
   });
 }
 
+async function expectNoBackupGateInHistory(page: Page) {
+  const origin = page.url();
+  const length = await page.evaluate(() => history.length);
+  for (let i = 0; i < length + 2; i += 1) {
+    const probe = await page.evaluate(() => {
+      const state = history.state as {
+        backupGate?: boolean;
+        backupGateDepth?: unknown;
+        recoveryCode?: unknown;
+      } | null;
+      return {
+        href: location.href,
+        backupGate: Boolean(state?.backupGate),
+        backupGateDepth: state?.backupGateDepth ?? null,
+        recoveryCode: state?.recoveryCode ?? null,
+        serialized: JSON.stringify(state),
+      };
+    });
+    expect(probe.backupGate, `backupGate still set at ${probe.href}`).toBe(false);
+    expect(probe.backupGateDepth, `backupGateDepth still set at ${probe.href}`).toBeNull();
+    expect(probe.recoveryCode).toBeNull();
+    expect(probe.serialized ?? "null").not.toMatch(/abcd1234wxyz/);
+    const before = page.url();
+    await page.goBack();
+    await page.waitForTimeout(80);
+    if (page.url() === before) break;
+  }
+  while (page.url() !== origin) {
+    const before = page.url();
+    await page.goForward();
+    await page.waitForTimeout(80);
+    if (page.url() === before) break;
+  }
+}
+
 async function expectCodeSurvivesWithDialog(page: Page) {
   await expect.poll(async () => {
     try {
@@ -359,6 +394,44 @@ test.describe("recovery-code gate attack matrix", () => {
     await expect.poll(() =>
       page.evaluate(() => document.getElementById("main-content")?.inert === true),
     ).toBe(false);
+  });
+
+  test("browser Back then Leave anyway reaches the previous real route", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.goBack();
+    await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+    await page.getByTestId("backupLeaveAnyway").click();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    expect((await readGate(page)).gate?.recoveryCode ?? null).toBeNull();
+    await expectNoBackupGateInHistory(page);
+    await expect(page).toHaveURL(/\/profile/);
+  });
+
+  test("browser Back then Stay three times then Done then one Back is the previous real route", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    for (let i = 0; i < 3; i += 1) {
+      await page.goBack();
+      await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+      await page.getByTestId("backupLeaveStay").click();
+      await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings/);
+      await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    }
+    await page.getByTestId("recoveryCodeSaved").check();
+    await page.getByTestId("recoveryCodeDone").click();
+    await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await expectNoBackupGateInHistory(page);
+    await expect(page).toHaveURL(/\/profile/);
   });
 
   test("checkbox and Done then a single Back lands on the previous route", async ({ page }) => {
