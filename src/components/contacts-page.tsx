@@ -35,7 +35,7 @@ import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 import { parsePubky } from "@/utils/pubkyId";
 
-export const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
+const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
 
 export function ContactsPage() {
   const router = useGuardedRouter();
