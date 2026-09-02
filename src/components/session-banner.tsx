@@ -14,10 +14,9 @@ export function SessionBanner() {
 
   return (
     <div
-      role="alert"
+      role="status"
       className="border-b border-border bg-card px-6 py-3 text-sm"
       data-testid="sessionBanner"
-      aria-live="assertive"
     >
       <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
         <p>{sessionStatusLabel(status)}</p>

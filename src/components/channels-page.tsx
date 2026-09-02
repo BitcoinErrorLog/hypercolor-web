@@ -245,6 +245,7 @@ export function ChannelsPage() {
                 <ErrorDetails
                   fallback="Could not load your channels."
                   details={storeError}
+                  live="status"
                   onRetry={() => {
                     void reload();
                   }}

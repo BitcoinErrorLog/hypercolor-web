@@ -6,6 +6,7 @@ import {
   threadBackHref,
   threadBackLabel,
   resolveFocusTarget,
+  detailHeadingTag,
 } from "./list-detail-focus";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
@@ -51,6 +52,10 @@ describe("list-detail-focus", () => {
     expect(threadBackLabel(null)).toBe("Chats");
   });
 
+  it("does not call peekThreadOrigin during a prerender-safe first snapshot", () => {
+    expect(peekThreadOrigin()).toBeNull();
+  });
+
   it("rejects an invalid contact origin instead of storing it", () => {
     rememberThreadOrigin({ kind: "contact", pubky: "not-a-pubky" });
     expect(peekThreadOrigin()).toBeNull();
@@ -62,5 +67,10 @@ describe("list-detail-focus", () => {
     const row = { id: "row" } as HTMLElement;
     expect(resolveFocusTarget("row", heading, (id) => (id === "row" ? row : null))).toBe(row);
     expect(resolveFocusTarget(null, heading)).toBe(heading);
+  });
+
+  it("uses h1 when the list pane is hidden and h2 in the desktop two-pane", () => {
+    expect(detailHeadingTag(false)).toBe("h1");
+    expect(detailHeadingTag(true)).toBe("h2");
   });
 });

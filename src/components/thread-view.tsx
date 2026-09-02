@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Composer } from "@/components/composer";
 import { DetailBackLink } from "@/components/detail-back";
+import { DetailHeading } from "@/components/detail-heading";
 import { DmMessageBubble } from "@/components/message-bubble";
 import { ErrorDetails } from "@/components/error-details";
 import { PaymentNotice } from "@/components/payment-notice";
@@ -61,7 +62,14 @@ export function ThreadView({
   onResolved: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const origin = peekThreadOrigin();
+  const origin = useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("storage", onChange);
+      return () => window.removeEventListener("storage", onChange);
+    },
+    peekThreadOrigin,
+    () => null,
+  );
   const backHref = threadBackHref(origin);
   const backLabel = threadBackLabel(origin);
   const backAlways = origin?.kind === "contact";
@@ -87,9 +95,9 @@ export function ThreadView({
           always={backAlways}
           onNavigate={() => takeThreadOrigin()}
         />
-        <h1 ref={headingRef} tabIndex={-1} className="text-lg font-semibold">
+        <DetailHeading headingRef={headingRef} className="text-lg font-semibold">
           Invalid conversation
-        </h1>
+        </DetailHeading>
         <p className="text-sm text-muted-foreground">
           This path is not a DM conversation id.
         </p>
@@ -111,14 +119,13 @@ export function ThreadView({
             onNavigate={() => takeThreadOrigin()}
           />
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Direct message</p>
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
+          <DetailHeading
+            headingRef={headingRef}
             className="text-lg font-semibold"
-            data-testid="threadPeer"
+            testId="threadPeer"
           >
             {title ?? <TruncatedPubky pubky={participantPubky} />}
-          </h1>
+          </DetailHeading>
         </div>
         <Link
           href={`/contacts/${encodeURIComponent(participantPubky)}`}
@@ -171,7 +178,9 @@ export function ThreadView({
         )}
       </div>
 
-      {error ? <ErrorDetails fallback="Could not load this thread." details={error} /> : null}
+      {error ? (
+        <ErrorDetails fallback="Could not load this thread." details={error} live="status" />
+      ) : null}
 
       {mayCompose ? (
         <Composer

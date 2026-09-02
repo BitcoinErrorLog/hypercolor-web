@@ -7,22 +7,25 @@ export function ErrorDetails({
   details,
   onRetry,
   retryLabel = "Try again",
+  live = "alert",
 }: {
   fallback: string;
   details: string | null;
   onRetry?: () => void;
   retryLabel?: string;
+  live?: "alert" | "status";
 }) {
+  const role = live === "status" ? "status" : "alert";
   if (!details && !onRetry) {
     return (
-      <p className="text-sm text-red-400" role="alert">
+      <p className="text-sm text-red-400" role={role}>
         {fallback}
       </p>
     );
   }
   const rawIsFallback = details === fallback;
   return (
-    <div className="space-y-1 text-sm text-red-400" role="alert">
+    <div className="space-y-1 text-sm text-red-400" role={role}>
       <p>{fallback}</p>
       {details && !rawIsFallback ? (
         <details>

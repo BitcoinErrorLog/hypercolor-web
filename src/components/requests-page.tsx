@@ -132,6 +132,7 @@ export function RequestsPage() {
         <ErrorDetails
           fallback="Could not load requests."
           details={loadError}
+          live="status"
           onRetry={() => {
             setLoaded(false);
             void load();

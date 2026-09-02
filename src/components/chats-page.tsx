@@ -186,6 +186,7 @@ export function ChatsPage({
               fallback="Could not load your chats."
               details={inboxError}
               onRetry={onRetryInbox}
+              live="status"
             />
           </div>
         ) : null}

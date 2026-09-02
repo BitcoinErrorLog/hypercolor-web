@@ -6,6 +6,7 @@ import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { AttachmentBubble } from "@/components/attachment-bubble";
 import { DetailBackLink } from "@/components/detail-back";
 import { GroupMessageBubble } from "@/components/message-bubble";
+import { DetailHeading } from "@/components/detail-heading";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useChannel } from "@/hooks/useChannel";
@@ -40,9 +41,9 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
     return (
       <article className="space-y-3">
         <DetailBackLink href="/channels" listLabel="Channels" />
-        <h1 ref={headingRef} tabIndex={-1} className="text-lg font-semibold">
+        <DetailHeading headingRef={headingRef} className="text-lg font-semibold">
           Channel not found
-        </h1>
+        </DetailHeading>
         <p className="text-sm text-muted-foreground">
           This group is not on this device. You must be invited over an Encrypted Link.
         </p>
@@ -62,9 +63,9 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
         <div>
           <DetailBackLink href="/channels" listLabel="Channels" />
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Private group</p>
-          <h1 className="text-lg font-semibold" data-testid="channelName" tabIndex={-1} ref={headingRef}>
+          <DetailHeading className="text-lg font-semibold" testId="channelName" headingRef={headingRef}>
             {sanitizeDisplayName(channel.channel.name)}
-          </h1>
+          </DetailHeading>
         </div>
         <Button
           type="button"

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DetailBackLink } from "@/components/detail-back";
 import { TruncatedPubky } from "@/components/truncated-pubky";
+import { DetailHeading } from "@/components/detail-heading";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { relationshipBadges } from "@/lib/contacts-sort";
 import { StorageService } from "@/services/StorageService";
@@ -67,11 +68,11 @@ export function ContactDetail({
       <DetailBackLink href="/contacts" listLabel="Contacts" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-        <h1 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
+        <DetailHeading headingRef={headingRef} className="text-xl font-semibold">
           {contact?.displayName ? sanitizeDisplayName(contact.displayName) : (
             <TruncatedPubky pubky={pubky} />
           )}
-        </h1>
+        </DetailHeading>
         <p className="mt-2 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
         <Button
           type="button"
@@ -88,7 +89,7 @@ export function ContactDetail({
       </div>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Relationship</h3>
+        <h2 className="text-sm font-medium">Relationship</h2>
         <div className="flex flex-wrap gap-2">
           {(contact ? relationshipBadges(contact) : []).map((badge) => (
             <span key={badge} className="rounded-full bg-secondary px-2 py-0.5 text-xs">
@@ -102,7 +103,7 @@ export function ContactDetail({
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Encrypted Link</h3>
+        <h2 className="text-sm font-medium">Encrypted Link</h2>
         <p className="text-sm text-muted-foreground">
           {link
             ? `${link.status}${link.role ? ` · ${link.role}` : ""}`
@@ -111,7 +112,7 @@ export function ContactDetail({
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Trust</h3>
+        <h2 className="text-sm font-medium">Trust</h2>
         <p className="text-sm text-muted-foreground">
           Score {trust ? trust.score.toFixed(3) : "0"} — used only for sorting, never to block
           delivery.

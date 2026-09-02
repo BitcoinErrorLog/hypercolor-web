@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { DetailBackLink } from "@/components/detail-back";
+import { DetailHeading } from "@/components/detail-heading";
 import { sanitizePublicName, sanitizePublicPost, sanitizePublicTag } from "@/lib/public-text";
 import { formatRelativeTime, shortPubky } from "@/lib/format";
 import { PUBLIC_GRAPH_WARNING } from "@/lib/session-ui";
@@ -59,9 +60,9 @@ function TagChannelTimeline({ tag }: { tag: string }) {
       <div>
         <DetailBackLink href="/channels?mode=public" listLabel="Channels" />
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Public topic</p>
-        <h1 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
+        <DetailHeading headingRef={headingRef} className="text-xl font-semibold">
           #{sanitizePublicTag(tag)}
-        </h1>
+        </DetailHeading>
         <p className="mt-2 text-sm text-muted-foreground">{PUBLIC_GRAPH_WARNING}</p>
       </div>
       <div

@@ -1,3 +1,4 @@
+import { scriptedScrollBehavior } from "@/lib/reduced-motion";
 import { parsePubky } from "@/utils/pubkyId";
 
 const STORAGE_KEY = "hypercolor.list-detail-origin";
@@ -59,7 +60,17 @@ export function resolveFocusTarget(
 }
 
 export function restoreListFocus(rowId: string | null, heading: HTMLElement | null): void {
-  resolveFocusTarget(rowId, heading)?.focus();
+  const target = resolveFocusTarget(rowId, heading);
+  if (!target) return;
+  if (typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ block: "nearest", behavior: scriptedScrollBehavior() });
+  }
+  target.focus();
+}
+
+/** Detail heading is h1 only when the list pane is not visible. */
+export function detailHeadingTag(twoPane: boolean): "h1" | "h2" {
+  return twoPane ? "h2" : "h1";
 }
 
 function readThreadOrigin(): ThreadOrigin | null {

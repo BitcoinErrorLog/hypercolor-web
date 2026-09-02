@@ -1,9 +1,29 @@
 "use client";
 
 import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { listFocusable, moveRovingIndex, trapTabKey } from "@/lib/focus-trap";
+import { scriptedMotionMs } from "@/lib/reduced-motion";
+import { cn } from "@/lib/utils";
 
 export type SheetRole = "dialog" | "alertdialog" | "menu";
+export type SheetLayer = "sheet" | "gate";
+
+function inertBackground(overlay: HTMLElement): () => void {
+  const blocked: HTMLElement[] = [];
+  for (const child of Array.from(document.body.children)) {
+    if (child === overlay) continue;
+    if (!(child instanceof HTMLElement)) continue;
+    if (child.inert) continue;
+    child.inert = true;
+    blocked.push(child);
+  }
+  return () => {
+    for (const el of blocked) {
+      el.inert = false;
+    }
+  };
+}
 
 export function ModalSheet({
   open,
@@ -12,6 +32,7 @@ export function ModalSheet({
   descriptionId,
   labelledBy,
   role = "dialog",
+  layer = "sheet",
   initialFocusRef,
   children,
   testId,
@@ -23,25 +44,43 @@ export function ModalSheet({
   descriptionId?: string;
   labelledBy?: string;
   role?: SheetRole;
+  layer?: SheetLayer;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
   children: ReactNode;
   testId?: string;
   closeOnBackdrop?: boolean;
 }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const labelId = useId();
+  const dialogRole = role === "menu" ? "dialog" : role;
 
   useEffect(() => {
     if (!open) return;
     restoreRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
-    window.setTimeout(() => {
+    const overlay = overlayRef.current;
+    const releaseInert = overlay ? inertBackground(overlay) : () => undefined;
+    const enterMs = scriptedMotionMs(150);
+    if (panel && enterMs > 0 && typeof panel.animate === "function") {
+      panel.animate(
+        [
+          { opacity: 0, transform: "translateY(16px)" },
+          { opacity: 1, transform: "none" },
+        ],
+        { duration: enterMs, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+      );
+    }
+    const timer = window.setTimeout(() => {
       const focusTarget =
         initialFocusRef?.current ?? listFocusable(panel ?? document.body)[0] ?? panel;
       focusTarget?.focus();
     }, 0);
     return () => {
+      window.clearTimeout(timer);
+      releaseInert();
+      if (document.querySelector('[aria-modal="true"]')) return;
       restoreRef.current?.focus();
     };
   }, [open, initialFocusRef]);
@@ -70,9 +109,13 @@ export function ModalSheet({
     items[next]?.focus();
   }
 
-  return (
+  const overlay = (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 md:items-center md:px-6"
+      ref={overlayRef}
+      className={cn(
+        "fixed inset-0 flex items-end justify-center bg-black/60 p-0 md:items-center md:px-6",
+        layer === "gate" ? "z-60" : "z-50",
+      )}
       data-testid={testId}
       onMouseDown={(event) => {
         if (!closeOnBackdrop) return;
@@ -81,12 +124,12 @@ export function ModalSheet({
     >
       <div
         ref={panelRef}
-        role={role}
+        role={dialogRole}
         aria-modal="true"
         aria-labelledby={labelledBy ?? titleId ?? (role === "menu" ? labelId : undefined)}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="w-full max-w-md space-y-4 rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
+        className="sheet-enter w-full max-w-md space-y-4 rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
         onKeyDown={onKeyDown}
       >
         {role === "menu" && !labelledBy && !titleId ? (
@@ -94,8 +137,17 @@ export function ModalSheet({
             Attach
           </span>
         ) : null}
-        {children}
+        {role === "menu" ? (
+          <div role="menu" aria-labelledby={labelledBy ?? titleId ?? labelId}>
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return overlay;
+  return createPortal(overlay, document.body);
 }

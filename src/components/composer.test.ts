@@ -12,6 +12,7 @@ describe("composer action menu", () => {
   it("uses the shared sheet with named attach actions", () => {
     expect(source).toContain("ModalSheet");
     expect(source).toContain('role="menu"');
+    expect(source).toContain("aria-haspopup");
     expect(source).toContain("Photo");
     expect(source).toContain("File");
     expect(source).toContain("Cancel");
