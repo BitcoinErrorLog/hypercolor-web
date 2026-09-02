@@ -2,6 +2,7 @@
 
 import type { ReactNode, Ref } from "react";
 import { useTwoPane } from "@/hooks/useTwoPane";
+import { detailHeadingTag } from "@/lib/list-detail-focus";
 
 export function DetailHeading({
   children,
@@ -15,7 +16,7 @@ export function DetailHeading({
   testId?: string;
 }) {
   const twoPane = useTwoPane();
-  if (twoPane) {
+  if (detailHeadingTag(twoPane) === "h2") {
     return (
       <h2 ref={headingRef} tabIndex={-1} className={className} data-testid={testId}>
         {children}

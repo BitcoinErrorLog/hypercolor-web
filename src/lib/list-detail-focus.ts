@@ -73,11 +73,22 @@ export function detailHeadingTag(twoPane: boolean): "h1" | "h2" {
   return twoPane ? "h2" : "h1";
 }
 
-function readThreadOrigin(): ThreadOrigin | null {
+let cachedThreadOriginRaw: string | null | undefined;
+let cachedThreadOrigin: ThreadOrigin | null = null;
+const threadOriginListeners = new Set<() => void>();
+
+function readThreadOriginRaw(): string | null {
   if (typeof sessionStorage === "undefined") return null;
   try {
-    const raw = sessionStorage.getItem(THREAD_ORIGIN_KEY);
-    if (!raw) return null;
+    return sessionStorage.getItem(THREAD_ORIGIN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function parseThreadOriginRaw(raw: string | null): ThreadOrigin | null {
+  if (!raw) return null;
+  try {
     const parsed = JSON.parse(raw) as Partial<ThreadOrigin> & { kind?: string; pubky?: string };
     if (parsed.kind === "chats") return { kind: "chats" };
     if (parsed.kind === "contact" && typeof parsed.pubky === "string") {
@@ -90,26 +101,60 @@ function readThreadOrigin(): ThreadOrigin | null {
   }
 }
 
+function commitThreadOrigin(raw: string | null, origin: ThreadOrigin | null): void {
+  cachedThreadOriginRaw = raw;
+  cachedThreadOrigin = origin;
+  for (const listener of threadOriginListeners) listener();
+}
+
 export function rememberThreadOrigin(origin: ThreadOrigin): void {
   if (typeof sessionStorage === "undefined") return;
+  let stored: ThreadOrigin;
   if (origin.kind === "contact") {
     const pubky = parsePubky(origin.pubky);
     if (!pubky) return;
-    sessionStorage.setItem(THREAD_ORIGIN_KEY, JSON.stringify({ kind: "contact", pubky }));
-    return;
+    stored = { kind: "contact", pubky };
+  } else {
+    stored = { kind: "chats" };
   }
-  sessionStorage.setItem(THREAD_ORIGIN_KEY, JSON.stringify({ kind: "chats" }));
+  const raw = JSON.stringify(stored);
+  sessionStorage.setItem(THREAD_ORIGIN_KEY, raw);
+  commitThreadOrigin(raw, stored);
 }
 
 export function peekThreadOrigin(): ThreadOrigin | null {
-  return readThreadOrigin();
+  const raw = readThreadOriginRaw();
+  if (raw === cachedThreadOriginRaw) return cachedThreadOrigin;
+  const origin = parseThreadOriginRaw(raw);
+  cachedThreadOriginRaw = raw;
+  cachedThreadOrigin = origin;
+  return cachedThreadOrigin;
+}
+
+export function getServerThreadOrigin(): ThreadOrigin | null {
+  return null;
+}
+
+export function subscribeThreadOrigin(onChange: () => void): () => void {
+  threadOriginListeners.add(onChange);
+  if (typeof window === "undefined") {
+    return () => {
+      threadOriginListeners.delete(onChange);
+    };
+  }
+  window.addEventListener("storage", onChange);
+  return () => {
+    threadOriginListeners.delete(onChange);
+    window.removeEventListener("storage", onChange);
+  };
 }
 
 export function takeThreadOrigin(): ThreadOrigin | null {
-  const origin = readThreadOrigin();
+  const origin = peekThreadOrigin();
   if (typeof sessionStorage !== "undefined") {
     sessionStorage.removeItem(THREAD_ORIGIN_KEY);
   }
+  commitThreadOrigin(null, null);
   return origin;
 }
 

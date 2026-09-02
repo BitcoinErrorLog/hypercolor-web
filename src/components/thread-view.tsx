@@ -13,7 +13,9 @@ import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notic
 import { canComposeMessages } from "@/lib/session-ui";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import {
+  getServerThreadOrigin,
   peekThreadOrigin,
+  subscribeThreadOrigin,
   takeThreadOrigin,
   threadBackHref,
   threadBackLabel,
@@ -63,12 +65,9 @@ export function ThreadView({
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const origin = useSyncExternalStore(
-    (onChange) => {
-      window.addEventListener("storage", onChange);
-      return () => window.removeEventListener("storage", onChange);
-    },
+    subscribeThreadOrigin,
     peekThreadOrigin,
-    () => null,
+    getServerThreadOrigin,
   );
   const backHref = threadBackHref(origin);
   const backLabel = threadBackLabel(origin);

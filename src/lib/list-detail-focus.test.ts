@@ -7,6 +7,7 @@ import {
   threadBackLabel,
   resolveFocusTarget,
   detailHeadingTag,
+  subscribeThreadOrigin,
 } from "./list-detail-focus";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
@@ -34,6 +35,7 @@ describe("list-detail-focus", () => {
   });
 
   afterEach(() => {
+    takeThreadOrigin();
     memory.clear();
   });
 
@@ -72,5 +74,33 @@ describe("list-detail-focus", () => {
   it("uses h1 when the list pane is hidden and h2 in the desktop two-pane", () => {
     expect(detailHeadingTag(false)).toBe("h1");
     expect(detailHeadingTag(true)).toBe("h2");
+  });
+
+  it("returns a stable snapshot object until the stored origin changes", () => {
+    memory.set("hypercolor.thread-origin", JSON.stringify({ kind: "chats" }));
+    const first = peekThreadOrigin();
+    const second = peekThreadOrigin();
+    expect(first).toEqual({ kind: "chats" });
+    expect(first).toBe(second);
+
+    rememberThreadOrigin({ kind: "contact", pubky: OWNER });
+    const contact = peekThreadOrigin();
+    expect(contact).toEqual({ kind: "contact", pubky: OWNER });
+    expect(peekThreadOrigin()).toBe(contact);
+    expect(contact).not.toBe(first);
+  });
+
+  it("notifies subscribers on same-document origin writes", () => {
+    let calls = 0;
+    const stop = subscribeThreadOrigin(() => {
+      calls += 1;
+    });
+    rememberThreadOrigin({ kind: "chats" });
+    expect(calls).toBe(1);
+    takeThreadOrigin();
+    expect(calls).toBe(2);
+    stop();
+    rememberThreadOrigin({ kind: "chats" });
+    expect(calls).toBe(2);
   });
 });
