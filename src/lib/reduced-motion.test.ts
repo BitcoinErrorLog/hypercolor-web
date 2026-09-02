@@ -1,10 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  prefersReducedMotion,
-  REDUCED_MOTION_QUERY,
-  scriptedMotionMs,
-  scriptedScrollBehavior,
-} from "./reduced-motion";
+import { scriptedMotionMs, scriptedScrollBehavior } from "./reduced-motion";
 
 describe("reduced-motion", () => {
   afterEach(() => {
@@ -12,7 +7,6 @@ describe("reduced-motion", () => {
   });
 
   it("is false when matchMedia is unavailable", () => {
-    expect(prefersReducedMotion()).toBe(false);
     expect(scriptedScrollBehavior()).toBe("smooth");
     expect(scriptedMotionMs(150)).toBe(150);
   });
@@ -22,12 +16,10 @@ describe("reduced-motion", () => {
       configurable: true,
       value: {
         matchMedia: (query: string) => ({
-          matches: query === REDUCED_MOTION_QUERY,
+          matches: query === "(prefers-reduced-motion: reduce)",
         }),
       },
     });
-    expect(REDUCED_MOTION_QUERY).toBe("(prefers-reduced-motion: reduce)");
-    expect(prefersReducedMotion()).toBe(true);
     expect(scriptedScrollBehavior()).toBe("auto");
     expect(scriptedMotionMs(150)).toBe(0);
   });
@@ -39,7 +31,6 @@ describe("reduced-motion", () => {
         matchMedia: () => ({ matches: false }),
       },
     });
-    expect(prefersReducedMotion()).toBe(false);
     expect(scriptedScrollBehavior()).toBe("smooth");
     expect(scriptedMotionMs(150)).toBe(150);
   });
