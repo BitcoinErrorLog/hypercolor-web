@@ -13,6 +13,7 @@ import {
   canDismissRecoveryCode,
   chunkRecoveryCode,
   clearBackupGate,
+  getBackupGate,
   rememberBackupCreated,
   setBackupGate,
 } from "@/lib/backup-gate";
@@ -31,8 +32,10 @@ export function SettingsPage() {
   const status = useSessionStatusStore((s) => s.status);
   const { signOut, busy: signingOut } = useSignOut();
   const [backupBusy, setBackupBusy] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
-  const [confirmedSaved, setConfirmedSaved] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(
+    () => getBackupGate().recoveryCode,
+  );
+  const [confirmedSaved, setConfirmedSaved] = useState(() => getBackupGate().confirmedSaved);
   const [copied, setCopied] = useState(false);
   const [restoreCode, setRestoreCode] = useState("");
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -50,12 +53,6 @@ export function SettingsPage() {
   useEffect(() => {
     setBackupGate({ recoveryCode, confirmedSaved });
   }, [recoveryCode, confirmedSaved]);
-
-  useEffect(() => {
-    return () => {
-      clearBackupGate();
-    };
-  }, []);
 
   useEffect(() => {
     if (!isE2eHarnessEnabled() || typeof window === "undefined") return;

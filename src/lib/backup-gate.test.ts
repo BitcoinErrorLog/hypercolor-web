@@ -13,6 +13,8 @@ import {
   consumeHistoryTrap,
   hasPendingBackupLeave,
   isBackupLeaveBlocked,
+  onBackupGatePopState,
+  onBackupGateRouteChange,
   recoveryCodeDisplayState,
   requestGuardedNavigation,
   runGatedHistoryLeave,
@@ -179,7 +181,7 @@ describe("backup-gate history trap", () => {
     hist.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
     setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
     expect((history.state as { backupGate?: boolean })?.backupGate).toBe(true);
-    expect(hist.length).toBe(3);
+    expect(hist.length).toBe(5);
     clearBackupGate();
     expect((history.state as { backupGate?: boolean })?.backupGate).toBeFalsy();
     expect(getBackupGate().recoveryCode).toBeNull();
@@ -220,6 +222,63 @@ describe("backup-gate history trap", () => {
     installFakeHistory();
     consumeHistoryTrap();
     expect((history.state as { backupGate?: boolean })?.backupGate).toBeFalsy();
+  });
+
+  it("keeps the recovery code and parks the dialog after history.go(-2)", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    hist.go(-2);
+    onBackupGatePopState();
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
+    expect(getBackupGate().recoveryCode).toBe("word word word");
+    expect(hasPendingBackupLeave()).toBe(true);
+    expect((history.state as { recoveryCode?: string } | null)?.recoveryCode).toBeUndefined();
+    confirmPendingBackupLeave();
+    expect(getBackupGate().recoveryCode).toBeNull();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+  });
+
+  it("keeps the recovery code after two history.back() calls in one turn", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    hist.back();
+    hist.back();
+    onBackupGatePopState();
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
+    expect(getBackupGate().recoveryCode).toBe("word word word");
+    expect(hasPendingBackupLeave()).toBe(true);
+  });
+
+  it("parks the dialog on the landed route after a jump that exhausts the trap", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    hist.go(-4);
+    onBackupGatePopState();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+    expect(getBackupGate().recoveryCode).toBe("word word word");
+    expect(hasPendingBackupLeave()).toBe(true);
+    confirmPendingBackupLeave();
+    expect(getBackupGate().recoveryCode).toBeNull();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+  });
+
+  it("does not clear an unsaved code when the route changes", () => {
+    installFakeHistory("https://hypercolor.app/profile");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    onBackupGateRouteChange("/profile");
+    expect(getBackupGate().recoveryCode).toBe("word word word");
+    expect(hasPendingBackupLeave()).toBe(true);
+  });
+
+  it("clears a confirmed leftover code once Settings is left", () => {
+    installFakeHistory("https://hypercolor.app/chats");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: true });
+    onBackupGateRouteChange("/chats");
+    expect(getBackupGate().recoveryCode).toBeNull();
+    expect(hasPendingBackupLeave()).toBe(false);
   });
 });
 

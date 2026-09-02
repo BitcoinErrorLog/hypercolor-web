@@ -57,7 +57,12 @@ export function useBlockingGate() {
 
   const stay = useCallback(() => {
     cancelPendingBackupLeave();
-  }, []);
+    if (pathname !== "/settings" && isBackupLeaveBlocked()) {
+      router.push("/settings");
+      return;
+    }
+    armHistoryTrap();
+  }, [pathname, router]);
 
   const leaveAnyway = useCallback(() => {
     confirmPendingBackupLeave();

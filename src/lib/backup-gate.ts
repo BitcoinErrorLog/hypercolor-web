@@ -1,9 +1,14 @@
 /**
- * Recovery codes must never persist. The confirm-saved gate only allows
- * dismissing the one-time display after the user says they copied it, or
- * after an explicit Leave anyway that states the consequence.
+ * Recovery codes must never persist to history, URL, or storage.
+ * The confirm-saved gate only allows dismissing the one-time display after
+ * the user says they copied it, or after an explicit Leave anyway that
+ * states the consequence.
  *
- * The code is never held in module memory on a route that does not display it.
+ * The code is a random 32-byte key generated at export time and cannot be
+ * re-derived from the signed-in session. It stays in module memory until
+ * Done, Leave anyway, sign-out, or page unload — including when a history
+ * jump exhausts the history trap. The leave dialog re-parks on the landed
+ * route so the user still chooses.
  */
 
 export const BACKUP_LEAVE_TITLE = "Leave without saving your recovery code?";
@@ -27,6 +32,15 @@ let pendingIntent: PendingIntent | null = null;
 let trapHref: string | null = null;
 let trapArmed = false;
 let consumingTrap = false;
+let gateRestoreFocus: HTMLElement | null = null;
+let trapPushed = 0;
+const HISTORY_TRAP_DEPTH = 3;
+
+function readHistoryState(): Record<string, unknown> {
+  return history.state && typeof history.state === "object"
+    ? { ...(history.state as Record<string, unknown>) }
+    : {};
+}
 
 function notify(): void {
   for (const listener of listeners) listener();
@@ -51,15 +65,12 @@ export function acknowledgeConsumedHistoryTrap(): void {
 export function armHistoryTrap(): void {
   if (typeof window === "undefined") return;
   if (!isBackupLeaveBlocked()) return;
-  const state = history.state as { backupGate?: boolean } | null;
-  if (state?.backupGate) {
-    trapArmed = true;
-    trapHref = window.location.href;
-    return;
-  }
-  history.pushState({ backupGate: true }, "", window.location.href);
   trapHref = window.location.href;
   trapArmed = true;
+  while (trapPushed < HISTORY_TRAP_DEPTH) {
+    history.pushState({ ...readHistoryState(), backupGate: true }, "", window.location.href);
+    trapPushed += 1;
+  }
 }
 
 /**
@@ -69,13 +80,18 @@ export function armHistoryTrap(): void {
  */
 export function consumeHistoryTrap(): void {
   if (typeof window === "undefined") return;
-  if (!trapArmed) return;
   trapArmed = false;
-  if (new URL(window.location.href, "https://hypercolor.app").pathname !== "/settings") return;
+  if (new URL(window.location.href, "https://hypercolor.app").pathname !== "/settings") {
+    trapPushed = 0;
+    return;
+  }
+  const n = trapPushed;
+  trapPushed = 0;
+  if (n <= 0) return;
   const state = history.state as { backupGate?: boolean } | null;
   if (!state?.backupGate) return;
   consumingTrap = true;
-  history.back();
+  history.go(-n);
   window.setTimeout(() => {
     consumingTrap = false;
   }, 0);
@@ -88,12 +104,10 @@ export function consumeHistoryTrap(): void {
 export function runGatedHistoryLeave(): void {
   if (typeof window === "undefined") return;
   const state = history.state as { backupGate?: boolean } | null;
-  if (state?.backupGate) {
-    trapArmed = false;
-    history.go(-2);
-    return;
-  }
-  history.back();
+  const n = state?.backupGate ? trapPushed + 1 : 1;
+  trapArmed = false;
+  trapPushed = 0;
+  history.go(-n);
 }
 
 /** True when popstate only changed the hash on the gated page. */
@@ -131,6 +145,7 @@ export function clearBackupGate(): void {
   snapshot = { recoveryCode: null, confirmedSaved: false };
   pendingIntent = null;
   trapHref = null;
+  gateRestoreFocus = null;
   notify();
   consumeHistoryTrap();
 }
@@ -158,8 +173,77 @@ export function requestGuardedNavigation(
 
 export function cancelPendingBackupLeave(): void {
   pendingIntent = null;
-  armHistoryTrap();
   notify();
+}
+
+export function parkGateRestoreFocus(el: HTMLElement | null): void {
+  gateRestoreFocus = el;
+}
+
+export function getGateRestoreFocus(): HTMLElement | null {
+  return gateRestoreFocus;
+}
+
+function currentPathname(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return new URL(window.location.href).pathname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * History jumped off Settings while the one-time code is still unsaved.
+ * Keep the code in module memory and park the leave dialog on this route.
+ * Leave anyway is a no-op navigation — the user is already off Settings.
+ */
+function parkEscapedBackupLeave(): void {
+  trapArmed = false;
+  trapPushed = 0;
+  requestGuardedNavigation(() => {
+    // Already off the gated route.
+  });
+}
+
+/** Pathname changed. Never clear an unsaved code just because the trap lost. */
+export function onBackupGateRouteChange(pathname: string): void {
+  if (pathname === "/settings") {
+    if (isBackupLeaveBlocked()) armHistoryTrap();
+    return;
+  }
+  if (isBackupLeaveBlocked()) {
+    parkEscapedBackupLeave();
+    return;
+  }
+  if (snapshot.recoveryCode) {
+    clearBackupGate();
+  }
+}
+
+/** popstate. Refill the trap when still on Settings; otherwise park in place. */
+export function onBackupGatePopState(): void {
+  if (isConsumingHistoryTrap()) {
+    acknowledgeConsumedHistoryTrap();
+    return;
+  }
+  if (!isBackupLeaveBlocked()) return;
+  if (isHashOnlyHistoryChange()) {
+    armHistoryTrap();
+    return;
+  }
+  if (currentPathname() === "/settings") {
+    trapPushed = (history.state as { backupGate?: boolean } | null)?.backupGate ? 1 : 0;
+    armHistoryTrap();
+    requestGuardedNavigation(
+      () => {
+        runGatedHistoryLeave();
+      },
+      { consumeTrap: false },
+    );
+    return;
+  }
+  parkEscapedBackupLeave();
 }
 
 export function confirmPendingBackupLeave(): void {
@@ -167,6 +251,7 @@ export function confirmPendingBackupLeave(): void {
   pendingIntent = null;
   snapshot = { recoveryCode: null, confirmedSaved: false };
   trapHref = null;
+  gateRestoreFocus = null;
   notify();
   if (intent?.consumeTrap !== false) {
     consumeHistoryTrap();
@@ -174,6 +259,7 @@ export function confirmPendingBackupLeave(): void {
     trapArmed = false;
   }
   intent?.run();
+  if (!trapArmed) trapPushed = 0;
 }
 
 export function subscribeBackupGate(listener: () => void): () => void {

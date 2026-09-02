@@ -11,15 +11,12 @@ import {
   BACKUP_LEAVE_CONFIRM,
   BACKUP_LEAVE_STAY,
   BACKUP_LEAVE_TITLE,
-  acknowledgeConsumedHistoryTrap,
-  armHistoryTrap,
-  clearBackupGate,
   getBackupGate,
+  getGateRestoreFocus,
   isBackupLeaveBlocked,
-  isConsumingHistoryTrap,
-  isHashOnlyHistoryChange,
+  onBackupGatePopState,
+  onBackupGateRouteChange,
   requestGuardedNavigation,
-  runGatedHistoryLeave,
   setBackupGate,
   shouldBlockHref,
 } from "@/lib/backup-gate";
@@ -37,7 +34,7 @@ function resolveAnchorHref(anchor: HTMLAnchorElement): string | null {
 export function BackupLeaveGuard() {
   const router = useRouter();
   const pathname = usePathname();
-  const { pending, stay, leaveAnyway, stayRef } = useBlockingGate();
+  const { pending, stay, leaveAnyway, stayRef, blocked } = useBlockingGate();
 
   useEffect(() => {
     if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
@@ -64,11 +61,8 @@ export function BackupLeaveGuard() {
   }, []);
 
   useEffect(() => {
-    if (pathname === "/settings") return;
-    if (getBackupGate().recoveryCode || isBackupLeaveBlocked()) {
-      clearBackupGate();
-    }
-  }, [pathname]);
+    onBackupGateRouteChange(pathname);
+  }, [pathname, blocked, pending]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -115,37 +109,13 @@ export function BackupLeaveGuard() {
         router.push(href);
       });
     };
-    const onPopState = () => {
-      if (isConsumingHistoryTrap()) {
-        acknowledgeConsumedHistoryTrap();
-        return;
-      }
-      if (!isBackupLeaveBlocked()) return;
-      if (isHashOnlyHistoryChange()) {
-        armHistoryTrap();
-        return;
-      }
-      armHistoryTrap();
-      requestGuardedNavigation(
-        () => {
-          runGatedHistoryLeave();
-        },
-        { consumeTrap: false },
-      );
-    };
-    const onHashChange = () => {
-      if (!isBackupLeaveBlocked()) return;
-      // Hash-only changes stay on Settings and are not an exit.
-    };
+    window.addEventListener("popstate", onBackupGatePopState);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKeyDown, true);
-    window.addEventListener("popstate", onPopState);
-    window.addEventListener("hashchange", onHashChange);
     return () => {
       document.removeEventListener("click", onClick, true);
       document.removeEventListener("keydown", onKeyDown, true);
-      window.removeEventListener("popstate", onPopState);
-      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("popstate", onBackupGatePopState);
     };
   }, [pathname, router]);
 
@@ -158,6 +128,7 @@ export function BackupLeaveGuard() {
       titleId="backup-leave-title"
       descriptionId="backup-leave-body"
       initialFocusRef={stayRef}
+      restoreFocus={getGateRestoreFocus}
       testId="backupLeaveDialog"
     >
       <h2 id="backup-leave-title" className="text-lg font-semibold">
