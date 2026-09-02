@@ -226,6 +226,49 @@ async function expectNoBackupGateInHistory(page: Page) {
   }
 }
 
+async function expectNoRecoveryProbeInStorage(page: Page) {
+  const snapshot = await page.evaluate(async () => {
+    const local: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (key) local[key] = localStorage.getItem(key) ?? "";
+    }
+    const session: Record<string, string> = {};
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (key) session[key] = sessionStorage.getItem(key) ?? "";
+    }
+    const idb: unknown[] = [];
+    if (typeof indexedDB.databases === "function") {
+      const infos = await indexedDB.databases();
+      for (const info of infos) {
+        if (!info.name) continue;
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const req = indexedDB.open(info.name!);
+          req.onerror = () => reject(req.error);
+          req.onsuccess = () => resolve(req.result);
+        });
+        try {
+          for (const storeName of [...db.objectStoreNames]) {
+            const tx = db.transaction(storeName, "readonly");
+            const store = tx.objectStore(storeName);
+            const rows = await new Promise<unknown>((resolve, reject) => {
+              const req = store.getAll();
+              req.onerror = () => reject(req.error);
+              req.onsuccess = () => resolve(req.result);
+            });
+            idb.push({ db: info.name, store: storeName, rows });
+          }
+        } finally {
+          db.close();
+        }
+      }
+    }
+    return { local, session, idb, history: history.state };
+  });
+  expect(JSON.stringify(snapshot)).not.toMatch(/abcd1234wxyz/);
+}
+
 async function expectCodeSurvivesWithDialog(page: Page) {
   await expect.poll(async () => {
     try {
@@ -689,6 +732,51 @@ test.describe("recovery-code gate attack matrix", () => {
       await page.goto(path);
       await expect(page.locator("h1")).toHaveCount(1);
     }
+  });
+
+  test("pageshow persisted while gated keeps the recovery code in memory", async ({ page }) => {
+    // A gated Settings document arms `beforeunload`, which Chromium treats as a
+    // BFCache exclusion even with `--enable-features=BackForwardCache`. The
+    // closest deterministic equivalent is a persisted `pageshow` on the live
+    // gated document: module memory must still hold the code and it must still
+    // not have entered Web Storage.
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    expect((await readGate(page)).gate?.recoveryCode).toBe("abcd1234wxyz");
+    await expectNoRecoveryProbeInStorage(page);
+  });
+
+  test("reload while gated on Settings destroys the in-memory code", async ({ page }) => {
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    expect((await readGate(page)).gate?.recoveryCode ?? null).toBeNull();
+    await expectNoRecoveryProbeInStorage(page);
+  });
+
+  test("escape paths never persist the recovery code to Web Storage", async ({ page }) => {
+    await gotoSettings(page);
+    await showRecovery(page);
+    await (await chatsNav(page)).click();
+    await page.getByTestId("backupLeaveAnyway").click();
+    await expect(page).toHaveURL(/\/chats/);
+    await expectNoRecoveryProbeInStorage(page);
+
+    await gotoSettings(page);
+    await showRecovery(page);
+    await page.getByTestId("recoveryCodeSaved").check();
+    await page.getByTestId("recoveryCodeDone").click();
+    await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
+    await expectNoRecoveryProbeInStorage(page);
   });
 });
 
