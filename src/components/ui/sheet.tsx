@@ -6,8 +6,12 @@ import { listFocusable, moveRovingIndex, trapTabKey } from "@/lib/focus-trap";
 import { scriptedMotionMs } from "@/lib/reduced-motion";
 import { cn } from "@/lib/utils";
 
-export type SheetRole = "dialog" | "alertdialog" | "menu";
-export type SheetLayer = "sheet" | "gate";
+type SheetRole = "dialog" | "alertdialog" | "menu";
+type SheetLayer = "sheet" | "gate";
+
+function gateOverlayMounted(): boolean {
+  return typeof document !== "undefined" && Boolean(document.querySelector('[data-sheet-layer="gate"]'));
+}
 
 function isUsefulRestoreTarget(el: HTMLElement | null): el is HTMLElement {
   if (!el?.isConnected) return false;
@@ -63,9 +67,10 @@ export function ModalSheet({
   const restoreRef = useRef<HTMLElement | null>(null);
   const labelId = useId();
   const dialogRole = role === "menu" ? "dialog" : role;
+  const shown = open && (layer === "gate" || !gateOverlayMounted());
 
   useEffect(() => {
-    if (!open) return;
+    if (!shown) return;
     restoreRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const panel = panelRef.current;
     const overlay = overlayRef.current;
@@ -98,9 +103,9 @@ export function ModalSheet({
         (main instanceof HTMLElement ? main : null);
       target?.focus();
     };
-  }, [open, initialFocusRef, restoreFocus]);
+  }, [shown, initialFocusRef, restoreFocus]);
 
-  if (!open) return null;
+  if (!shown) return null;
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
@@ -131,6 +136,7 @@ export function ModalSheet({
         "fixed inset-0 flex items-end justify-center bg-black/60 p-0 md:items-center md:px-6",
         layer === "gate" ? "z-60" : "z-50",
       )}
+      data-sheet-layer={layer}
       data-testid={testId}
       onMouseDown={(event) => {
         if (!closeOnBackdrop) return;

@@ -5,7 +5,8 @@ import { type ReactElement } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ModalSheet } from "@/components/ui/sheet";
-import { REDUCED_MOTION_QUERY } from "@/lib/reduced-motion";
+
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 let host: HTMLDivElement;
 let root: Root;
@@ -144,5 +145,91 @@ describe("ModalSheet", () => {
     await render(<Harness open={false} />);
     expect(document.activeElement).toBe(fallback);
     fallback.remove();
+  });
+
+  it("marks background inert while a gate is open and releases it on close", async () => {
+    const main = document.createElement("main");
+    main.id = "main-content";
+    document.body.append(main);
+
+    function Harness({ open }: { open: boolean }) {
+      return (
+        <ModalSheet
+          open={open}
+          onClose={() => undefined}
+          layer="gate"
+          titleId="gate-title"
+          testId="backupLeaveDialog"
+        >
+          <h2 id="gate-title">Leave?</h2>
+        </ModalSheet>
+      );
+    }
+
+    await render(<Harness open />);
+    expect(main.inert).toBe(true);
+    await render(<Harness open={false} />);
+    expect(main.inert).toBe(false);
+    main.remove();
+  });
+
+  it("applies the same inert treatment when the gate is the only overlay", async () => {
+    const main = document.createElement("main");
+    main.id = "main-content";
+    document.body.append(main);
+    await render(
+      <ModalSheet
+        open
+        onClose={() => undefined}
+        layer="gate"
+        titleId="parked-title"
+        testId="parkedGate"
+      >
+        <h2 id="parked-title">Leave?</h2>
+      </ModalSheet>,
+    );
+    expect(main.inert).toBe(true);
+    expect(document.querySelector('[data-sheet-layer="gate"]')).not.toBeNull();
+    main.remove();
+  });
+
+  it("refuses a sheet layer while a gate overlay is mounted", async () => {
+    await render(
+      <ModalSheet
+        open
+        onClose={() => undefined}
+        layer="gate"
+        titleId="gate-title"
+        testId="backupLeaveDialog"
+      >
+        <h2 id="gate-title">Leave?</h2>
+      </ModalSheet>,
+    );
+    expect(document.querySelector('[data-sheet-layer="gate"]')).not.toBeNull();
+    await render(
+      <>
+        <ModalSheet
+          open
+          onClose={() => undefined}
+          layer="gate"
+          titleId="gate-title"
+          testId="backupLeaveDialog"
+        >
+          <h2 id="gate-title">Leave?</h2>
+        </ModalSheet>
+        <ModalSheet
+          open
+          onClose={() => undefined}
+          layer="sheet"
+          titleId="sheet-title"
+          testId="signOutDialog"
+        >
+          <h2 id="sheet-title">Sign out?</h2>
+        </ModalSheet>
+      </>,
+    );
+    expect(document.querySelector("[data-testid=backupLeaveDialog]")).not.toBeNull();
+    expect(document.querySelector("[data-testid=signOutDialog]")).toBeNull();
+    expect(document.querySelectorAll('[aria-modal="true"]')).toHaveLength(1);
   });
 });

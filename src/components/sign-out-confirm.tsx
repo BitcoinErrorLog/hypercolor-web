@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ModalSheet } from "@/components/ui/sheet";
 import { formatRelativeTime } from "@/lib/format";
-import { parkGateRestoreFocus, readLastBackupAt } from "@/lib/backup-gate";
+import { hasPendingBackupLeave, parkGateRestoreFocus, readLastBackupAt } from "@/lib/backup-gate";
 import { CUSTODY_LINE } from "@/lib/session-ui";
 
 export function SignOutConfirm({
@@ -36,6 +36,7 @@ export function SignOutConfirm({
         ref={triggerRef}
         data-testid={triggerTestId}
         onClick={() => {
+          if (hasPendingBackupLeave()) return;
           setLastBackup(readLastBackupAt());
           setOpen(true);
         }}

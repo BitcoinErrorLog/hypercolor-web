@@ -62,7 +62,7 @@ export function BackupLeaveGuard() {
 
   useEffect(() => {
     onBackupGateRouteChange(pathname);
-  }, [pathname, blocked, pending]);
+  }, [pathname, blocked]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
