@@ -24,6 +24,14 @@ import { provisionReceiver } from "./provisionReceiver";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 
+async function waitForPublishToStart(): Promise<void> {
+  for (let i = 0; i < 200 && publishReceiverMarker.mock.calls.length === 0; i += 1) {
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
+  }
+  expect(publishReceiverMarker).toHaveBeenCalled();
+}
+
 describe("provisionReceiver", () => {
   beforeEach(async () => {
     await KeyStore.initKeyStore();
@@ -74,12 +82,13 @@ describe("provisionReceiver", () => {
   });
 
   it("fails fast when publishReceiverMarker hangs", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
       noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
       publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
       const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      await waitForPublishToStart();
       const assertion = expect(pending).rejects.toMatchObject({
         name: "SessionResumeTimeout",
       });
@@ -91,12 +100,13 @@ describe("provisionReceiver", () => {
   });
 
   it("leaves no receiver evidence behind when the publish times out", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
       noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
       publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
       const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+      await waitForPublishToStart();
       const assertion = expect(pending).rejects.toMatchObject({
         name: "SessionResumeTimeout",
       });
