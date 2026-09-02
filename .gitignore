@@ -22,7 +22,10 @@
 
 # next.js
 /.next/
+/.next-e2e/
 /out/
+/out-e2e/
+/.out-prod-stash/
 
 # production
 /build

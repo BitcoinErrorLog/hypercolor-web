@@ -1,9 +1,12 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  BAD_URL_ENCODING,
+  E2E_HARNESS_MARKER,
   loadVercelRewrites,
   matchRewrite,
   resolveOutFile,
@@ -78,5 +81,73 @@ describe("static preview rewrites", () => {
     const root = tempDir();
     writeFileSync(path.join(root, "index.html"), "ok");
     expect(resolveOutFile(root, "/../package.json")).toBeNull();
+  });
+
+  it("returns a sentinel for malformed percent encoding", () => {
+    const root = tempDir();
+    writeFileSync(path.join(root, "index.html"), "ok");
+    expect(resolveOutFile(root, "/%E0%A4%A")).toBe(BAD_URL_ENCODING);
+  });
+
+  it("survives a malformed request and keeps serving", async () => {
+    const root = tempDir();
+    writeFileSync(path.join(root, "index.html"), "<html>ok</html>");
+    const preview = await startStaticPreview({ root, port: 0, rewrites: [] });
+    const rawGet = (urlPath) =>
+      new Promise((resolve, reject) => {
+        const parsed = new URL(preview.url);
+        const req = http.request(
+          {
+            hostname: parsed.hostname,
+            port: parsed.port,
+            path: urlPath,
+            method: "GET",
+          },
+          (res) => {
+            const chunks = [];
+            res.on("data", (chunk) => chunks.push(chunk));
+            res.on("end", () => {
+              resolve({
+                status: res.statusCode ?? 0,
+                body: Buffer.concat(chunks).toString("utf8"),
+              });
+            });
+          },
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    try {
+      const bad = await rawGet("/%E0%A4%A");
+      expect(bad.status).toBe(400);
+      expect(bad.body).toMatch(/Bad request/i);
+      const ok = await rawGet("/");
+      expect(ok.status).toBe(200);
+      expect(ok.body).toContain("ok");
+    } finally {
+      await preview.close();
+    }
+  });
+
+  it("refuses an e2e-harness export unless explicitly allowed", async () => {
+    const root = tempDir();
+    writeFileSync(path.join(root, "index.html"), "<html>harness</html>");
+    writeFileSync(path.join(root, E2E_HARNESS_MARKER), "NEXT_PUBLIC_E2E_HARNESS=1\n");
+    await expect(startStaticPreview({ root, port: 0, rewrites: [] })).rejects.toThrow(
+      /e2e-harness/,
+    );
+    const preview = await startStaticPreview({
+      root,
+      port: 0,
+      rewrites: [],
+      allowE2eHarness: true,
+    });
+    try {
+      const res = await fetch(`${preview.url}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toContain("harness");
+    } finally {
+      await preview.close();
+    }
   });
 });

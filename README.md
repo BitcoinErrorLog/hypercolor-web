@@ -194,11 +194,19 @@ npm run dev
 npm run typecheck
 npm run lint
 npm test
-npm run build          # next build --webpack; writes out/
-npm run preview:static # serve out/ with vercel.json rewrites (default :3000)
-npm run test:e2e       # Playwright against next dev, or PLAYWRIGHT_BASE_URL at preview:static
-npm run test:e2e:static # thread-origin + recovery-gate against preview:static on :3300
+npm run build            # next build --webpack; writes production out/ (no e2e harness)
+npm run preview:static   # serve production out/ with vercel.json rewrites (default :3000)
+                         # refuses a tree that contains .e2e-harness
+npm run build:e2e:static # NEXT_PUBLIC_E2E_HARNESS=1 rebuild into out-e2e/ (cleans that dir)
+npm run test:e2e         # Playwright against next dev (harness env), or PLAYWRIGHT_BASE_URL
+npm run test:e2e:static  # build:e2e:static then thread-origin + recovery-gate on out-e2e :3300
 ```
+
+`npm run test:e2e:static` is the CI-style static proof. It always rebuilds
+`out-e2e/` with the harness hook compiled in. Do not run Playwright against a
+leftover `out/` — recovery tests need `NEXT_PUBLIC_E2E_HARNESS=1`, and a
+harness export is not a production preview. `preview:static` keeps serving
+the plain production export.
 
 ## Vibeware
 

@@ -5,18 +5,26 @@ const staticUrl = "http://127.0.0.1:3300";
 const devUrl = "http://localhost:3000";
 
 /**
- * Browser e2e against `next dev` (default) or the rewrite-aware static export:
+ * Browser e2e against `next dev` (default) or the rewrite-aware static export.
  *
- *   NEXT_PUBLIC_E2E_HARNESS=1 npm run build
+ * Production preview (no harness hooks):
+ *
+ *   npm run build
  *   npm run preview:static
- *   PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000 npm run test:e2e
  *
- * If port 3000 is already taken:
+ * Recovery-gate static proof (self-contained). Rebuilds into `out-e2e/` with
+ * `NEXT_PUBLIC_E2E_HARNESS=1` and a `.e2e-harness` marker. CI must use this
+ * command from a clean `out-e2e/` (the script deletes that dir first):
  *
- *   PORT=3300 npm run preview:static
- *   PLAYWRIGHT_BASE_URL=http://127.0.0.1:3300 npx playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts
+ *   npm run test:e2e:static
  *
- * Or, after `out/` exists: `npm run test:e2e:static` (serves `out/` with vercel.json rewrites on :3300).
+ * `preview:static` serves `out/` and refuses a tree that contains `.e2e-harness`.
+ * Do not point it at `out-e2e/` without `--allow-e2e-harness`.
+ *
+ * Manual harness preview:
+ *
+ *   npm run build:e2e:static
+ *   npm run preview:static -- --port 3300 --root out-e2e --allow-e2e-harness
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -30,9 +38,9 @@ export default defineConfig({
     ? undefined
     : useStaticPreview
       ? {
-          command: "npm run preview:static -- --port 3300",
+          command: "npm run preview:static -- --port 3300 --root out-e2e --allow-e2e-harness",
           url: staticUrl,
-          reuseExistingServer: !process.env.CI,
+          reuseExistingServer: false,
           timeout: 60_000,
         }
       : {

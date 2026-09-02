@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
+export const E2E_HARNESS_MARKER = ".e2e-harness";
+export const BAD_URL_ENCODING = Symbol("hypercolor.badUrlEncoding");
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -67,11 +69,24 @@ export function loadVercelRewrites(repoRoot = REPO_ROOT) {
 
 /**
  * @param {string} root
+ * @returns {boolean}
+ */
+export function isE2eHarnessExport(root) {
+  return existsSync(path.join(path.resolve(root), E2E_HARNESS_MARKER));
+}
+
+/**
+ * @param {string} root
  * @param {string} urlPath
- * @returns {string | null}
+ * @returns {string | null | typeof BAD_URL_ENCODING}
  */
 export function resolveOutFile(root, urlPath) {
-  const decoded = decodeURIComponent(urlPath.split("?")[0]);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath.split("?")[0]);
+  } catch {
+    return BAD_URL_ENCODING;
+  }
   const normalized = path.posix.normalize(decoded);
   if (normalized.includes("\0") || normalized.startsWith("..") || normalized.includes("/../")) {
     return null;
@@ -100,56 +115,80 @@ function parseArgs(argv) {
   let port = Number(process.env.PORT || 3000);
   let root = path.join(REPO_ROOT, "out");
   let host = process.env.HOST || "127.0.0.1";
+  let allowE2eHarness = false;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--port") port = Number(argv[++i]);
     else if (argv[i] === "--root") root = path.resolve(argv[++i]);
     else if (argv[i] === "--host") host = String(argv[++i]);
+    else if (argv[i] === "--allow-e2e-harness") allowE2eHarness = true;
   }
   if (!Number.isFinite(port) || port < 0) {
     throw new Error(`invalid port: ${port}`);
   }
-  return { port, root, host };
+  return { port, root, host, allowE2eHarness };
 }
 
 /**
- * @param {{ root: string, port?: number, host?: string, rewrites?: { source: string, destination: string }[] }} options
+ * @param {{ root: string, port?: number, host?: string, rewrites?: { source: string, destination: string }[], allowE2eHarness?: boolean }} options
  */
 export function startStaticPreview(options) {
   const root = path.resolve(options.root);
   const host = options.host ?? "127.0.0.1";
   const rewrites = options.rewrites ?? loadVercelRewrites(REPO_ROOT);
+  if (isE2eHarnessExport(root) && !options.allowE2eHarness) {
+    return Promise.reject(
+      new Error(
+        `static preview: refusing to serve e2e-harness export at ${root} as production. Use --root out-e2e --allow-e2e-harness (npm run test:e2e:static), or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
+      ),
+    );
+  }
   const server = http.createServer((req, res) => {
-    const incoming = req.url ?? "/";
-    let pathname;
     try {
-      pathname = new URL(incoming, "http://127.0.0.1").pathname;
+      const incoming = req.url ?? "/";
+      let pathname;
+      try {
+        pathname = new URL(incoming, "http://127.0.0.1").pathname;
+      } catch {
+        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Bad request");
+        return;
+      }
+      const rewritten = matchRewrite(pathname, rewrites);
+      const lookup = rewritten ?? pathname;
+      const file = resolveOutFile(root, lookup);
+      if (file === BAD_URL_ENCODING) {
+        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Bad request");
+        return;
+      }
+      const served = file ?? resolveOutFile(root, "/404.html");
+      if (!served || served === BAD_URL_ENCODING) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Not found");
+        return;
+      }
+      const ext = path.extname(served).toLowerCase();
+      const type = MIME[ext] ?? "application/octet-stream";
+      const status = served.endsWith(`${path.sep}404.html`) && lookup !== "/404.html" && !rewritten
+        ? 404
+        : 200;
+      res.writeHead(status, {
+        "content-type": type,
+        "cache-control": ext === ".html" ? "no-cache" : "public, max-age=0",
+      });
+      if (req.method === "HEAD") {
+        res.end();
+        return;
+      }
+      createReadStream(served).pipe(res);
     } catch {
-      res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
-      res.end("Bad request");
-      return;
+      if (!res.headersSent) {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Internal error");
+      } else {
+        res.destroy();
+      }
     }
-    const rewritten = matchRewrite(pathname, rewrites);
-    const lookup = rewritten ?? pathname;
-    const file = resolveOutFile(root, lookup) ?? resolveOutFile(root, "/404.html");
-    if (!file) {
-      res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
-      res.end("Not found");
-      return;
-    }
-    const ext = path.extname(file).toLowerCase();
-    const type = MIME[ext] ?? "application/octet-stream";
-    const status = file.endsWith(`${path.sep}404.html`) && lookup !== "/404.html" && !rewritten
-      ? 404
-      : 200;
-    res.writeHead(status, {
-      "content-type": type,
-      "cache-control": ext === ".html" ? "no-cache" : "public, max-age=0",
-    });
-    if (req.method === "HEAD") {
-      res.end();
-      return;
-    }
-    createReadStream(file).pipe(res);
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -170,12 +209,18 @@ export function startStaticPreview(options) {
 }
 
 async function main() {
-  const { port, root, host } = parseArgs(process.argv.slice(2));
+  const { port, root, host, allowE2eHarness } = parseArgs(process.argv.slice(2));
   if (!existsSync(root)) {
     console.error(`static preview: missing ${root} — run npm run build first`);
     process.exit(1);
   }
-  const preview = await startStaticPreview({ root, port, host });
+  if (isE2eHarnessExport(root) && !allowE2eHarness) {
+    console.error(
+      `static preview: refusing to serve e2e-harness export at ${root} as production. Use --root out-e2e --allow-e2e-harness, or npm run build without NEXT_PUBLIC_E2E_HARNESS.`,
+    );
+    process.exit(1);
+  }
+  const preview = await startStaticPreview({ root, port, host, allowE2eHarness });
   const rules = loadVercelRewrites(REPO_ROOT)
     .map((rule) => `${rule.source} → ${rule.destination}`)
     .join(", ");
