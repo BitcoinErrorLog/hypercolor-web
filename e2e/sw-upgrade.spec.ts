@@ -1,8 +1,8 @@
+import { spawn } from "node:child_process";
 import { copyFileSync, cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { startStaticPreview } from "../scripts/static-preview.mjs";
 import { cacheNameFromWorkerFile } from "./sw-cache-name";
 
 /**
@@ -110,6 +110,8 @@ async function upgradeToCurrent(page: Page, servedSw: string, expectedCache: str
         await page.evaluate(async () => {
           const registration = await navigator.serviceWorker.getRegistration();
           await registration?.update().catch(() => undefined);
+          const waiting = registration?.waiting ?? registration?.installing;
+          waiting?.postMessage({ type: "hypercolor-skip-waiting" });
         });
         return cacheKeys(page);
       },
@@ -133,17 +135,70 @@ async function withServedExport(
   }
   const root = mkdtempSync(join(tmpdir(), "hc-sw-upgrade-"));
   cpSync(OUT_E2E, root, { recursive: true });
-  const preview = await startStaticPreview({
-    root,
-    port: 0,
-    allowE2eHarness: true,
-  });
+  const preview = await spawnStaticPreview(root);
   try {
     await run({ baseUrl: preview.url, servedSw: join(root, "sw.js") });
   } finally {
     await preview.close();
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+/** Playwright compiles specs as CJS; spawn the ESM preview instead of importing it. */
+function spawnStaticPreview(root: string): Promise<{ url: string; close: () => Promise<void> }> {
+  const child = spawn(
+    process.execPath,
+    [
+      join(__dirname, "..", "scripts", "static-preview.mjs"),
+      "--root",
+      root,
+      "--port",
+      "0",
+      "--host",
+      "127.0.0.1",
+      "--allow-e2e-harness",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let started = false;
+    const fail = (err: Error) => {
+      if (started) return;
+      started = true;
+      reject(err);
+    };
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+      const match = stdout.match(/static preview: (http:\/\/[^\s]+)/);
+      if (!match || started) return;
+      started = true;
+      resolve({
+        url: match[1],
+        close: () =>
+          new Promise((closeResolve) => {
+            if (child.exitCode !== null || child.signalCode !== null) {
+              closeResolve();
+              return;
+            }
+            child.once("exit", () => closeResolve());
+            child.kill("SIGTERM");
+            setTimeout(() => {
+              if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+            }, 2000);
+          }),
+      });
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.once("error", fail);
+    child.once("exit", (code, signal) => {
+      if (started) return;
+      fail(new Error(`static-preview exited ${code ?? signal}: ${stdout}${stderr}`));
+    });
+  });
 }
 
 test.describe("service worker upgrade", () => {

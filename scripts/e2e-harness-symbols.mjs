@@ -4,6 +4,7 @@
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const HARNESS_HOOK_SOURCE_FILES = [
   "src/components/backup-leave-guard.tsx",
@@ -98,4 +99,40 @@ export function classifyHarnessHookInSource(source, symbol) {
   );
   if (live.test(source) || source.includes(`${symbol}=`)) return "live";
   return "inert";
+}
+
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
+const REPO_ROOT = path.resolve(path.dirname(SCRIPT_PATH), "..");
+
+function main(argv) {
+  const cmd = argv[0];
+  if (cmd === "scan") {
+    const exportRoot = argv[1];
+    if (!exportRoot) {
+      console.error("usage: e2e-harness-symbols.mjs scan <exportRoot>");
+      process.exit(1);
+    }
+    const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+    const hits = findE2eHarnessHookSymbols(exportRoot, symbols).map((hit) => {
+      const source = readFileSync(hit.file, "utf8");
+      return {
+        file: hit.file,
+        symbol: hit.symbol,
+        kind: classifyHarnessHookInSource(source, hit.symbol),
+        gated: /NEXT_PUBLIC_E2E_HARNESS/.test(source),
+      };
+    });
+    process.stdout.write(JSON.stringify({ symbols, hits }));
+    return;
+  }
+  console.error("usage: e2e-harness-symbols.mjs scan <exportRoot>");
+  process.exit(1);
+}
+
+const isMain =
+  process.argv[1] !== undefined &&
+  path.normalize(SCRIPT_PATH) === path.normalize(path.resolve(process.argv[1]));
+
+if (isMain) {
+  main(process.argv.slice(2));
 }

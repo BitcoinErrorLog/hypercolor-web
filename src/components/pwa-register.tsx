@@ -77,8 +77,19 @@ export function PwaRegister() {
           type="button"
           size="sm"
           onClick={() => {
-            waitingRef.current?.postMessage({ type: "hypercolor-skip-waiting" });
-            window.location.reload();
+            const waiting = waitingRef.current;
+            let reloaded = false;
+            const reload = () => {
+              if (reloaded) return;
+              reloaded = true;
+              window.location.reload();
+            };
+            navigator.serviceWorker.addEventListener("controllerchange", reload, { once: true });
+            if (waiting) {
+              waiting.postMessage({ type: "hypercolor-skip-waiting" });
+            } else {
+              reload();
+            }
           }}
         >
           Reload
