@@ -35,6 +35,8 @@ import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 import { parsePubky } from "@/utils/pubkyId";
 
+export const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
+
 export function ContactsPage() {
   const router = useGuardedRouter();
   const selected = usePathSegment("contacts");
@@ -102,7 +104,7 @@ export function ContactsPage() {
       await reload();
       router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add contact");
+      setError(CONTACTS_FORM_ERROR);
       emitCoarseError("contacts", err);
     } finally {
       setBusy(false);
@@ -156,7 +158,7 @@ export function ContactsPage() {
                 }
               })
               .catch((err) => {
-                setError(err instanceof Error ? err.message : "Search failed");
+                setError(CONTACTS_FORM_ERROR);
                 emitCoarseError("contacts", err);
               })
               .finally(() => setSearchBusy(false));
@@ -207,7 +209,7 @@ export function ContactsPage() {
               </>
             )}
           </div>
-          {error ? <ErrorDetails fallback="Could not load contacts." details={error} /> : null}
+          {error ? <ErrorDetails fallback={CONTACTS_FORM_ERROR} details={error} /> : null}
         </form>
 
         {hits && hits.length > 0 ? (
