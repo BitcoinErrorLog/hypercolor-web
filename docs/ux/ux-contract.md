@@ -1010,10 +1010,18 @@ panes render with the master hidden (`hidden md:block`, e.g.
 `src/components/discover-page.tsx:42`) and no in-pane Back, so a `<md` user who opens a thread
 has no way back except browser chrome — which a standalone-display PWA does not have.
 
+Each route exposes exactly one **visible** `h1`. The list pane heading is that `h1`. The
+detail heading is `h1` only when the list pane is hidden (`<md`); in the two-pane layout
+(`≥md`) it is `h2`. Web chooses the tag client-side after mount from `useTwoPane`. The SSR
+and hydration snapshot is the mobile case (`h1`) so the static export does not mismatch;
+desktop then updates to `h2` after mount.
+
 **AC.**
 1. At 375px, every detail pane has a visible Back control that returns to its list route.
 2. Loading a detail route directly as the first navigation still shows a working Back.
 3. At `≥md` no Back control renders in a detail pane.
+4. At 375px the detail heading is the route's only visible `h1`. At `≥md` the list heading
+   stays the only visible `h1` and the detail heading is `h2`.
 
 ### D.19 Session banner (both platforms)
 

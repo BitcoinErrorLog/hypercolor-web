@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 
 const MD_UP = "(min-width: 768px)";
 
+/** Desktop two-pane is client-only. SSR / hydration snapshot is false (mobile `h1`). */
 export function useTwoPane(): boolean {
   return useSyncExternalStore(
     (onChange) => {
