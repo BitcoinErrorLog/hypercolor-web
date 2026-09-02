@@ -184,3 +184,12 @@ export function topicRowDomId(tag: string): string {
 export function contactRowDomId(pubky: string): string {
   return `contact-row-${pubky}`;
 }
+
+/** Drop tab-scoped list/thread origins so a later identity cannot inherit them. */
+export function clearListDetailFocus(): void {
+  if (typeof sessionStorage !== "undefined") {
+    sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(THREAD_ORIGIN_KEY);
+  }
+  commitThreadOrigin(null, null);
+}

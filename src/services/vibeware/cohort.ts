@@ -4,6 +4,7 @@ export const COHORT_STORAGE_KEY = "hypercolor.vibeware.cohort.v1";
 export type CohortStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  removeItem?(key: string): void;
 };
 
 const memoryStorage = new Map<string, string>();
@@ -14,6 +15,9 @@ const fallbackStorage: CohortStorage = {
   },
   setItem(key, value) {
     memoryStorage.set(key, value);
+  },
+  removeItem(key) {
+    memoryStorage.delete(key);
   },
 };
 
@@ -65,4 +69,15 @@ export async function getCohortKey(options?: {
   new Uint8Array(digestBuffer).set(material);
   const digest = await crypto.subtle.digest("SHA-256", digestBuffer);
   return toHex(new Uint8Array(digest));
+}
+
+/** Drop the per-origin cohort secret so the next identity cannot reuse it. */
+export function clearCohortKey(options?: { storage?: CohortStorage }): void {
+  const storage =
+    options?.storage ??
+    (typeof localStorage !== "undefined" ? localStorage : fallbackStorage);
+  if (typeof storage.removeItem === "function") {
+    storage.removeItem(COHORT_STORAGE_KEY);
+  }
+  memoryStorage.delete(COHORT_STORAGE_KEY);
 }

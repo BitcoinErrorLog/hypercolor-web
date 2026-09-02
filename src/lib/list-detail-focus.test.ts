@@ -8,6 +8,9 @@ import {
   resolveFocusTarget,
   detailHeadingTag,
   subscribeThreadOrigin,
+  rememberListRow,
+  takeListRow,
+  clearListDetailFocus,
 } from "./list-detail-focus";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
@@ -102,5 +105,21 @@ describe("list-detail-focus", () => {
     stop();
     rememberThreadOrigin({ kind: "chats" });
     expect(calls).toBe(2);
+  });
+
+  it("clearListDetailFocus drops both origin keys and notifies subscribers", () => {
+    rememberThreadOrigin({ kind: "contact", pubky: OWNER });
+    rememberListRow("chats", "chat-row-1");
+    let calls = 0;
+    const stop = subscribeThreadOrigin(() => {
+      calls += 1;
+    });
+    clearListDetailFocus();
+    expect(peekThreadOrigin()).toBeNull();
+    expect(takeListRow("chats")).toBeNull();
+    expect(memory.has("hypercolor.thread-origin")).toBe(false);
+    expect(memory.has("hypercolor.list-detail-origin")).toBe(false);
+    expect(calls).toBe(1);
+    stop();
   });
 });

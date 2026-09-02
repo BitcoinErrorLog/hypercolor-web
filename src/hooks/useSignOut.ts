@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import { useBlockingGate } from "@/hooks/useBlockingGate";
+import { clearBackupGate } from "@/lib/backup-gate";
+import { clearListDetailFocus } from "@/lib/list-detail-focus";
 import { LinkService } from "@/services/link/LinkService";
+import { clearCohortKey } from "@/services/vibeware/cohort";
 import { useChannelsStore } from "@/stores/channelsStore";
 import { useContactStore } from "@/stores/contactStore";
 import { useInboxStore } from "@/stores/inboxStore";
@@ -22,6 +25,9 @@ export function useSignOut() {
     setBusy(true);
     try {
       await LinkService.clearSession();
+      clearListDetailFocus();
+      clearCohortKey();
+      clearBackupGate();
       useInboxStore.getState().reset();
       useChannelsStore.getState().reset();
       useContactStore.setState({ contacts: {}, meshPeers: {} });
