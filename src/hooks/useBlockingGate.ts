@@ -29,7 +29,7 @@ export function useBlockingGate() {
 
   const requestPush = useCallback(
     (href: string) => {
-      requestGuardedNavigation(() => {
+      return requestGuardedNavigation(() => {
         router.push(href);
       });
     },
@@ -38,7 +38,7 @@ export function useBlockingGate() {
 
   const requestReplace = useCallback(
     (href: string) => {
-      requestGuardedNavigation(() => {
+      return requestGuardedNavigation(() => {
         router.replace(href);
       });
     },
@@ -46,13 +46,13 @@ export function useBlockingGate() {
   );
 
   const requestBack = useCallback(() => {
-    requestGuardedNavigation(() => {
+    return requestGuardedNavigation(() => {
       router.back();
     });
   }, [router]);
 
   const requestRun = useCallback((run: () => void) => {
-    requestGuardedNavigation(run);
+    return requestGuardedNavigation(run);
   }, []);
 
   const stay = useCallback(() => {

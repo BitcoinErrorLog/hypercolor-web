@@ -189,4 +189,126 @@ test.describe("recovery-code gate attack matrix", () => {
     await expect(page).toHaveURL(/\/chats/);
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
   });
+
+  test("Sign out while the code is shown stacks the gate above the sheet", async ({ page }) => {
+    await gotoSettings(page);
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as { __hypercolorShowRecovery?: unknown })
+          .__hypercolorShowRecovery === "function",
+    );
+    await page.evaluate(() => {
+      const host = window as unknown as { __hypercolorShowRecovery?: (code: string) => void };
+      host.__hypercolorShowRecovery?.("abcd1234wxyz");
+    });
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.getByTestId("settingsSignOut").click();
+    await expect(page.getByTestId("signOutDialog")).toBeVisible();
+    await page.getByTestId("signOutConfirm").click();
+    await expect(page.getByTestId("signOutDialog")).toHaveCount(0);
+    const gate = page.getByTestId("backupLeaveDialog");
+    await expect(gate).toBeVisible();
+    await expect(page.getByTestId("backupLeaveStay")).toBeFocused();
+    const topmost = await page.evaluate(() => {
+      const stay = document.querySelector("[data-testid=backupLeaveStay]");
+      if (!(stay instanceof HTMLElement)) return { insideGate: false };
+      const box = stay.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+      return {
+        insideGate: Boolean(hit?.closest("[data-testid=backupLeaveDialog]")),
+        zIndex: getComputedStyle(
+          document.querySelector("[data-testid=backupLeaveDialog]")!,
+        ).zIndex,
+      };
+    });
+    expect(topmost.insideGate).toBe(true);
+    expect(topmost.zIndex).toBe("60");
+    await page.getByTestId("backupLeaveStay").click();
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.getByTestId("settingsSignOut").click();
+    await page.getByTestId("signOutConfirm").click();
+    await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+    await page.getByTestId("backupLeaveAnyway").click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+  });
+
+  test("two Back presses keep Settings with the gate or clear the code off-route", async ({
+    page,
+  }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as { __hypercolorShowRecovery?: unknown })
+          .__hypercolorShowRecovery === "function",
+    );
+    await page.evaluate(() => {
+      const host = window as unknown as { __hypercolorShowRecovery?: (code: string) => void };
+      host.__hypercolorShowRecovery?.("abcd1234wxyz");
+    });
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.goBack();
+    await page.goBack();
+    const snapshot = await page.evaluate(() => {
+      const host = window as unknown as {
+        __hypercolorGetBackupGate?: () => { recoveryCode: string | null; confirmedSaved: boolean };
+      };
+      return {
+        href: location.pathname,
+        gate: host.__hypercolorGetBackupGate?.() ?? null,
+      };
+    });
+    if (snapshot.href.includes("/settings")) {
+      await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+      expect(snapshot.gate?.recoveryCode).toBeTruthy();
+    } else {
+      await expect(page).toHaveURL(/\/profile/);
+      await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+      expect(snapshot.gate?.recoveryCode ?? null).toBeNull();
+      await (await chatsNav(page)).click();
+      await expect(page).toHaveURL(/\/chats/);
+      await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    }
+  });
+
+  test("checkbox and Done then a single Back lands on the previous route", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as { __hypercolorShowRecovery?: unknown })
+          .__hypercolorShowRecovery === "function",
+    );
+    await page.evaluate(() => {
+      const host = window as unknown as { __hypercolorShowRecovery?: (code: string) => void };
+      host.__hypercolorShowRecovery?.("abcd1234wxyz");
+    });
+    await page.getByTestId("recoveryCodeSaved").check();
+    await page.getByTestId("recoveryCodeDone").click();
+    await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+  });
+
+  test("browser Forward after arming stays on Settings", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await armGate(page);
+    await page.goForward();
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+  });
+
+  test("list routes expose exactly one h1", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    for (const path of ["/chats", "/channels", "/contacts", "/profile", "/settings", "/requests", "/enable"]) {
+      await page.goto(path);
+      await expect(page.locator("h1")).toHaveCount(1);
+    }
+  });
 });
+

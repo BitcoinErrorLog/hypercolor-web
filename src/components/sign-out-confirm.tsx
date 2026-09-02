@@ -14,7 +14,7 @@ export function SignOutConfirm({
 }: {
   triggerTestId: string;
   busy: boolean;
-  onSignOut: () => void;
+  onSignOut: () => boolean | void;
 }) {
   const [open, setOpen] = useState(false);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
@@ -81,7 +81,12 @@ export function SignOutConfirm({
             variant="destructive"
             disabled={busy}
             data-testid="signOutConfirm"
-            onClick={() => onSignOut()}
+            onClick={() => {
+              const proceeded = onSignOut();
+              if (proceeded === false) {
+                setOpen(false);
+              }
+            }}
           >
             Sign out
           </Button>

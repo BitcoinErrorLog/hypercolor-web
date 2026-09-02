@@ -11,12 +11,17 @@ import {
   BACKUP_LEAVE_CONFIRM,
   BACKUP_LEAVE_STAY,
   BACKUP_LEAVE_TITLE,
+  acknowledgeConsumedHistoryTrap,
+  armHistoryTrap,
+  clearBackupGate,
+  getBackupGate,
   isBackupLeaveBlocked,
+  isConsumingHistoryTrap,
   isHashOnlyHistoryChange,
   requestGuardedNavigation,
+  runGatedHistoryLeave,
   setBackupGate,
   shouldBlockHref,
-  armHistoryTrap,
 } from "@/lib/backup-gate";
 import type { InboxRow } from "@/lib/inbox";
 import { useChannelsStore } from "@/stores/channelsStore";
@@ -38,10 +43,12 @@ export function BackupLeaveGuard() {
     if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
     const host = window as Window & {
       __hypercolorSetBackupGate?: typeof setBackupGate;
+      __hypercolorGetBackupGate?: typeof getBackupGate;
       __hypercolorSetPendingRequests?: (count: number) => void;
       __hypercolorSetChannelRows?: (rows: InboxRow[]) => void;
     };
     host.__hypercolorSetBackupGate = setBackupGate;
+    host.__hypercolorGetBackupGate = getBackupGate;
     host.__hypercolorSetPendingRequests = (count) => {
       useInboxStore.getState().setPendingRequests(count);
     };
@@ -50,10 +57,18 @@ export function BackupLeaveGuard() {
     };
     return () => {
       delete host.__hypercolorSetBackupGate;
+      delete host.__hypercolorGetBackupGate;
       delete host.__hypercolorSetPendingRequests;
       delete host.__hypercolorSetChannelRows;
     };
   }, []);
+
+  useEffect(() => {
+    if (pathname === "/settings") return;
+    if (getBackupGate().recoveryCode || isBackupLeaveBlocked()) {
+      clearBackupGate();
+    }
+  }, [pathname]);
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
@@ -101,14 +116,22 @@ export function BackupLeaveGuard() {
       });
     };
     const onPopState = () => {
+      if (isConsumingHistoryTrap()) {
+        acknowledgeConsumedHistoryTrap();
+        return;
+      }
       if (!isBackupLeaveBlocked()) return;
       if (isHashOnlyHistoryChange()) {
         armHistoryTrap();
         return;
       }
-      requestGuardedNavigation(() => {
-        window.history.back();
-      });
+      armHistoryTrap();
+      requestGuardedNavigation(
+        () => {
+          runGatedHistoryLeave();
+        },
+        { consumeTrap: false },
+      );
     };
     const onHashChange = () => {
       if (!isBackupLeaveBlocked()) return;
@@ -131,6 +154,7 @@ export function BackupLeaveGuard() {
       open={pending}
       onClose={stay}
       role="alertdialog"
+      layer="gate"
       titleId="backup-leave-title"
       descriptionId="backup-leave-body"
       initialFocusRef={stayRef}

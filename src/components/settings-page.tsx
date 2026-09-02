@@ -49,10 +49,13 @@ export function SettingsPage() {
 
   useEffect(() => {
     setBackupGate({ recoveryCode, confirmedSaved });
-    return () => {
-      if (!recoveryCode) clearBackupGate();
-    };
   }, [recoveryCode, confirmedSaved]);
+
+  useEffect(() => {
+    return () => {
+      clearBackupGate();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
@@ -226,7 +229,7 @@ export function SettingsPage() {
         <SignOutConfirm
           triggerTestId="settingsSignOut"
           busy={signingOut}
-          onSignOut={() => void signOut()}
+          onSignOut={() => signOut()}
         />
       </section>
     </article>

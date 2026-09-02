@@ -2,6 +2,8 @@
  * Recovery codes must never persist. The confirm-saved gate only allows
  * dismissing the one-time display after the user says they copied it, or
  * after an explicit Leave anyway that states the consequence.
+ *
+ * The code is never held in module memory on a route that does not display it.
  */
 
 export const BACKUP_LEAVE_TITLE = "Leave without saving your recovery code?";
@@ -14,10 +16,17 @@ export type BackupGateSnapshot = {
   confirmedSaved: boolean;
 };
 
+type PendingIntent = {
+  run: () => void;
+  consumeTrap: boolean;
+};
+
 let snapshot: BackupGateSnapshot = { recoveryCode: null, confirmedSaved: false };
 const listeners = new Set<() => void>();
-let pendingIntent: { run: () => void } | null = null;
+let pendingIntent: PendingIntent | null = null;
 let trapHref: string | null = null;
+let trapArmed = false;
+let consumingTrap = false;
 
 function notify(): void {
   for (const listener of listeners) listener();
@@ -31,13 +40,60 @@ export function hasPendingBackupLeave(): boolean {
   return pendingIntent !== null;
 }
 
+export function isConsumingHistoryTrap(): boolean {
+  return consumingTrap;
+}
+
+export function acknowledgeConsumedHistoryTrap(): void {
+  consumingTrap = false;
+}
+
 export function armHistoryTrap(): void {
   if (typeof window === "undefined") return;
   if (!isBackupLeaveBlocked()) return;
   const state = history.state as { backupGate?: boolean } | null;
-  if (state?.backupGate) return;
+  if (state?.backupGate) {
+    trapArmed = true;
+    trapHref = window.location.href;
+    return;
+  }
   history.pushState({ backupGate: true }, "", window.location.href);
   trapHref = window.location.href;
+  trapArmed = true;
+}
+
+/**
+ * Pop the duplicate same-URL trap entry without treating it as a leave.
+ * Must run after the snapshot is already unblocked so a stray popstate cannot
+ * re-open the dialog.
+ */
+export function consumeHistoryTrap(): void {
+  if (typeof window === "undefined") return;
+  if (!trapArmed) return;
+  trapArmed = false;
+  if (new URL(window.location.href, "https://hypercolor.app").pathname !== "/settings") return;
+  const state = history.state as { backupGate?: boolean } | null;
+  if (!state?.backupGate) return;
+  consumingTrap = true;
+  history.back();
+  window.setTimeout(() => {
+    consumingTrap = false;
+  }, 0);
+}
+
+/**
+ * Leave the gated Settings entry. After a popstate re-arm the trap sits on
+ * top of the real Settings entry, so one `back()` would only pop the trap.
+ */
+export function runGatedHistoryLeave(): void {
+  if (typeof window === "undefined") return;
+  const state = history.state as { backupGate?: boolean } | null;
+  if (state?.backupGate) {
+    trapArmed = false;
+    history.go(-2);
+    return;
+  }
+  history.back();
 }
 
 /** True when popstate only changed the hash on the gated page. */
@@ -76,18 +132,26 @@ export function clearBackupGate(): void {
   pendingIntent = null;
   trapHref = null;
   notify();
+  consumeHistoryTrap();
 }
 
 /**
  * Run `run` now, or hold it until the user confirms Leave anyway.
  * Returns true when the action proceeded immediately.
+ *
+ * `consumeTrap` (default false) pops the trap entry on confirm. History-leave
+ * and router.push intents must not pop here — `history.back()` races the
+ * App Router. The sanctioned Done path consumes via `clearBackupGate`.
  */
-export function requestGuardedNavigation(run: () => void): boolean {
+export function requestGuardedNavigation(
+  run: () => void,
+  options?: { consumeTrap?: boolean },
+): boolean {
   if (!isBackupLeaveBlocked()) {
     run();
     return true;
   }
-  pendingIntent = { run };
+  pendingIntent = { run, consumeTrap: options?.consumeTrap === true };
   notify();
   return false;
 }
@@ -104,6 +168,11 @@ export function confirmPendingBackupLeave(): void {
   snapshot = { recoveryCode: null, confirmedSaved: false };
   trapHref = null;
   notify();
+  if (intent?.consumeTrap !== false) {
+    consumeHistoryTrap();
+  } else {
+    trapArmed = false;
+  }
   intent?.run();
 }
 

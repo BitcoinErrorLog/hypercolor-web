@@ -33,8 +33,8 @@ export function useSignOut() {
     }
   }
 
-  function signOut() {
-    requestRun(() => {
+  function signOut(): boolean {
+    return requestRun(() => {
       void actuallySignOut();
     });
   }

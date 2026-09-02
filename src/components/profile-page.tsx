@@ -60,7 +60,7 @@ export function ProfilePage() {
       <SignOutConfirm
         triggerTestId="profileSignOut"
         busy={busy}
-        onSignOut={() => void signOut()}
+        onSignOut={() => signOut()}
       />
     </article>
   );
