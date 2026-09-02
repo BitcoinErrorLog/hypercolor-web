@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   E2E_BUILD_DIR,
   E2E_STATIC_LOCK_DIR,
+  isolPrefixForRoot,
   runBuildE2eStatic,
 } from "./build-e2e-static.mjs";
 
@@ -68,7 +69,7 @@ function fingerprint(file) {
 }
 
 function leftoverIsolDirs(pid, root) {
-  const prefix = `hypercolor-e2e-isol-${pid}-`;
+  const prefix = `${isolPrefixForRoot(root)}${pid}-`;
   const bases = [tmpdir(), path.join(root, E2E_BUILD_DIR)];
   const found = [];
   for (const base of bases) {
@@ -77,6 +78,22 @@ function leftoverIsolDirs(pid, root) {
       if (name.startsWith(prefix)) found.push(path.join(base, name));
     }
   }
+  return found;
+}
+
+function envFilesUnder(dir) {
+  const found = [];
+  if (!existsSync(dir)) return found;
+  const walk = (current) => {
+    for (const name of readdirSync(current)) {
+      if (name.startsWith("._")) continue;
+      const full = path.join(current, name);
+      const st = statSync(full);
+      if (st.isDirectory()) walk(full);
+      else if (name === ".env" || name.startsWith(".env.")) found.push(full);
+    }
+  };
+  walk(dir);
   return found;
 }
 
@@ -426,10 +443,10 @@ process.exit(0);
     const staleOld = path.join(root, "out-e2e.old-99999");
     mkdirSync(staleOld);
     writeFileSync(path.join(staleOld, "index.html"), "old-secret");
-    const staleIsol = path.join(root, E2E_BUILD_DIR, "hypercolor-e2e-isol-99999-STALE");
+    const staleIsol = path.join(root, E2E_BUILD_DIR, `${isolPrefixForRoot(root)}99999-STALE`);
     mkdirSync(staleIsol, { recursive: true });
     writeFileSync(path.join(staleIsol, ".env.local"), "SECRET=isol\n");
-    const staleTmpdir = path.join(tmpdir(), "hypercolor-e2e-isol-99999-STALE");
+    const staleTmpdir = path.join(tmpdir(), `${isolPrefixForRoot(root)}99999-STALE`);
     mkdirSync(staleTmpdir, { recursive: true });
     writeFileSync(path.join(staleTmpdir, ".env"), "SECRET=tmpisol\n");
     temps.push(staleTmpdir);
@@ -556,6 +573,8 @@ while (!existsSync(stopFile)) {
     expect(sawTracked).toBe(true);
     expect(sawEnvDev).toBe(false);
     expect(sawOutbox).toBe(true);
+    expect(envFilesUnder(path.join(root, "out-e2e"))).toEqual([]);
+    expect(leftoverIsolDirs(process.pid, root)).toEqual([]);
   });
 
   it(
@@ -655,4 +674,94 @@ setInterval(() => {}, 1000);
     },
     20_000,
   );
+
+  it("does not copy any .env* into the isolated tree and leaves none under out-e2e", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    writeFileSync(path.join(root, ".env"), "SECRET=root\n");
+    writeFileSync(path.join(root, ".env.local"), "SECRET=local\n");
+    writeFileSync(path.join(root, ".env.production"), "SECRET=prod\n");
+    writeFileSync(path.join(root, ".env.production.local"), "SECRET=prodlocal\n");
+    let isolHadEnv = false;
+    let isolPath = "";
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: (buildRoot) => {
+        isolPath = buildRoot;
+        isolHadEnv = envFilesUnder(buildRoot).length > 0;
+        writeFileSync(path.join(buildRoot, ".env.planted"), "should-be-unlinked\n");
+        writeFileSync(path.join(buildRoot, ".env"), "planted\n");
+        return successfulHarnessBuild(buildRoot);
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(isolHadEnv).toBe(false);
+    expect(existsSync(isolPath)).toBe(false);
+    expect(envFilesUnder(path.join(root, "out-e2e"))).toEqual([]);
+    expect(leftoverIsolDirs(process.pid, root)).toEqual([]);
+    expect(existsSync(path.join(root, E2E_BUILD_DIR))).toBe(false);
+  });
+
+  it("does not sweep another root's in-flight isolated tree", async () => {
+    const rootA = tempDir();
+    const rootB = tempDir();
+    initTrackedRepo(rootA);
+    initTrackedRepo(rootB);
+    let isolA = "";
+    let aResult;
+    let releaseA;
+    const aStarted = new Promise((resolve, reject) => {
+      aResult = runBuildE2eStatic({
+        root: rootA,
+        handleSignals: false,
+        runBuild: (buildRoot) => {
+          isolA = buildRoot;
+          writeFileSync(path.join(buildRoot, "SENTINEL"), "a");
+          resolve();
+          return new Promise((resolveBuild) => {
+            releaseA = resolveBuild;
+          });
+        },
+      }).catch(reject);
+    });
+    await aStarted;
+    expect(existsSync(path.join(isolA, "SENTINEL"))).toBe(true);
+    const staleB = path.join(tmpdir(), `${isolPrefixForRoot(rootB)}99999-STALE`);
+    mkdirSync(staleB, { recursive: true });
+    temps.push(staleB);
+    const resultB = await runBuildE2eStatic({
+      root: rootB,
+      handleSignals: false,
+      runBuild: successfulHarnessBuild,
+    });
+    expect(resultB.status).toBe(0);
+    expect(existsSync(path.join(isolA, "SENTINEL"))).toBe(true);
+    expect(existsSync(staleB)).toBe(false);
+    releaseA({ status: 1 });
+    await aResult;
+  });
+
+  it("restores a lone out-e2e.old-* to out-e2e before sweeping when live is missing", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    const old = path.join(root, "out-e2e.old-99123");
+    mkdirSync(old);
+    writeFileSync(path.join(old, "index.html"), "PREVIOUS-GOOD");
+    const crashedTmp = path.join(root, "out-e2e.tmp-99123");
+    mkdirSync(crashedTmp);
+    writeFileSync(path.join(crashedTmp, "index.html"), "NEW-UNPUBLISHED");
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: () => ({ status: 1 }),
+    });
+    expect(result.status).toBe(1);
+    expect(existsSync(path.join(root, "out-e2e", "index.html"))).toBe(true);
+    expect(readFileSync(path.join(root, "out-e2e", "index.html"), "utf8")).toBe("PREVIOUS-GOOD");
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(crashedTmp)).toBe(false);
+    expect(oldPublishDirs(root)).toEqual([]);
+    expect(tmpPublishDirs(root)).toEqual([]);
+  });
 });

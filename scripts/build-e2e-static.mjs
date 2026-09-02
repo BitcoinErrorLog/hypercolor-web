@@ -11,17 +11,24 @@
  *
  * Copy set: git tracked files plus untracked-but-not-ignored files (so the
  * harness export matches `npm run build` from the working tree), plus a small
- * list of gitignored inputs Next needs. After the lock is taken, leftover
- * `out-e2e.tmp-*`, `out-e2e.old-*`, and `hypercolor-e2e-isol-*` trees are
- * removed. Publish swaps via rename (old tree aside, new tree in, then delete
- * the aside) so `out-e2e/` is never removed before the replacement is in
- * place; a failed second rename restores the previous tree.
+ * list of gitignored inputs Next needs (`public/sqlite3.wasm`, `next-env.d.ts`).
+ * `.env*` files are never copied: `next build` inlines `NEXT_PUBLIC_*` from the
+ * child env (`NEXT_PUBLIC_E2E_HARNESS=1` plus any already in `process.env`).
+ * This repo's other `NEXT_PUBLIC_*` keys default empty in source, so copying
+ * dotenv files would only duplicate secrets onto disk. After the lock is taken,
+ * a lone `out-e2e.old-*` is restored to `out-e2e/` when the live path is
+ * missing, then leftover `out-e2e.tmp-*`, `out-e2e.old-*`, and this root's
+ * `hypercolor-e2e-isol-<roothash>-*` trees are removed. Publish swaps via
+ * rename (old tree aside, new tree in, then delete the aside) so `out-e2e/`
+ * is never removed before the replacement is in place; a thrown failure of
+ * the second rename restores the previous tree.
  *
  * `E2E_STATIC_KILL_TIMEOUT_MS` bounds how long SIGTERM is waited before
  * SIGKILL (default 10000). A second SIGINT/SIGTERM during that window
  * escalates immediately to SIGKILL.
  */
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -43,16 +50,28 @@ export const E2E_BUILD_DIR = ".e2e-build";
 const OUT_NAME = "out";
 const OUT_E2E_NAME = "out-e2e";
 const MARKER = ".e2e-harness";
-const ISOL_PREFIX = "hypercolor-e2e-isol-";
 const DEFAULT_CHILD_STOP_MS = 10_000;
-const EXPLICIT_EXTRAS = [
-  "public/sqlite3.wasm",
-  "next-env.d.ts",
-  ".env",
-  ".env.local",
-  ".env.production",
-  ".env.production.local",
-];
+const EXPLICIT_EXTRAS = ["public/sqlite3.wasm", "next-env.d.ts"];
+
+/**
+ * Isolated-tree prefix scoped to this checkout so a tmpdir sweep cannot
+ * delete another root's in-flight copy.
+ * @param {string} root
+ * @returns {string}
+ */
+export function isolPrefixForRoot(root) {
+  const hash = createHash("sha256").update(path.resolve(root)).digest("hex").slice(0, 12);
+  return `hypercolor-e2e-isol-${hash}-`;
+}
+
+/**
+ * @param {string} rel
+ * @returns {boolean}
+ */
+function isDotEnvFile(rel) {
+  const base = path.posix.basename(rel.replace(/\\/g, "/"));
+  return base === ".env" || base.startsWith(".env.");
+}
 
 /**
  * @param {string} rel
@@ -72,6 +91,7 @@ function shouldExcludeFromE2eCopy(rel) {
   if (top === OUT_NAME || top === OUT_E2E_NAME || top.startsWith(`${OUT_E2E_NAME}.`)) {
     return true;
   }
+  if (isDotEnvFile(rel)) return true;
   return false;
 }
 
@@ -151,11 +171,50 @@ function removePrefixedEntries(dir, prefix) {
 }
 
 /**
- * Leftovers from a SIGKILLed previous run: staging trees and isolated copies
- * (which may contain copied `.env*` files). Safe only while the lock is held.
+ * Unlink every `.env*` under `dir` (no overwrite — that is a no-op on modern FS).
+ * @param {string} dir
+ */
+function unlinkEnvFiles(dir) {
+  if (!dir || !existsSync(dir)) return;
+  let names;
+  try {
+    names = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of names) {
+    if (ent.name.startsWith("._")) continue;
+    const full = path.join(dir, ent.name);
+    if (ent.isDirectory()) {
+      unlinkEnvFiles(full);
+      continue;
+    }
+    if (ent.name === ".env" || ent.name.startsWith(".env.")) {
+      rmSync(full, { force: true });
+    }
+  }
+}
+
+/**
+ * If a previous run died after moving live `out-e2e` aside, put that tree back
+ * before sweeping so a failed next run does not leave the project with no export.
+ * @param {string} root
+ */
+function recoverOrphanedPublish(root) {
+  const live = path.join(root, OUT_E2E_NAME);
+  if (existsSync(live) || !existsSync(root)) return;
+  const olds = readdirSync(root).filter((name) => name.startsWith(`${OUT_E2E_NAME}.old-`));
+  if (olds.length !== 1) return;
+  renameSync(path.join(root, olds[0]), live);
+}
+
+/**
+ * Leftovers from a SIGKILLed previous run: staging trees and isolated copies.
+ * Safe only while the lock is held. Isolated tmpdir names are per-root.
  * @param {string} root
  */
 function sweepStaleArtifacts(root) {
+  recoverOrphanedPublish(root);
   if (existsSync(root)) {
     for (const name of readdirSync(root)) {
       if (name.startsWith(`${OUT_E2E_NAME}.tmp-`) || name.startsWith(`${OUT_E2E_NAME}.old-`)) {
@@ -163,8 +222,9 @@ function sweepStaleArtifacts(root) {
       }
     }
   }
-  removePrefixedEntries(path.join(root, E2E_BUILD_DIR), ISOL_PREFIX);
-  removePrefixedEntries(tmpdir(), ISOL_PREFIX);
+  const prefix = isolPrefixForRoot(root);
+  removePrefixedEntries(path.join(root, E2E_BUILD_DIR), prefix);
+  removePrefixedEntries(tmpdir(), prefix);
 }
 
 /**
@@ -340,6 +400,7 @@ export async function runBuildE2eStatic(options = {}) {
 
   const removeIsolatedRoot = () => {
     if (isolatedRoot && existsSync(isolatedRoot)) {
+      unlinkEnvFiles(isolatedRoot);
       rmSync(isolatedRoot, { recursive: true, force: true });
     }
     isolatedRoot = null;
@@ -383,9 +444,11 @@ export async function runBuildE2eStatic(options = {}) {
     cleaned = true;
     await stopBuildChild();
     if (existsSync(tmpPublish)) {
+      unlinkEnvFiles(tmpPublish);
       rmSync(tmpPublish, { recursive: true, force: true });
     }
     if (existsSync(oldPublish)) {
+      unlinkEnvFiles(oldPublish);
       rmSync(oldPublish, { recursive: true, force: true });
     }
     removeIsolatedRoot();
@@ -430,7 +493,7 @@ export async function runBuildE2eStatic(options = {}) {
 
     if (aborting) return { status: 1, error: "build:e2e:static: interrupted" };
 
-    isolatedRoot = mkdtempSync(path.join(pickIsolatedBase(root), `${ISOL_PREFIX}${process.pid}-`));
+    isolatedRoot = mkdtempSync(path.join(pickIsolatedBase(root), `${isolPrefixForRoot(root)}${process.pid}-`));
     copyProjectSources(root, isolatedRoot);
 
     const result = await Promise.resolve(runBuild(isolatedRoot));
