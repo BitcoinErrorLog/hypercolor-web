@@ -13,8 +13,9 @@ const devUrl = "http://localhost:3000";
  *   npm run preview:static
  *
  * Recovery-gate static proof (self-contained). Rebuilds into `out-e2e/` with
- * `NEXT_PUBLIC_E2E_HARNESS=1` and a `.e2e-harness` marker. CI must use this
- * command from a clean `out-e2e/` (the script deletes that dir first):
+ * `NEXT_PUBLIC_E2E_HARNESS=1` and a `.e2e-harness` marker from an isolated
+ * tree; production `out/` and `.next/` are not touched. CI must use this
+ * command:
  *
  *   npm run test:e2e:static
  *

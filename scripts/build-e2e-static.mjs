@@ -1,91 +1,189 @@
 #!/usr/bin/env node
 /**
  * Clean rebuild of the static export with `NEXT_PUBLIC_E2E_HARNESS=1` into
- * `out-e2e/`. Production `out/` is left alone (stashed around the build).
+ * `out-e2e/`. The Next build runs in an isolated tree so production `out/`
+ * and `.next/` are never touched.
  *
- * Exclusive: a second invocation is refused while the lock is held.
- * Interrupted runs restore production `out/` (SIGINT/SIGTERM/`finally`).
- * A leftover stash from a prior crash is restored or refused — never deleted.
+ * Exclusive: a second invocation is refused while the lock is held (serializes
+ * `out-e2e` publication only). Interrupted runs never publish: they signal the
+ * spawned process group, wait for exit (then SIGKILL), remove the isolated
+ * tree, release the lock, and exit with the signal's conventional code.
  */
-import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { execFileSync, spawn } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   renameSync,
   rmSync,
-  writeFileSync,
+  statSync,
+  symlinkSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const E2E_STATIC_LOCK_DIR = ".build-e2e-static.lock";
-export const E2E_STATIC_STASH_PREFIX = ".out-prod-stash";
+export const E2E_BUILD_DIR = ".e2e-build";
 const OUT_NAME = "out";
 const OUT_E2E_NAME = "out-e2e";
 const MARKER = ".e2e-harness";
+const ISOL_PREFIX = "hypercolor-e2e-isol-";
+const CHILD_STOP_MS = 10_000;
+const EXPLICIT_EXTRAS = [
+  "public/sqlite3.wasm",
+  "next-env.d.ts",
+  ".env",
+  ".env.local",
+  ".env.production",
+  ".env.production.local",
+];
 
 /**
- * @param {string} name
+ * @param {string} rel
  * @returns {boolean}
  */
-export function isProdOutStashName(name) {
-  return name === E2E_STATIC_STASH_PREFIX || name.startsWith(`${E2E_STATIC_STASH_PREFIX}-`);
+export function shouldExcludeFromE2eCopy(rel) {
+  const top = rel.replace(/\\/g, "/").split("/")[0];
+  if (
+    top === "node_modules" ||
+    top === ".next" ||
+    top === ".git" ||
+    top === E2E_BUILD_DIR ||
+    top === E2E_STATIC_LOCK_DIR
+  ) {
+    return true;
+  }
+  if (top.startsWith("out")) return true;
+  return false;
+}
+
+/**
+ * @param {NodeJS.Signals} signal
+ * @returns {number}
+ */
+export function signalExitCode(signal) {
+  if (signal === "SIGINT") return 130;
+  if (signal === "SIGTERM") return 143;
+  return 1;
 }
 
 /**
  * @param {string} root
  * @returns {string[]}
  */
-export function listProdOutStashes(root) {
-  if (!existsSync(root)) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && isProdOutStashName(entry.name))
-    .map((entry) => path.join(root, entry.name))
-    .sort();
+function gitTrackedFiles(root) {
+  const raw = execFileSync("git", ["-C", root, "ls-files", "-z"], {
+    encoding: "buffer",
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return raw.toString("utf8").split("\0").filter(Boolean);
 }
 
 /**
- * @param {string} root
- * @returns {{ status: number, error?: string }}
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
  */
-function recoverLeftoverStash(root) {
-  const leftovers = listProdOutStashes(root);
-  if (leftovers.length === 0) return { status: 0 };
-  if (leftovers.length > 1) {
-    return {
-      status: 1,
-      error:
-        `build:e2e:static: multiple leftover production stashes (${leftovers.join(", ")}); ` +
-        "inspect them and keep one as out/ before rebuilding",
-    };
+function sameFilesystem(a, b) {
+  try {
+    return statSync(a).dev === statSync(b).dev;
+  } catch {
+    return false;
   }
-  const leftover = leftovers[0];
-  const out = path.join(root, OUT_NAME);
-  if (existsSync(out)) {
-    return {
-      status: 1,
-      error:
-        `build:e2e:static: leftover stash at ${leftover} while out/ exists; ` +
-        "if out/ is complete, delete the stash, otherwise remove out/ and re-run to restore it",
-    };
-  }
-  renameSync(leftover, out);
-  return { status: 0 };
 }
 
 /**
- * @param {string} root
+ * @param {string} projectRoot
+ * @returns {string}
+ */
+function pickIsolatedBase(projectRoot) {
+  const osTmp = tmpdir();
+  if (sameFilesystem(osTmp, projectRoot)) return osTmp;
+  const local = path.join(projectRoot, E2E_BUILD_DIR);
+  mkdirSync(local, { recursive: true });
+  return local;
+}
+
+/**
+ * @param {string} srcRoot
+ * @param {string} destRoot
+ */
+function copyProjectSources(srcRoot, destRoot) {
+  const files = new Set(gitTrackedFiles(srcRoot));
+  for (const extra of EXPLICIT_EXTRAS) {
+    if (existsSync(path.join(srcRoot, extra))) files.add(extra);
+  }
+  for (const rel of files) {
+    if (shouldExcludeFromE2eCopy(rel)) continue;
+    const from = path.join(srcRoot, rel);
+    const to = path.join(destRoot, rel);
+    if (!existsSync(from)) continue;
+    mkdirSync(path.dirname(to), { recursive: true });
+    copyFileSync(from, to);
+  }
+  const nmSrc = path.resolve(srcRoot, "node_modules");
+  const nmDest = path.join(destRoot, "node_modules");
+  if (existsSync(nmSrc) && !existsSync(nmDest)) {
+    symlinkSync(nmSrc, nmDest, "dir");
+  }
+}
+
+/**
+ * @param {number} pid
+ * @param {NodeJS.Signals} signal
+ */
+function signalProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * @param {import("node:child_process").ChildProcess} child
+ * @param {number} timeoutMs
+ * @returns {Promise<"exited" | "timeout">}
+ */
+function waitForChildExit(child, timeoutMs) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve("exited");
+      return;
+    }
+    let settled = false;
+    const done = (reason) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("exit", onExit);
+      resolve(reason);
+    };
+    const onExit = () => done("exited");
+    const timer = setTimeout(() => done("timeout"), timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+/**
+ * @param {string} buildRoot
  * @param {(child: import("node:child_process").ChildProcess) => void} [onSpawn]
  * @returns {Promise<{ status: number }>}
  */
-function defaultRunBuild(root, onSpawn) {
+function defaultRunBuild(buildRoot, onSpawn) {
   return new Promise((resolve) => {
     const child = spawn("npm", ["run", "build"], {
-      cwd: root,
+      cwd: buildRoot,
       stdio: "inherit",
+      detached: true,
       env: {
         ...process.env,
         NEXT_PUBLIC_E2E_HARNESS: "1",
@@ -110,17 +208,17 @@ function defaultRunBuild(root, onSpawn) {
 export async function runBuildE2eStatic(options = {}) {
   const root = options.root ?? REPO_ROOT;
   const handleSignals = options.handleSignals !== false;
-  const out = path.join(root, OUT_NAME);
   const outE2e = path.join(root, OUT_E2E_NAME);
   const lockDir = path.join(root, E2E_STATIC_LOCK_DIR);
-  const stash = path.join(
-    root,
-    `${E2E_STATIC_STASH_PREFIX}-${process.pid}-${randomBytes(8).toString("hex")}`,
-  );
+  const tmpPublish = path.join(root, `${OUT_E2E_NAME}.tmp-${process.pid}`);
 
   let locked = false;
-  let stashed = false;
   let cleaned = false;
+  let aborting = false;
+  /** @type {Promise<void> | null} */
+  let abortPromise = null;
+  /** @type {string | null} */
+  let isolatedRoot = null;
   /** @type {import("node:child_process").ChildProcess | null} */
   let buildChild = null;
 
@@ -131,40 +229,60 @@ export async function runBuildE2eStatic(options = {}) {
         buildChild = child;
       }));
 
-  const restoreProdOut = () => {
-    if (!stashed) return;
-    if (existsSync(out)) rmSync(out, { recursive: true, force: true });
-    if (existsSync(stash)) renameSync(stash, out);
-    stashed = false;
-  };
-
   const releaseLock = () => {
     if (!locked) return;
     rmSync(lockDir, { recursive: true, force: true });
     locked = false;
   };
 
-  const stopBuildChild = () => {
-    if (!buildChild) return;
-    buildChild.kill("SIGTERM");
+  const removeIsolatedRoot = () => {
+    if (isolatedRoot && existsSync(isolatedRoot)) {
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
+    isolatedRoot = null;
+    const localBase = path.join(root, E2E_BUILD_DIR);
+    if (existsSync(localBase)) {
+      const names = readdirSync(localBase).filter((name) => !name.startsWith("._"));
+      if (names.length === 0) {
+        rmSync(localBase, { recursive: true, force: true });
+      }
+    }
+  };
+
+  const stopBuildChild = async () => {
+    const child = buildChild;
+    if (!child?.pid) {
+      buildChild = null;
+      return;
+    }
+    const pid = child.pid;
+    signalProcessGroup(pid, "SIGTERM");
+    const waited = await waitForChildExit(child, CHILD_STOP_MS);
+    if (waited === "timeout") {
+      signalProcessGroup(pid, "SIGKILL");
+      await waitForChildExit(child, CHILD_STOP_MS);
+    }
     buildChild = null;
   };
 
-  const cleanup = () => {
+  const cleanup = async () => {
     if (cleaned) return;
     cleaned = true;
-    stopBuildChild();
-    restoreProdOut();
+    await stopBuildChild();
+    if (existsSync(tmpPublish)) {
+      rmSync(tmpPublish, { recursive: true, force: true });
+    }
+    removeIsolatedRoot();
     releaseLock();
   };
 
-  const onSignal = () => {
-    try {
-      cleanup();
-    } catch {
-      // restore best-effort before exit
-    }
-    process.exit(1);
+  /** @param {NodeJS.Signals} signal */
+  const onSignal = (signal) => {
+    if (aborting) return;
+    aborting = true;
+    abortPromise = cleanup().finally(() => {
+      process.exit(signalExitCode(signal));
+    });
   };
 
   if (handleSignals) {
@@ -189,28 +307,55 @@ export async function runBuildE2eStatic(options = {}) {
       throw err;
     }
 
-    const recovered = recoverLeftoverStash(root);
-    if (recovered.status !== 0) return recovered;
+    if (aborting) return { status: 1, error: "build:e2e:static: interrupted" };
 
-    rmSync(outE2e, { recursive: true, force: true });
+    isolatedRoot = mkdtempSync(path.join(pickIsolatedBase(root), `${ISOL_PREFIX}${process.pid}-`));
+    copyProjectSources(root, isolatedRoot);
 
-    if (existsSync(out)) {
-      renameSync(out, stash);
-      stashed = true;
+    const result = await Promise.resolve(runBuild(isolatedRoot));
+    if (aborting) {
+      return { status: 1, error: "build:e2e:static: interrupted" };
     }
-
-    const result = await Promise.resolve(runBuild(root));
     if ((result.status ?? 1) !== 0) {
       return { status: result.status ?? 1, error: "build:e2e:static: next build failed" };
     }
 
-    if (!existsSync(out)) {
+    const isolatedOut = path.join(isolatedRoot, OUT_NAME);
+    if (!existsSync(isolatedOut)) {
       return { status: 1, error: "build:e2e:static: next build did not write out/" };
     }
+    if (!existsSync(path.join(isolatedOut, MARKER))) {
+      return {
+        status: 1,
+        error: "build:e2e:static: isolated export is missing out/.e2e-harness",
+      };
+    }
 
-    writeFileSync(path.join(out, MARKER), "NEXT_PUBLIC_E2E_HARNESS=1\n");
-    renameSync(out, outE2e);
-    restoreProdOut();
+    if (aborting) {
+      return { status: 1, error: "build:e2e:static: interrupted" };
+    }
+
+    if (existsSync(tmpPublish)) {
+      rmSync(tmpPublish, { recursive: true, force: true });
+    }
+    try {
+      renameSync(isolatedOut, tmpPublish);
+    } catch (err) {
+      const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
+      if (code === "EXDEV") {
+        return {
+          status: 1,
+          error:
+            "build:e2e:static: isolated out/ is on a different filesystem from the project; " +
+            `use ${E2E_BUILD_DIR}/ so the publish rename is atomic`,
+        };
+      }
+      throw err;
+    }
+    if (existsSync(outE2e)) {
+      rmSync(outE2e, { recursive: true, force: true });
+    }
+    renameSync(tmpPublish, outE2e);
     console.log(`build:e2e:static: wrote ${outE2e} with ${MARKER}`);
     return { status: 0 };
   } catch (err) {
@@ -221,7 +366,11 @@ export async function runBuildE2eStatic(options = {}) {
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
     }
-    cleanup();
+    if (aborting && abortPromise) {
+      await abortPromise;
+    } else {
+      await cleanup();
+    }
   }
 }
 

@@ -588,6 +588,50 @@ test.describe("recovery-code gate attack matrix", () => {
     await expect(page).toHaveURL(/\/profile/);
   });
 
+  test("interleaved Settings Profile Settings park then reload stops at the real Settings entry", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Profile" }).click();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
+    await page.getByRole("navigation", { name: "Account" }).getByRole("link", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await page.waitForFunction(
+      () =>
+        typeof (window as unknown as { __hypercolorShowRecovery?: unknown })
+          .__hypercolorShowRecovery === "function",
+    );
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.evaluate(() => {
+      const current =
+        history.state && typeof history.state === "object" ? { ...history.state } : {};
+      history.pushState({ ...current, escaped: true }, "", "/profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await expectCodeSurvivesWithDialog(page);
+    await expect(page).toHaveURL(/\/profile/);
+    await page.reload();
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await page.waitForFunction(() => {
+      const state = history.state as { backupGate?: boolean; backupGateDepth?: unknown } | null;
+      const clean = !state || (state.backupGate !== true && state.backupGateDepth == null);
+      return clean && location.pathname === "/settings";
+    }, undefined, { timeout: 30_000 });
+    await page.waitForTimeout(300);
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
+    await expectNoBackupGateInHistory(page);
+    await expect(page).toHaveURL(/\/profile/);
+  });
+
   test("reload while parked then one Back is the previous real route", async ({ page }) => {
     await page.goto("/profile");
     await gotoSettings(page);
