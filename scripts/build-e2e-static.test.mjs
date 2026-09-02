@@ -84,6 +84,40 @@ function tmpPublishDirs(root) {
   return readdirSync(root).filter((name) => name.startsWith("out-e2e.tmp-"));
 }
 
+function oldPublishDirs(root) {
+  return readdirSync(root).filter((name) => name.startsWith("out-e2e.old-"));
+}
+
+function killPid(pid) {
+  if (!pid) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // already gone
+  }
+}
+
+function spawnScript(root, extraEnv = {}) {
+  const childScript = path.join(root, "hang-build.mjs");
+  writeFileSync(
+    childScript,
+    `
+import { runBuildE2eStatic } from ${JSON.stringify(SCRIPT)};
+const root = ${JSON.stringify(root)};
+const result = await runBuildE2eStatic({ root });
+if (result.status !== 0 && result.error) {
+  console.error(result.error);
+}
+process.exit(result.status);
+`,
+  );
+  const bin = path.join(root, "bin");
+  return spawn(process.execPath, [childScript], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ...extraEnv },
+  });
+}
+
 function waitForFile(file, timeoutMs = 8_000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
@@ -161,6 +195,7 @@ describe("build-e2e-static isolation", () => {
     expect(existsSync(path.join(root, E2E_STATIC_LOCK_DIR))).toBe(false);
     expect(existsSync(path.join(root, E2E_BUILD_DIR))).toBe(false);
     expect(tmpPublishDirs(root)).toEqual([]);
+    expect(oldPublishDirs(root)).toEqual([]);
     expect(leftoverIsolDirs(process.pid, root)).toEqual([]);
   });
 
@@ -232,6 +267,7 @@ process.exit(result.status);
         expect(readOut(root)).toBe("prod");
         expect(existsSync(path.join(root, "out-e2e"))).toBe(false);
         expect(tmpPublishDirs(root)).toEqual([]);
+        expect(oldPublishDirs(root)).toEqual([]);
         expect(leftoverIsolDirs(child.pid, root)).toEqual([]);
       } finally {
         if (child.exitCode === null && child.signalCode === null) {
@@ -296,6 +332,7 @@ process.exit(result.status);
     expect(existsSync(path.join(root, "out-e2e", "stale.html"))).toBe(false);
     expect(existsSync(path.join(root, "out-e2e", ".e2e-harness"))).toBe(true);
     expect(tmpPublishDirs(root)).toEqual([]);
+    expect(oldPublishDirs(root)).toEqual([]);
     expect(existsSync(path.join(root, E2E_STATIC_LOCK_DIR))).toBe(false);
   });
 
@@ -318,4 +355,304 @@ process.exit(result.status);
     expect(readFileSync(path.join(root, "out-e2e", "index.html"), "utf8")).toBe("keep");
     expect(existsSync(path.join(root, E2E_STATIC_LOCK_DIR))).toBe(false);
   });
+
+  it("does not SIGTERM a successful child's process group after it has exited", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    const bin = path.join(root, "bin");
+    mkdirSync(bin);
+    const canaryHit = path.join(root, "canary-sigterm");
+    const canaryReady = path.join(root, "canary-ready");
+    const canaryPidFile = path.join(root, "canary.pid");
+    writeFileSync(
+      path.join(bin, "npm"),
+      `#!/usr/bin/env node
+const { spawn } = require("node:child_process");
+const { mkdirSync, writeFileSync, existsSync } = require("node:fs");
+const { join } = require("node:path");
+spawn(process.execPath, ["-e", ${JSON.stringify(`
+  const { writeFileSync } = require("node:fs");
+  writeFileSync(process.env.CANARY_PID, String(process.pid));
+  process.on("SIGHUP", () => {});
+  process.on("SIGTERM", () => { writeFileSync(process.env.CANARY_HIT, "SIGTERM"); });
+  process.on("SIGINT", () => {});
+  writeFileSync(process.env.CANARY_READY, "1");
+  setInterval(() => {}, 1000);
+`)}], { stdio: "ignore", detached: false, env: process.env });
+const started = Date.now();
+while (Date.now() - started < 4000) {
+  if (existsSync(process.env.CANARY_READY)) break;
+}
+mkdirSync(join(process.cwd(), "out"), { recursive: true });
+writeFileSync(join(process.cwd(), "out", "index.html"), "harness");
+writeFileSync(join(process.cwd(), "out", ".e2e-harness"), "1\\n");
+process.exit(0);
+`,
+    );
+    chmodSync(path.join(bin, "npm"), 0o755);
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${bin}:${prevPath}`;
+    process.env.CANARY_HIT = canaryHit;
+    process.env.CANARY_READY = canaryReady;
+    process.env.CANARY_PID = canaryPidFile;
+    let canaryPid = 0;
+    try {
+      const result = await runBuildE2eStatic({ root, handleSignals: false });
+      expect(result.status).toBe(0);
+      expect(existsSync(canaryPidFile)).toBe(true);
+      canaryPid = Number(readFileSync(canaryPidFile, "utf8").trim());
+      expect(canaryPid).toBeGreaterThan(0);
+      expect(() => process.kill(canaryPid, 0)).not.toThrow();
+      expect(existsSync(canaryHit)).toBe(false);
+      expect(readFileSync(path.join(root, "out-e2e", "index.html"), "utf8")).toBe("harness");
+    } finally {
+      process.env.PATH = prevPath;
+      delete process.env.CANARY_HIT;
+      delete process.env.CANARY_READY;
+      delete process.env.CANARY_PID;
+      if (canaryPid) killPid(canaryPid);
+      else if (existsSync(canaryPidFile)) {
+        killPid(Number(readFileSync(canaryPidFile, "utf8").trim()));
+      }
+    }
+  }, 15_000);
+
+  it("sweeps stale tmp publish dirs and isolated leftovers after taking the lock", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    const staleTmp = path.join(root, "out-e2e.tmp-99999");
+    mkdirSync(staleTmp);
+    writeFileSync(path.join(staleTmp, ".env"), "SECRET=tmp\n");
+    const staleOld = path.join(root, "out-e2e.old-99999");
+    mkdirSync(staleOld);
+    writeFileSync(path.join(staleOld, "index.html"), "old-secret");
+    const staleIsol = path.join(root, E2E_BUILD_DIR, "hypercolor-e2e-isol-99999-STALE");
+    mkdirSync(staleIsol, { recursive: true });
+    writeFileSync(path.join(staleIsol, ".env.local"), "SECRET=isol\n");
+    const staleTmpdir = path.join(tmpdir(), "hypercolor-e2e-isol-99999-STALE");
+    mkdirSync(staleTmpdir, { recursive: true });
+    writeFileSync(path.join(staleTmpdir, ".env"), "SECRET=tmpisol\n");
+    temps.push(staleTmpdir);
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: successfulHarnessBuild,
+    });
+    expect(result.status).toBe(0);
+    expect(existsSync(staleTmp)).toBe(false);
+    expect(existsSync(staleOld)).toBe(false);
+    expect(existsSync(staleIsol)).toBe(false);
+    expect(existsSync(staleTmpdir)).toBe(false);
+    expect(tmpPublishDirs(root)).toEqual([]);
+    expect(oldPublishDirs(root)).toEqual([]);
+    expect(leftoverIsolDirs(process.pid, root)).toEqual([]);
+  });
+
+  it("does not drop the previous export before the replacement is renamed in", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    const live = path.join(root, "out-e2e");
+    mkdirSync(live);
+    writeFileSync(path.join(live, "index.html"), "old-index");
+    for (let i = 0; i < 400; i += 1) {
+      writeFileSync(path.join(live, `pad-${i}.txt`), `pad-${i}\n`);
+    }
+    const indexFile = path.join(live, "index.html");
+    const missingFile = path.join(root, "index-went-missing");
+    const stopFile = path.join(root, "stop-poller");
+    const readyFile = path.join(root, "poller-ready");
+    const poller = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const { existsSync, readdirSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const root = ${JSON.stringify(root)};
+const indexFile = ${JSON.stringify(indexFile)};
+const missingFile = ${JSON.stringify(missingFile)};
+const stopFile = ${JSON.stringify(stopFile)};
+const readyFile = ${JSON.stringify(readyFile)};
+function exportVisible() {
+  if (existsSync(indexFile)) return true;
+  if (!existsSync(root)) return false;
+  for (const name of readdirSync(root)) {
+    if (name.startsWith("out-e2e.old-") && existsSync(join(root, name, "index.html"))) {
+      return true;
+    }
+  }
+  return false;
+}
+writeFileSync(readyFile, "1");
+while (!existsSync(stopFile)) {
+  if (!exportVisible()) {
+    writeFileSync(missingFile, "missing");
+    break;
+  }
+}
+`,
+      ],
+      { stdio: "ignore" },
+    );
+    const pollerExited = new Promise((resolve) => {
+      poller.once("exit", () => resolve(undefined));
+    });
+    try {
+      await waitForFile(readyFile);
+      const result = await runBuildE2eStatic({
+        root,
+        handleSignals: false,
+        runBuild: successfulHarnessBuild,
+      });
+      expect(result.status).toBe(0);
+      expect(readFileSync(indexFile, "utf8")).toBe("harness");
+      expect(existsSync(path.join(live, "pad-0.txt"))).toBe(false);
+      expect(existsSync(missingFile)).toBe(false);
+      expect(oldPublishDirs(root)).toEqual([]);
+      expect(tmpPublishDirs(root)).toEqual([]);
+    } finally {
+      writeFileSync(stopFile, "1");
+      await Promise.race([
+        pollerExited,
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+      if (poller.exitCode === null && poller.signalCode === null) {
+        poller.kill("SIGKILL");
+      }
+    }
+  });
+
+  it("copies untracked source files into the isolated tree", async () => {
+    const root = tempDir();
+    initTrackedRepo(root, {
+      ".gitignore": "node_modules\n.next\n/out/\n/out-e2e/\n.env*\n",
+      "src/tracked.tsx": "export const tracked = 1;\n",
+    });
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    writeFileSync(
+      path.join(root, "src", "untracked-widget.tsx"),
+      "export const UntrackedWidget = () => null;\n",
+    );
+    writeFileSync(path.join(root, ".env.development"), "NOPE=1\n");
+    mkdirSync(path.join(root, "outbox"));
+    writeFileSync(path.join(root, "outbox", "note.txt"), "keep-me\n");
+    let sawUntracked = false;
+    let sawTracked = false;
+    let sawEnvDev = false;
+    let sawOutbox = false;
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: (buildRoot) => {
+        sawUntracked = existsSync(path.join(buildRoot, "src", "untracked-widget.tsx"));
+        sawTracked = existsSync(path.join(buildRoot, "src", "tracked.tsx"));
+        sawEnvDev = existsSync(path.join(buildRoot, ".env.development"));
+        sawOutbox = existsSync(path.join(buildRoot, "outbox", "note.txt"));
+        return successfulHarnessBuild(buildRoot);
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(sawUntracked).toBe(true);
+    expect(sawTracked).toBe(true);
+    expect(sawEnvDev).toBe(false);
+    expect(sawOutbox).toBe(true);
+  });
+
+  it(
+    "SIGKILLs a child that ignores SIGTERM, then releases the lock without publishing",
+    async () => {
+      const root = tempDir();
+      initTrackedRepo(root);
+      writeProdOut(root, "prod");
+      const bin = path.join(root, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        path.join(bin, "npm"),
+        `#!/usr/bin/env node
+process.on("SIGTERM", () => {});
+process.on("SIGINT", () => {});
+console.log("BUILD_STARTED");
+setInterval(() => {}, 1000);
+`,
+      );
+      chmodSync(path.join(bin, "npm"), 0o755);
+      const child = spawnScript(root, { E2E_STATIC_KILL_TIMEOUT_MS: "250" });
+      child.stderr.resume();
+      const exited = new Promise((resolve) => {
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      try {
+        await waitForOutput(child.stdout, "BUILD_STARTED");
+        await waitForFile(path.join(root, E2E_STATIC_LOCK_DIR));
+        const interruptedAt = Date.now();
+        child.kill("SIGTERM");
+        const status = await exited;
+        expect(status.code).toBe(143);
+        expect(Date.now() - interruptedAt).toBeGreaterThan(150);
+        expect(Date.now() - interruptedAt).toBeLessThan(8000);
+        expect(existsSync(path.join(root, E2E_STATIC_LOCK_DIR))).toBe(false);
+        expect(existsSync(path.join(root, "out-e2e"))).toBe(false);
+        expect(readOut(root)).toBe("prod");
+        expect(tmpPublishDirs(root)).toEqual([]);
+        expect(oldPublishDirs(root)).toEqual([]);
+        expect(leftoverIsolDirs(child.pid, root)).toEqual([]);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
+    },
+    20_000,
+  );
+
+  it(
+    "escalates a second interrupt straight to SIGKILL",
+    async () => {
+      const root = tempDir();
+      initTrackedRepo(root);
+      writeProdOut(root, "prod");
+      const bin = path.join(root, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        path.join(bin, "npm"),
+        `#!/usr/bin/env node
+process.on("SIGTERM", () => {});
+process.on("SIGINT", () => {});
+console.log("BUILD_STARTED");
+setInterval(() => {}, 1000);
+`,
+      );
+      chmodSync(path.join(bin, "npm"), 0o755);
+      const child = spawnScript(root, { E2E_STATIC_KILL_TIMEOUT_MS: "4000" });
+      child.stderr.resume();
+      const exited = new Promise((resolve) => {
+        child.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      try {
+        await waitForOutput(child.stdout, "BUILD_STARTED");
+        await waitForFile(path.join(root, E2E_STATIC_LOCK_DIR));
+        const interruptedAt = Date.now();
+        child.kill("SIGINT");
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        child.kill("SIGINT");
+        const status = await exited;
+        expect(
+          status.signal === "SIGINT" ||
+            status.code === 130 ||
+            (status.code !== 0 && status.code !== null),
+        ).toBe(true);
+        expect(Date.now() - interruptedAt).toBeLessThan(2500);
+        expect(existsSync(path.join(root, E2E_STATIC_LOCK_DIR))).toBe(false);
+        expect(existsSync(path.join(root, "out-e2e"))).toBe(false);
+        expect(readOut(root)).toBe("prod");
+        expect(tmpPublishDirs(root)).toEqual([]);
+        expect(leftoverIsolDirs(child.pid, root)).toEqual([]);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
+    },
+    20_000,
+  );
 });

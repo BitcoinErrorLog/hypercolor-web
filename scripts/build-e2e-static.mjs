@@ -8,6 +8,18 @@
  * `out-e2e` publication only). Interrupted runs never publish: they signal the
  * spawned process group, wait for exit (then SIGKILL), remove the isolated
  * tree, release the lock, and exit with the signal's conventional code.
+ *
+ * Copy set: git tracked files plus untracked-but-not-ignored files (so the
+ * harness export matches `npm run build` from the working tree), plus a small
+ * list of gitignored inputs Next needs. After the lock is taken, leftover
+ * `out-e2e.tmp-*`, `out-e2e.old-*`, and `hypercolor-e2e-isol-*` trees are
+ * removed. Publish swaps via rename (old tree aside, new tree in, then delete
+ * the aside) so `out-e2e/` is never removed before the replacement is in
+ * place; a failed second rename restores the previous tree.
+ *
+ * `E2E_STATIC_KILL_TIMEOUT_MS` bounds how long SIGTERM is waited before
+ * SIGKILL (default 10000). A second SIGINT/SIGTERM during that window
+ * escalates immediately to SIGKILL.
  */
 import { execFileSync, spawn } from "node:child_process";
 import {
@@ -32,7 +44,7 @@ const OUT_NAME = "out";
 const OUT_E2E_NAME = "out-e2e";
 const MARKER = ".e2e-harness";
 const ISOL_PREFIX = "hypercolor-e2e-isol-";
-const CHILD_STOP_MS = 10_000;
+const DEFAULT_CHILD_STOP_MS = 10_000;
 const EXPLICIT_EXTRAS = [
   "public/sqlite3.wasm",
   "next-env.d.ts",
@@ -46,7 +58,7 @@ const EXPLICIT_EXTRAS = [
  * @param {string} rel
  * @returns {boolean}
  */
-export function shouldExcludeFromE2eCopy(rel) {
+function shouldExcludeFromE2eCopy(rel) {
   const top = rel.replace(/\\/g, "/").split("/")[0];
   if (
     top === "node_modules" ||
@@ -57,7 +69,9 @@ export function shouldExcludeFromE2eCopy(rel) {
   ) {
     return true;
   }
-  if (top.startsWith("out")) return true;
+  if (top === OUT_NAME || top === OUT_E2E_NAME || top.startsWith(`${OUT_E2E_NAME}.`)) {
+    return true;
+  }
   return false;
 }
 
@@ -65,21 +79,37 @@ export function shouldExcludeFromE2eCopy(rel) {
  * @param {NodeJS.Signals} signal
  * @returns {number}
  */
-export function signalExitCode(signal) {
+function signalExitCode(signal) {
   if (signal === "SIGINT") return 130;
   if (signal === "SIGTERM") return 143;
   return 1;
 }
 
 /**
+ * @returns {number}
+ */
+function childStopMsFromEnv() {
+  const raw = process.env.E2E_STATIC_KILL_TIMEOUT_MS;
+  if (raw == null || raw === "") return DEFAULT_CHILD_STOP_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_CHILD_STOP_MS;
+  return Math.trunc(n);
+}
+
+/**
+ * Working-tree paths: tracked files plus untracked files that are not ignored.
  * @param {string} root
  * @returns {string[]}
  */
-function gitTrackedFiles(root) {
-  const raw = execFileSync("git", ["-C", root, "ls-files", "-z"], {
-    encoding: "buffer",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+function gitWorkingTreeFiles(root) {
+  const raw = execFileSync(
+    "git",
+    ["-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    {
+      encoding: "buffer",
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
   return raw.toString("utf8").split("\0").filter(Boolean);
 }
 
@@ -109,11 +139,40 @@ function pickIsolatedBase(projectRoot) {
 }
 
 /**
+ * @param {string} dir
+ * @param {string} prefix
+ */
+function removePrefixedEntries(dir, prefix) {
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(prefix)) continue;
+    rmSync(path.join(dir, name), { recursive: true, force: true });
+  }
+}
+
+/**
+ * Leftovers from a SIGKILLed previous run: staging trees and isolated copies
+ * (which may contain copied `.env*` files). Safe only while the lock is held.
+ * @param {string} root
+ */
+function sweepStaleArtifacts(root) {
+  if (existsSync(root)) {
+    for (const name of readdirSync(root)) {
+      if (name.startsWith(`${OUT_E2E_NAME}.tmp-`) || name.startsWith(`${OUT_E2E_NAME}.old-`)) {
+        rmSync(path.join(root, name), { recursive: true, force: true });
+      }
+    }
+  }
+  removePrefixedEntries(path.join(root, E2E_BUILD_DIR), ISOL_PREFIX);
+  removePrefixedEntries(tmpdir(), ISOL_PREFIX);
+}
+
+/**
  * @param {string} srcRoot
  * @param {string} destRoot
  */
 function copyProjectSources(srcRoot, destRoot) {
-  const files = new Set(gitTrackedFiles(srcRoot));
+  const files = new Set(gitWorkingTreeFiles(srcRoot));
   for (const extra of EXPLICIT_EXTRAS) {
     if (existsSync(path.join(srcRoot, extra))) files.add(extra);
   }
@@ -129,6 +188,37 @@ function copyProjectSources(srcRoot, destRoot) {
   const nmDest = path.join(destRoot, "node_modules");
   if (existsSync(nmSrc) && !existsSync(nmDest)) {
     symlinkSync(nmSrc, nmDest, "dir");
+  }
+}
+
+/**
+ * @param {string} tmpPublish
+ * @param {string} outE2e
+ * @param {string} oldPublish
+ */
+function swapPublish(tmpPublish, outE2e, oldPublish) {
+  if (existsSync(oldPublish)) {
+    rmSync(oldPublish, { recursive: true, force: true });
+  }
+  let movedAside = false;
+  try {
+    if (existsSync(outE2e)) {
+      renameSync(outE2e, oldPublish);
+      movedAside = true;
+    }
+    renameSync(tmpPublish, outE2e);
+  } catch (err) {
+    if (movedAside && existsSync(oldPublish) && !existsSync(outE2e)) {
+      try {
+        renameSync(oldPublish, outE2e);
+      } catch {
+        // keep the original error
+      }
+    }
+    throw err;
+  }
+  if (existsSync(oldPublish)) {
+    rmSync(oldPublish, { recursive: true, force: true });
   }
 }
 
@@ -208,13 +298,16 @@ function defaultRunBuild(buildRoot, onSpawn) {
 export async function runBuildE2eStatic(options = {}) {
   const root = options.root ?? REPO_ROOT;
   const handleSignals = options.handleSignals !== false;
+  const childStopMs = childStopMsFromEnv();
   const outE2e = path.join(root, OUT_E2E_NAME);
   const lockDir = path.join(root, E2E_STATIC_LOCK_DIR);
   const tmpPublish = path.join(root, `${OUT_E2E_NAME}.tmp-${process.pid}`);
+  const oldPublish = path.join(root, `${OUT_E2E_NAME}.old-${process.pid}`);
 
   let locked = false;
   let cleaned = false;
   let aborting = false;
+  let childExited = false;
   /** @type {Promise<void> | null} */
   let abortPromise = null;
   /** @type {string | null} */
@@ -222,11 +315,21 @@ export async function runBuildE2eStatic(options = {}) {
   /** @type {import("node:child_process").ChildProcess | null} */
   let buildChild = null;
 
+  const markChildExited = (child) => {
+    childExited = true;
+    if (buildChild === child) buildChild = null;
+  };
+
   const runBuild =
     options.runBuild ??
     ((buildRoot) =>
       defaultRunBuild(buildRoot, (child) => {
         buildChild = child;
+        if (child.exitCode !== null || child.signalCode !== null) {
+          markChildExited(child);
+          return;
+        }
+        child.once("exit", () => markChildExited(child));
       }));
 
   const releaseLock = () => {
@@ -251,18 +354,28 @@ export async function runBuildE2eStatic(options = {}) {
 
   const stopBuildChild = async () => {
     const child = buildChild;
-    if (!child?.pid) {
+    if (!child?.pid || childExited || child.exitCode !== null || child.signalCode !== null) {
       buildChild = null;
       return;
     }
     const pid = child.pid;
     signalProcessGroup(pid, "SIGTERM");
-    const waited = await waitForChildExit(child, CHILD_STOP_MS);
+    const waited = await waitForChildExit(child, childStopMs);
     if (waited === "timeout") {
-      signalProcessGroup(pid, "SIGKILL");
-      await waitForChildExit(child, CHILD_STOP_MS);
+      if (!childExited && child.exitCode === null && child.signalCode === null) {
+        signalProcessGroup(pid, "SIGKILL");
+        await waitForChildExit(child, childStopMs);
+      }
     }
     buildChild = null;
+  };
+
+  const escalateKill = () => {
+    const child = buildChild;
+    if (!child?.pid || childExited || child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
+    signalProcessGroup(child.pid, "SIGKILL");
   };
 
   const cleanup = async () => {
@@ -272,13 +385,19 @@ export async function runBuildE2eStatic(options = {}) {
     if (existsSync(tmpPublish)) {
       rmSync(tmpPublish, { recursive: true, force: true });
     }
+    if (existsSync(oldPublish)) {
+      rmSync(oldPublish, { recursive: true, force: true });
+    }
     removeIsolatedRoot();
     releaseLock();
   };
 
   /** @param {NodeJS.Signals} signal */
   const onSignal = (signal) => {
-    if (aborting) return;
+    if (aborting) {
+      escalateKill();
+      return;
+    }
     aborting = true;
     abortPromise = cleanup().finally(() => {
       process.exit(signalExitCode(signal));
@@ -306,6 +425,8 @@ export async function runBuildE2eStatic(options = {}) {
       }
       throw err;
     }
+
+    sweepStaleArtifacts(root);
 
     if (aborting) return { status: 1, error: "build:e2e:static: interrupted" };
 
@@ -352,10 +473,7 @@ export async function runBuildE2eStatic(options = {}) {
       }
       throw err;
     }
-    if (existsSync(outE2e)) {
-      rmSync(outE2e, { recursive: true, force: true });
-    }
-    renameSync(tmpPublish, outE2e);
+    swapPublish(tmpPublish, outE2e, oldPublish);
     console.log(`build:e2e:static: wrote ${outE2e} with ${MARKER}`);
     return { status: 0 };
   } catch (err) {
