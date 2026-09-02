@@ -23,14 +23,12 @@ export type BackupGateSnapshot = {
 
 type PendingIntent = {
   run: () => void;
-  consumeTrap: boolean;
 };
 
 let snapshot: BackupGateSnapshot = { recoveryCode: null, confirmedSaved: false };
 const listeners = new Set<() => void>();
 let pendingIntent: PendingIntent | null = null;
 let trapHref: string | null = null;
-let trapArmed = false;
 let consumingTrap = false;
 let gateRestoreFocus: HTMLElement | null = null;
 let trapPushed = 0;
@@ -66,7 +64,6 @@ export function armHistoryTrap(): void {
   if (typeof window === "undefined") return;
   if (!isBackupLeaveBlocked()) return;
   trapHref = window.location.href;
-  trapArmed = true;
   while (trapPushed < HISTORY_TRAP_DEPTH) {
     history.pushState({ ...readHistoryState(), backupGate: true }, "", window.location.href);
     trapPushed += 1;
@@ -74,27 +71,55 @@ export function armHistoryTrap(): void {
 }
 
 /**
- * Pop the duplicate same-URL trap entry without treating it as a leave.
+ * Pop remaining same-URL trap entries without treating them as a leave.
  * Must run after the snapshot is already unblocked so a stray popstate cannot
- * re-open the dialog.
+ * re-open the dialog. `done` runs after the pops settle (or immediately when
+ * there is nothing to consume) so a following router navigation cannot race
+ * `history.go`.
  */
-export function consumeHistoryTrap(): void {
-  if (typeof window === "undefined") return;
-  trapArmed = false;
-  if (new URL(window.location.href, "https://hypercolor.app").pathname !== "/settings") {
+export function consumeHistoryTrapThen(done: () => void): void {
+  if (typeof window === "undefined") {
     trapPushed = 0;
+    done();
     return;
   }
+  const onSettings =
+    new URL(window.location.href, "https://hypercolor.app").pathname === "/settings";
   const n = trapPushed;
   trapPushed = 0;
-  if (n <= 0) return;
   const state = history.state as { backupGate?: boolean } | null;
-  if (!state?.backupGate) return;
+  if (!onSettings || n <= 0 || !state?.backupGate) {
+    done();
+    return;
+  }
   consumingTrap = true;
-  history.go(-n);
-  window.setTimeout(() => {
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
     consumingTrap = false;
-  }, 0);
+    if (typeof window.removeEventListener === "function") {
+      window.removeEventListener("popstate", onPop);
+    }
+    done();
+  };
+  const onPop = () => {
+    finish();
+  };
+  if (typeof window.addEventListener === "function") {
+    window.addEventListener("popstate", onPop);
+  }
+  history.go(-n);
+  if (typeof window.addEventListener !== "function") {
+    finish();
+    return;
+  }
+  window.setTimeout(finish, 250);
+}
+
+/** Pop remaining trap entries. Prefer `consumeHistoryTrapThen` when a navigation follows. */
+export function consumeHistoryTrap(): void {
+  consumeHistoryTrapThen(() => undefined);
 }
 
 /**
@@ -105,7 +130,6 @@ export function runGatedHistoryLeave(): void {
   if (typeof window === "undefined") return;
   const state = history.state as { backupGate?: boolean } | null;
   const n = state?.backupGate ? trapPushed + 1 : 1;
-  trapArmed = false;
   trapPushed = 0;
   history.go(-n);
 }
@@ -154,19 +178,15 @@ export function clearBackupGate(): void {
  * Run `run` now, or hold it until the user confirms Leave anyway.
  * Returns true when the action proceeded immediately.
  *
- * `consumeTrap` (default false) pops the trap entry on confirm. History-leave
- * and router.push intents must not pop here — `history.back()` races the
- * App Router. The sanctioned Done path consumes via `clearBackupGate`.
+ * Confirm always consumes remaining trap entries (with suppressed popstates)
+ * before `run`, so Leave anyway cannot leave stale `/settings` trap stops.
  */
-export function requestGuardedNavigation(
-  run: () => void,
-  options?: { consumeTrap?: boolean },
-): boolean {
+export function requestGuardedNavigation(run: () => void): boolean {
   if (!isBackupLeaveBlocked()) {
     run();
     return true;
   }
-  pendingIntent = { run, consumeTrap: options?.consumeTrap === true };
+  pendingIntent = { run };
   notify();
   return false;
 }
@@ -199,7 +219,6 @@ function currentPathname(): string {
  * Leave anyway is a no-op navigation — the user is already off Settings.
  */
 function parkEscapedBackupLeave(): void {
-  trapArmed = false;
   trapPushed = 0;
   requestGuardedNavigation(() => {
     // Already off the gated route.
@@ -235,12 +254,9 @@ export function onBackupGatePopState(): void {
   if (currentPathname() === "/settings") {
     trapPushed = (history.state as { backupGate?: boolean } | null)?.backupGate ? 1 : 0;
     armHistoryTrap();
-    requestGuardedNavigation(
-      () => {
-        runGatedHistoryLeave();
-      },
-      { consumeTrap: false },
-    );
+    requestGuardedNavigation(() => {
+      runGatedHistoryLeave();
+    });
     return;
   }
   parkEscapedBackupLeave();
@@ -253,13 +269,9 @@ export function confirmPendingBackupLeave(): void {
   trapHref = null;
   gateRestoreFocus = null;
   notify();
-  if (intent?.consumeTrap !== false) {
-    consumeHistoryTrap();
-  } else {
-    trapArmed = false;
-  }
-  intent?.run();
-  if (!trapArmed) trapPushed = 0;
+  consumeHistoryTrapThen(() => {
+    intent?.run();
+  });
 }
 
 export function subscribeBackupGate(listener: () => void): () => void {

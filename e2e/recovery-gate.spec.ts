@@ -312,11 +312,53 @@ test.describe("recovery-code gate attack matrix", () => {
     await page.getByTestId("backupLeaveAnyway").click();
     await expect(page).toHaveURL(/\/profile/);
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
-    const before = page.url();
     await page.goBack();
+    await expect(page).toHaveURL(/\/settings/);
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
     expect((await readGate(page)).gate?.recoveryCode ?? null).toBeNull();
-    await expect.poll(() => page.url()).not.toBe(before);
+    expect(
+      await page.evaluate(() => Boolean((history.state as { backupGate?: boolean } | null)?.backupGate)),
+    ).toBe(false);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+  });
+
+  test("parked gate marks main inert on Settings and after an off-route escape", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await showRecovery(page);
+    await page.getByTestId("detailBack").click();
+    await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
+    await expect.poll(() =>
+      page.evaluate(() => document.getElementById("main-content")?.inert === true),
+    ).toBe(true);
+    const forcedOnSettings = await page.evaluate(() => {
+      const trigger = document.querySelector("[data-testid=settingsSignOut]");
+      if (!(trigger instanceof HTMLButtonElement)) return { opened: false };
+      trigger.click();
+      return { opened: document.querySelector("[data-testid=signOutDialog]") !== null };
+    });
+    expect(forcedOnSettings.opened).toBe(false);
+    await expect(page.getByTestId("signOutDialog")).toHaveCount(0);
+    await page.getByTestId("backupLeaveStay").click();
+    await expect(page).toHaveURL(/\/settings/);
+    await expect.poll(() =>
+      page.evaluate(() => document.getElementById("main-content")?.inert === true),
+    ).toBe(false);
+
+    await page.evaluate(() => {
+      history.pushState({ escaped: true }, "", "/profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await expectCodeSurvivesWithDialog(page);
+    await expect.poll(() =>
+      page.evaluate(() => document.getElementById("main-content")?.inert === true),
+    ).toBe(true);
+    await page.getByTestId("backupLeaveStay").click();
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await expect.poll(() =>
+      page.evaluate(() => document.getElementById("main-content")?.inert === true),
+    ).toBe(false);
   });
 
   test("checkbox and Done then a single Back lands on the previous route", async ({ page }) => {

@@ -218,6 +218,24 @@ describe("backup-gate history trap", () => {
     expect(isBackupLeaveBlocked()).toBe(false);
   });
 
+  it("Leave anyway consumes trap entries so a single Back is the previous real route", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    expect(hist.length).toBe(5);
+    requestGuardedNavigation(() => {
+      hist.pushState({ page: "chats" }, "", "https://hypercolor.app/chats");
+    });
+    confirmPendingBackupLeave();
+    expect(window.location.href).toBe("https://hypercolor.app/chats");
+    expect((history.state as { backupGate?: boolean })?.backupGate).toBeFalsy();
+    hist.back();
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
+    expect((history.state as { backupGate?: boolean })?.backupGate).toBeFalsy();
+    hist.back();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+  });
+
   it("consumeHistoryTrap is a no-op when the trap was never armed", () => {
     installFakeHistory();
     consumeHistoryTrap();
