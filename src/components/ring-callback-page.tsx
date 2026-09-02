@@ -12,6 +12,11 @@ import {
 } from "@/services/RingConnect";
 import { KeyStore } from "@/services/KeyStore";
 import { Button } from "@/components/ui/button";
+import { ErrorDetails } from "@/components/error-details";
+
+const RING_CALLBACK_KEYSTORE_ERROR = "Could not open the key store.";
+const RING_CALLBACK_HANDOFF_ERROR = "Could not complete this Ring handoff.";
+const RING_CALLBACK_RELAY_ERROR = "Could not notify the waiting computer.";
 
 type Phase =
   | { kind: "reading" }
@@ -24,7 +29,7 @@ type Phase =
       payload: HandoffPayload;
     }
   | { kind: "done"; pubky: string }
-  | { kind: "error"; reason: string };
+  | { kind: "error"; fallback: string; details: string | null };
 
 function readParamsFromLocation(): {
   ch: string | null;
@@ -62,8 +67,8 @@ export function RingCallbackPage() {
         if (!cancelled) {
           setPhase({
             kind: "error",
-            reason:
-              error instanceof Error ? error.message : "KeyStore failed to open",
+            fallback: RING_CALLBACK_KEYSTORE_ERROR,
+            details: error instanceof Error ? error.message : "KeyStore failed to open",
           });
         }
         return;
@@ -95,8 +100,8 @@ export function RingCallbackPage() {
           if (!cancelled) {
             setPhase({
               kind: "error",
-              reason:
-                error instanceof Error ? error.message : "Handoff failed",
+              fallback: RING_CALLBACK_HANDOFF_ERROR,
+              details: error instanceof Error ? error.message : "Handoff failed",
             });
           }
         }
@@ -110,7 +115,8 @@ export function RingCallbackPage() {
         if (!cancelled) {
           setPhase({
             kind: "error",
-            reason:
+            fallback: RING_CALLBACK_RELAY_ERROR,
+            details:
               error instanceof Error
                 ? error.message
                 : "Failed to notify the waiting computer.",
@@ -133,7 +139,8 @@ export function RingCallbackPage() {
     } catch (error) {
       setPhase({
         kind: "error",
-        reason: error instanceof Error ? error.message : "Handoff failed",
+        fallback: RING_CALLBACK_HANDOFF_ERROR,
+        details: error instanceof Error ? error.message : "Handoff failed",
       });
     }
   }
@@ -174,8 +181,12 @@ export function RingCallbackPage() {
         </p>
       ) : null}
 
-      {phase.kind === "invalid" || phase.kind === "error" ? (
-        <p className="text-sm text-red-400">{phase.kind === "invalid" ? phase.reason : phase.reason}</p>
+      {phase.kind === "invalid" ? (
+        <ErrorDetails fallback={phase.reason} details={null} />
+      ) : null}
+
+      {phase.kind === "error" ? (
+        <ErrorDetails fallback={phase.fallback} details={phase.details} />
       ) : null}
     </article>
   );

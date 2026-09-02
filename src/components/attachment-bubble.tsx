@@ -2,11 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ErrorDetails } from "@/components/error-details";
 import { isRasterImageContentType } from "@/lib/attachment-preview";
 import { KeyStore } from "@/services/KeyStore";
 import { AttachmentService } from "@/services/attachments/AttachmentService";
 import { AttachmentError, type AttachmentRecord } from "@/types/attachment";
 import { emitCoarseError } from "@/services/vibeware/coarse";
+
+const ATTACHMENT_DECRYPT_ERROR = "Could not decrypt this attachment.";
 
 export function AttachmentBubble({
   record,
@@ -93,7 +96,7 @@ export function AttachmentBubble({
           {busy ? "Decrypting…" : "Decrypt"}
         </Button>
       ) : null}
-      {error ? <p className="text-sm text-red-400">{error}</p> : null}
+      {error ? <ErrorDetails fallback={ATTACHMENT_DECRYPT_ERROR} details={error} /> : null}
     </div>
   );
 }
