@@ -1,8 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useBlockingGate } from "@/hooks/useBlockingGate";
 import { LinkService } from "@/services/link/LinkService";
+import { useChannelsStore } from "@/stores/channelsStore";
 import { useContactStore } from "@/stores/contactStore";
 import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
@@ -13,22 +14,29 @@ function evictServiceWorkerCache() {
 }
 
 export function useSignOut() {
-  const router = useRouter();
+  const { requestPush, requestRun } = useBlockingGate();
   const reset = useSessionStatusStore((s) => s.reset);
   const [busy, setBusy] = useState(false);
 
-  async function signOut() {
+  async function actuallySignOut() {
     setBusy(true);
     try {
       await LinkService.clearSession();
       useInboxStore.getState().reset();
+      useChannelsStore.getState().reset();
       useContactStore.setState({ contacts: {}, meshPeers: {} });
       evictServiceWorkerCache();
       reset();
-      router.push("/");
+      requestPush("/");
     } finally {
       setBusy(false);
     }
+  }
+
+  function signOut() {
+    requestRun(() => {
+      void actuallySignOut();
+    });
   }
 
   return { signOut, busy };

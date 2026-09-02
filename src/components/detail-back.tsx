@@ -1,18 +1,20 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useBlockingGate } from "@/hooks/useBlockingGate";
 import { rememberListRow, type ListPane } from "@/lib/list-detail-focus";
 
 export function DetailBackLink({
   href,
   listLabel,
   always = false,
+  onNavigate,
 }: {
   href: string;
   listLabel: string;
   always?: boolean;
+  onNavigate?: () => void;
 }) {
-  const router = useRouter();
+  const { requestPush } = useBlockingGate();
   const label = `Back to ${listLabel}`;
   return (
     <button
@@ -25,7 +27,8 @@ export function DetailBackLink({
       data-testid="detailBack"
       aria-label={label}
       onClick={() => {
-        router.push(href);
+        onNavigate?.();
+        requestPush(href);
       }}
     >
       {label}

@@ -8,8 +8,11 @@ import {
   chunkRecoveryCode,
   clearBackupGate,
   getBackupGate,
+  confirmPendingBackupLeave,
+  hasPendingBackupLeave,
   isBackupLeaveBlocked,
   recoveryCodeDisplayState,
+  requestGuardedNavigation,
   setBackupGate,
   shouldBlockHref,
   rememberBackupCreated,
@@ -81,5 +84,22 @@ describe("backup-gate", () => {
   it("records a local last-backup timestamp for the sign-out sheet", () => {
     rememberBackupCreated(1_700_000_000_000);
     expect(readLastBackupAt()).toBe(1_700_000_000_000);
+  });
+
+  it("ignores hash-only hrefs and holds guarded navigation until Leave anyway", () => {
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    expect(shouldBlockHref("#backup", "/settings")).toBe(false);
+    let ran = false;
+    expect(
+      requestGuardedNavigation(() => {
+        ran = true;
+      }),
+    ).toBe(false);
+    expect(ran).toBe(false);
+    expect(hasPendingBackupLeave()).toBe(true);
+    confirmPendingBackupLeave();
+    expect(ran).toBe(true);
+    expect(hasPendingBackupLeave()).toBe(false);
+    expect(isBackupLeaveBlocked()).toBe(false);
   });
 });

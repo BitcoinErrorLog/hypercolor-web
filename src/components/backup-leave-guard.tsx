@@ -1,38 +1,57 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { ModalSheet } from "@/components/ui/sheet";
+import { useBlockingGate } from "@/hooks/useBlockingGate";
 import { isE2eHarnessEnabled } from "@/lib/e2e-harness";
 import {
   BACKUP_LEAVE_BODY,
   BACKUP_LEAVE_CONFIRM,
   BACKUP_LEAVE_STAY,
   BACKUP_LEAVE_TITLE,
-  clearBackupGate,
   isBackupLeaveBlocked,
+  isHashOnlyHistoryChange,
+  requestGuardedNavigation,
   setBackupGate,
   shouldBlockHref,
-  subscribeBackupGate,
+  armHistoryTrap,
 } from "@/lib/backup-gate";
+import type { InboxRow } from "@/lib/inbox";
+import { useChannelsStore } from "@/stores/channelsStore";
+import { useInboxStore } from "@/stores/inboxStore";
 
-type PendingNav = { href: string } | { historyBack: true } | null;
+function resolveAnchorHref(anchor: HTMLAnchorElement): string | null {
+  if (anchor.target === "_blank") return null;
+  const href = anchor.getAttribute("href");
+  if (!href || href.startsWith("#")) return null;
+  return href;
+}
 
 export function BackupLeaveGuard() {
   const router = useRouter();
   const pathname = usePathname();
-  const [blocked, setBlocked] = useState(isBackupLeaveBlocked);
-  const [pending, setPending] = useState<PendingNav>(null);
-  const stayRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => subscribeBackupGate(() => setBlocked(isBackupLeaveBlocked())), []);
+  const { pending, stay, leaveAnyway, stayRef } = useBlockingGate();
 
   useEffect(() => {
     if (!isE2eHarnessEnabled() || typeof window === "undefined") return;
-    const host = window as Window & { __hypercolorSetBackupGate?: typeof setBackupGate };
+    const host = window as Window & {
+      __hypercolorSetBackupGate?: typeof setBackupGate;
+      __hypercolorSetPendingRequests?: (count: number) => void;
+      __hypercolorSetChannelRows?: (rows: InboxRow[]) => void;
+    };
     host.__hypercolorSetBackupGate = setBackupGate;
+    host.__hypercolorSetPendingRequests = (count) => {
+      useInboxStore.getState().setPendingRequests(count);
+    };
+    host.__hypercolorSetChannelRows = (rows) => {
+      useChannelsStore.getState().setRows(rows);
+    };
     return () => {
       delete host.__hypercolorSetBackupGate;
+      delete host.__hypercolorSetPendingRequests;
+      delete host.__hypercolorSetChannelRows;
     };
   }, []);
 
@@ -55,82 +74,87 @@ export function BackupLeaveGuard() {
       const target = event.target;
       if (!(target instanceof Element)) return;
       const anchor = target.closest("a");
-      if (!anchor || anchor.target === "_blank") return;
-      const href = anchor.getAttribute("href");
-      if (!href || href.startsWith("#")) return;
+      if (!anchor) return;
+      const href = resolveAnchorHref(anchor);
+      if (!href) return;
       if (!shouldBlockHref(href, pathname)) return;
       event.preventDefault();
       event.stopPropagation();
-      setPending({ href });
+      requestGuardedNavigation(() => {
+        router.push(href);
+      });
     };
-    document.addEventListener("click", onClick, true);
-    return () => document.removeEventListener("click", onClick, true);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!blocked) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isBackupLeaveBlocked()) return;
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a");
+      if (!anchor) return;
+      const href = resolveAnchorHref(anchor);
+      if (!href) return;
+      if (!shouldBlockHref(href, pathname)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      requestGuardedNavigation(() => {
+        router.push(href);
+      });
+    };
     const onPopState = () => {
       if (!isBackupLeaveBlocked()) return;
-      history.pushState({ backupGate: true }, "", window.location.href);
-      setPending({ historyBack: true });
+      if (isHashOnlyHistoryChange()) {
+        armHistoryTrap();
+        return;
+      }
+      requestGuardedNavigation(() => {
+        window.history.back();
+      });
     };
-    history.pushState({ backupGate: true }, "", window.location.href);
+    const onHashChange = () => {
+      if (!isBackupLeaveBlocked()) return;
+      // Hash-only changes stay on Settings and are not an exit.
+    };
+    document.addEventListener("click", onClick, true);
+    document.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [blocked]);
-
-  useEffect(() => {
-    if (pending) stayRef.current?.focus();
-  }, [pending]);
-
-  function stay() {
-    setPending(null);
-  }
-
-  function leaveAnyway() {
-    const dest = pending;
-    clearBackupGate();
-    setPending(null);
-    if (!dest) return;
-    if ("historyBack" in dest) {
-      window.history.back();
-      return;
-    }
-    router.push(dest.href);
-  }
-
-  if (!pending) return null;
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, [pathname, router]);
 
   return (
-    <div
+    <ModalSheet
+      open={pending}
+      onClose={stay}
       role="alertdialog"
-      aria-modal="true"
-      aria-labelledby="backup-leave-title"
-      aria-describedby="backup-leave-body"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-6"
-      data-testid="backupLeaveDialog"
+      titleId="backup-leave-title"
+      descriptionId="backup-leave-body"
+      initialFocusRef={stayRef}
+      testId="backupLeaveDialog"
     >
-      <div className="w-full max-w-md space-y-4 rounded-md border border-border bg-card p-5">
-        <h2 id="backup-leave-title" className="text-lg font-semibold">
-          {BACKUP_LEAVE_TITLE}
-        </h2>
-        <p id="backup-leave-body" className="text-sm text-muted-foreground">
-          {BACKUP_LEAVE_BODY}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" ref={stayRef} onClick={stay} data-testid="backupLeaveStay">
-            {BACKUP_LEAVE_STAY}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={leaveAnyway}
-            data-testid="backupLeaveAnyway"
-          >
-            {BACKUP_LEAVE_CONFIRM}
-          </Button>
-        </div>
+      <h2 id="backup-leave-title" className="text-lg font-semibold">
+        {BACKUP_LEAVE_TITLE}
+      </h2>
+      <p id="backup-leave-body" className="text-sm text-muted-foreground">
+        {BACKUP_LEAVE_BODY}
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" ref={stayRef} onClick={stay} data-testid="backupLeaveStay">
+          {BACKUP_LEAVE_STAY}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={leaveAnyway}
+          data-testid="backupLeaveAnyway"
+        >
+          {BACKUP_LEAVE_CONFIRM}
+        </Button>
       </div>
-    </div>
+    </ModalSheet>
   );
 }

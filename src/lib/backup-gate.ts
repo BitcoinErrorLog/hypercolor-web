@@ -16,6 +16,8 @@ export type BackupGateSnapshot = {
 
 let snapshot: BackupGateSnapshot = { recoveryCode: null, confirmedSaved: false };
 const listeners = new Set<() => void>();
+let pendingIntent: { run: () => void } | null = null;
+let trapHref: string | null = null;
 
 function notify(): void {
   for (const listener of listeners) listener();
@@ -25,17 +27,84 @@ export function getBackupGate(): BackupGateSnapshot {
   return snapshot;
 }
 
+export function hasPendingBackupLeave(): boolean {
+  return pendingIntent !== null;
+}
+
+export function armHistoryTrap(): void {
+  if (typeof window === "undefined") return;
+  if (!isBackupLeaveBlocked()) return;
+  const state = history.state as { backupGate?: boolean } | null;
+  if (state?.backupGate) return;
+  history.pushState({ backupGate: true }, "", window.location.href);
+  trapHref = window.location.href;
+}
+
+/** True when popstate only changed the hash on the gated page. */
+export function isHashOnlyHistoryChange(): boolean {
+  if (typeof window === "undefined" || !trapHref) return false;
+  try {
+    const here = new URL(window.location.href);
+    const trap = new URL(trapHref);
+    return (
+      here.pathname === trap.pathname &&
+      here.search === trap.search &&
+      here.hash !== trap.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function setBackupGate(next: BackupGateSnapshot): void {
+  const wasBlocked = isBackupLeaveBlocked();
   snapshot = {
     recoveryCode: next.recoveryCode,
     confirmedSaved: next.confirmedSaved,
   };
+  if (isBackupLeaveBlocked() && !wasBlocked) {
+    armHistoryTrap();
+  }
+  if (!isBackupLeaveBlocked()) {
+    pendingIntent = null;
+  }
   notify();
 }
 
 export function clearBackupGate(): void {
   snapshot = { recoveryCode: null, confirmedSaved: false };
+  pendingIntent = null;
+  trapHref = null;
   notify();
+}
+
+/**
+ * Run `run` now, or hold it until the user confirms Leave anyway.
+ * Returns true when the action proceeded immediately.
+ */
+export function requestGuardedNavigation(run: () => void): boolean {
+  if (!isBackupLeaveBlocked()) {
+    run();
+    return true;
+  }
+  pendingIntent = { run };
+  notify();
+  return false;
+}
+
+export function cancelPendingBackupLeave(): void {
+  pendingIntent = null;
+  armHistoryTrap();
+  notify();
+}
+
+export function confirmPendingBackupLeave(): void {
+  const intent = pendingIntent;
+  pendingIntent = null;
+  snapshot = { recoveryCode: null, confirmedSaved: false };
+  trapHref = null;
+  notify();
+  intent?.run();
 }
 
 export function subscribeBackupGate(listener: () => void): () => void {
@@ -76,8 +145,9 @@ export function chunkRecoveryCode(code: string): string {
 export function shouldBlockHref(href: string, currentPath: string): boolean {
   if (!isBackupLeaveBlocked()) return false;
   try {
-    const next = new URL(href, "https://hypercolor.app");
-    const here = new URL(currentPath, "https://hypercolor.app");
+    const origin = "https://hypercolor.app";
+    const here = new URL(currentPath || "/", origin);
+    const next = new URL(href, here);
     return next.pathname !== here.pathname;
   } catch {
     return true;
