@@ -11,7 +11,7 @@ import { expect, test, type Page } from "@playwright/test";
  * used for this — Playwright does not intercept the browser's service-worker
  * script fetch — so the test rewrites the file the static server reads.
  *
- *   npm run build && npx serve out -p 3000
+ *   NEXT_PUBLIC_E2E_HARNESS=1 npm run build && npm run preview:static
  *   PLAYWRIGHT_BASE_URL=http://localhost:3000 \
  *   SW_UPGRADE_SW_PATH=$PWD/out/sw.js \
  *   npx playwright test e2e/sw-upgrade.spec.ts

@@ -195,8 +195,9 @@ npm run typecheck
 npm run lint
 npm test
 npm run build          # next build --webpack; writes out/
-npm run preview        # serve out/ on :3000
-npm run test:e2e       # Playwright; point PLAYWRIGHT_BASE_URL at dev or out/
+npm run preview:static # serve out/ with vercel.json rewrites (default :3000)
+npm run test:e2e       # Playwright against next dev, or PLAYWRIGHT_BASE_URL at preview:static
+npm run test:e2e:static # thread-origin + recovery-gate against preview:static on :3300
 ```
 
 ## Vibeware
