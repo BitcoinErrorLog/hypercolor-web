@@ -90,11 +90,8 @@ async function expectNoBackupGateInHistory(page: Page) {
     }
   };
 
-  const assertClean = async (label: string) => {
-    if (!onApp()) {
-      await recoverApp();
-    }
-    const probe = await page.evaluate(() => {
+  const readProbe = async () =>
+    page.evaluate(() => {
       const state = history.state as {
         backupGate?: boolean;
         backupGateDepth?: unknown;
@@ -108,6 +105,19 @@ async function expectNoBackupGateInHistory(page: Page) {
         serialized: JSON.stringify(state),
       };
     });
+
+  const assertClean = async (label: string) => {
+    if (!onApp()) {
+      await recoverApp();
+    }
+    let probe;
+    try {
+      probe = await readProbe();
+    } catch {
+      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+      if (!onApp()) await recoverApp();
+      probe = await readProbe();
+    }
     expect(probe.backupGate, `${label}: backupGate still set at ${probe.href}`).toBe(false);
     expect(probe.backupGateDepth, `${label}: backupGateDepth still set at ${probe.href}`).toBeNull();
     expect(probe.recoveryCode).toBeNull();
@@ -147,10 +157,23 @@ async function expectNoBackupGateInHistory(page: Page) {
       await recoverApp();
       return false;
     }
-    const after = await page.evaluate(() => ({
-      href: location.href,
-      state: JSON.stringify(history.state),
-    }));
+    let after;
+    try {
+      after = await page.evaluate(() => ({
+        href: location.href,
+        state: JSON.stringify(history.state),
+      }));
+    } catch {
+      await page.waitForLoadState("domcontentloaded").catch(() => undefined);
+      if (!onApp()) {
+        await recoverApp();
+        return false;
+      }
+      after = await page.evaluate(() => ({
+        href: location.href,
+        state: JSON.stringify(history.state),
+      }));
+    }
     return sameDocumentPop || before.href !== after.href || before.state !== after.state;
   };
 
@@ -535,6 +558,36 @@ test.describe("recovery-code gate attack matrix", () => {
     await expect(page).toHaveURL(/\/profile/);
   });
 
+  test("off-route park then reload then one Back is the previous real route", async ({ page }) => {
+    await page.goto("/profile");
+    await gotoSettings(page);
+    await showRecovery(page);
+    await expect(page.getByTestId("recoveryCode")).toBeVisible();
+    await page.evaluate(() => {
+      const current =
+        history.state && typeof history.state === "object" ? { ...history.state } : {};
+      history.pushState({ ...current, escaped: true }, "", "/profile");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    await expectCodeSurvivesWithDialog(page);
+    await expect(page).toHaveURL(/\/profile/);
+    await page.reload();
+    await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
+    await page.waitForFunction(() => {
+      const state = history.state as { backupGate?: boolean; backupGateDepth?: unknown } | null;
+      const clean = !state || (state.backupGate !== true && state.backupGateDepth == null);
+      return clean && location.pathname === "/settings";
+    }, undefined, { timeout: 30_000 });
+    await page.waitForTimeout(300);
+    await expect(page).toHaveURL(/\/settings/);
+    await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/profile/);
+    await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();
+    await expectNoBackupGateInHistory(page);
+    await expect(page).toHaveURL(/\/profile/);
+  });
+
   test("reload while parked then one Back is the previous real route", async ({ page }) => {
     await page.goto("/profile");
     await gotoSettings(page);
@@ -549,6 +602,7 @@ test.describe("recovery-code gate attack matrix", () => {
       const state = history.state as { backupGate?: boolean; backupGateDepth?: unknown } | null;
       return !state || (state.backupGate !== true && state.backupGateDepth == null);
     });
+    await page.waitForTimeout(300);
     await page.goBack();
     await expect(page).toHaveURL(/\/profile/);
     await expect(page.getByRole("heading", { name: "Profile" })).toBeVisible();

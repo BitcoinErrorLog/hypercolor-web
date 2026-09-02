@@ -121,8 +121,22 @@ export function armHistoryTrap(): void {
  * Popstates are suppressed for the whole drain; a user Back in that window is
  * folded into the leftover depth instead of re-arming. `done` runs after the
  * pops settle.
+ *
+ * Orphan mode (`options.orphan`) keeps going on any pathname until a non-trap
+ * entry. Settings mode stops off `/settings` so a live leave does not yank
+ * the user back through history.
  */
-function consumeHistoryTrapThen(done: () => void): void {
+function stillHasOrphanTrap(): boolean {
+  if (typeof history === "undefined") return false;
+  return currentEntryHasBackupGate(history.state);
+}
+
+function stillHasSettingsTrap(): boolean {
+  return currentPathname() === "/settings" && trapDepthFromState(history.state) > 0;
+}
+
+function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }): void {
+  const orphan = options?.orphan === true;
   if (typeof window === "undefined") {
     trapPushed = 0;
     done();
@@ -141,6 +155,15 @@ function consumeHistoryTrapThen(done: () => void): void {
   };
   const drainStep = () => {
     if (finished) return;
+    if (orphan) {
+      if (!stillHasOrphanTrap()) {
+        finish();
+        return;
+      }
+      scrubBackupGateFromCurrentEntry();
+      history.go(-1);
+      return;
+    }
     if (currentPathname() !== "/settings") {
       scrubBackupGateFromCurrentEntry();
       finish();
@@ -165,11 +188,7 @@ function consumeHistoryTrapThen(done: () => void): void {
   if (typeof window.addEventListener !== "function") {
     consumingTrap = true;
     drainStep();
-    while (
-      !finished &&
-      currentPathname() === "/settings" &&
-      trapDepthFromState(history.state) > 0
-    ) {
+    while (!finished && (orphan ? stillHasOrphanTrap() : stillHasSettingsTrap())) {
       drainStep();
     }
     finish();
@@ -189,18 +208,19 @@ function consumeHistoryTrapThen(done: () => void): void {
 
 /**
  * Reload leftover: trap flags can survive in `history.state` after module
- * memory is gone. The user is not gated. Scrub the current entry and drain
- * remaining trap stops so the next Back is the real previous route.
+ * memory is gone. The user is not gated. Drain consecutive orphan trap
+ * slots — including off-route parked entries — until a non-trap entry so
+ * the next Back is the real previous route. Never runs while the gate is live.
  */
 function scrubOrphanBackupGateHistory(): void {
   if (typeof window === "undefined") return;
   if (isBackupLeaveBlocked()) return;
   if (consumingTrap) return;
-  if (trapDepthFromState(history.state) <= 0) {
+  if (!stillHasOrphanTrap()) {
     scrubBackupGateFromCurrentEntry();
     return;
   }
-  consumeHistoryTrapThen(() => undefined);
+  consumeHistoryTrapThen(() => undefined, { orphan: true });
 }
 
 function consumeHistoryTrap(): void {
@@ -332,6 +352,10 @@ export function onBackupGateRouteChange(pathname: string): void {
 export function onBackupGatePopState(): void {
   if (consumingTrap) return;
   if (!isBackupLeaveBlocked()) {
+    if (stillHasOrphanTrap()) {
+      consumeHistoryTrapThen(() => undefined, { orphan: true });
+      return;
+    }
     scrubBackupGateFromCurrentEntry();
     return;
   }

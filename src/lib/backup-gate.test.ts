@@ -439,7 +439,7 @@ describe("backup-gate history trap", () => {
     expect(window.location.href).toBe("https://hypercolor.app/profile");
   });
 
-  it("popstate leftover with no module gate scrubs the landed entry", () => {
+  it("popstate leftover with no module gate drains remaining orphan trap slots", () => {
     const hist = installFakeHistory("https://hypercolor.app/profile");
     hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
     setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
@@ -448,17 +448,59 @@ describe("backup-gate history trap", () => {
     onBackupGatePopState();
     expect(isBackupLeaveBlocked()).toBe(false);
     expect((history.state as TrapState)?.backupGate).toBeFalsy();
-    hist.historyStub.back();
-    expect((history.state as TrapState)?.backupGate).toBe(true);
-    onBackupGatePopState();
-    expect((history.state as TrapState)?.backupGate).toBeFalsy();
-    hist.historyStub.back();
-    onBackupGatePopState();
-    hist.historyStub.back();
-    onBackupGatePopState();
+    expect(trapEntries(hist.entries)).toHaveLength(0);
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
     hist.historyStub.back();
     expect(window.location.href).toBe("https://hypercolor.app/profile");
     expect(trapEntries(hist.entries.slice(0, hist.index + 1))).toHaveLength(0);
+  });
+
+  it("off-route multi-slot orphan drain lands on the previous real route", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    expect(trapEntries(hist.entries)).toHaveLength(3);
+    hist.historyStub.pushState(
+      { ...(history.state as object), escaped: true },
+      "",
+      "https://hypercolor.app/profile",
+    );
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+    expect((history.state as TrapState)?.backupGateDepth).toBe(3);
+    setBackupGate({ recoveryCode: null, confirmedSaved: false });
+    expect(isBackupLeaveBlocked()).toBe(false);
+    onBackupGateRouteChange("/profile");
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
+    expect((history.state as TrapState)?.backupGate).toBeFalsy();
+    expect(trapEntries(hist.entries)).toHaveLength(0);
+    hist.historyStub.back();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+    expect(JSON.stringify(hist.entries)).not.toContain("word word word");
+  });
+
+  it("no-live-gate popstate on a real entry does not skip the previous route", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    onBackupGatePopState();
+    expect(window.location.href).toBe("https://hypercolor.app/settings");
+    hist.historyStub.back();
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+  });
+
+  it("live gate off-route park does not drain orphan traps", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile");
+    hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    hist.historyStub.pushState(
+      { ...(history.state as object), escaped: true },
+      "",
+      "https://hypercolor.app/profile",
+    );
+    onBackupGatePopState();
+    expect(getBackupGate().recoveryCode).toBe("word word word");
+    expect(hasPendingBackupLeave()).toBe(true);
+    expect(window.location.href).toBe("https://hypercolor.app/profile");
+    expect(trapEntries(hist.entries).length).toBeGreaterThan(0);
   });
 
   it("does not export consume helpers", () => {
