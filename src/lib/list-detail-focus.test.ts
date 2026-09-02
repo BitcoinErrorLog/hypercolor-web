@@ -1,0 +1,66 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  rememberThreadOrigin,
+  peekThreadOrigin,
+  takeThreadOrigin,
+  threadBackHref,
+  threadBackLabel,
+  resolveFocusTarget,
+} from "./list-detail-focus";
+
+const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+
+const memory = new Map<string, string>();
+const fakeStorage = {
+  getItem(key: string) {
+    return memory.get(key) ?? null;
+  },
+  setItem(key: string, value: string) {
+    memory.set(key, value);
+  },
+  removeItem(key: string) {
+    memory.delete(key);
+  },
+};
+
+describe("list-detail-focus", () => {
+  beforeEach(() => {
+    memory.clear();
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      value: fakeStorage,
+    });
+  });
+
+  afterEach(() => {
+    memory.clear();
+  });
+
+  it("returns a contact thread to that contact and chats/direct links to /chats", () => {
+    rememberThreadOrigin({ kind: "contact", pubky: OWNER });
+    expect(peekThreadOrigin()).toEqual({ kind: "contact", pubky: OWNER });
+    expect(threadBackHref(peekThreadOrigin())).toBe(`/contacts/${encodeURIComponent(OWNER)}`);
+    expect(threadBackLabel(peekThreadOrigin())).toBe("Contact");
+    expect(takeThreadOrigin()).toEqual({ kind: "contact", pubky: OWNER });
+    expect(peekThreadOrigin()).toBeNull();
+
+    rememberThreadOrigin({ kind: "chats" });
+    expect(threadBackHref(peekThreadOrigin())).toBe("/chats");
+    expect(threadBackLabel(peekThreadOrigin())).toBe("Chats");
+    expect(threadBackHref(null)).toBe("/chats");
+    expect(threadBackLabel(null)).toBe("Chats");
+  });
+
+  it("rejects an invalid contact origin instead of storing it", () => {
+    rememberThreadOrigin({ kind: "contact", pubky: "not-a-pubky" });
+    expect(peekThreadOrigin()).toBeNull();
+  });
+
+  it("falls back to the list heading when the remembered row is gone", () => {
+    const heading = { id: "heading" } as HTMLElement;
+    expect(resolveFocusTarget("missing-row", heading, () => null)).toBe(heading);
+    const row = { id: "row" } as HTMLElement;
+    expect(resolveFocusTarget("row", heading, (id) => (id === "row" ? row : null))).toBe(row);
+    expect(resolveFocusTarget(null, heading)).toBe(heading);
+  });
+});

@@ -9,8 +9,14 @@ import { ErrorDetails } from "@/components/error-details";
 import { PaymentNotice } from "@/components/payment-notice";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
-import { isMessagingEnabled } from "@/lib/session-ui";
+import { canComposeMessages } from "@/lib/session-ui";
 import { sanitizeDisplayName } from "@/lib/display-name";
+import {
+  peekThreadOrigin,
+  takeThreadOrigin,
+  threadBackHref,
+  threadBackLabel,
+} from "@/lib/list-detail-focus";
 import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
 import type { LinkMessage } from "@/types/link";
 import type { SessionUiStatus } from "@/stores/sessionStatusStore";
@@ -55,6 +61,10 @@ export function ThreadView({
   onResolved: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const origin = peekThreadOrigin();
+  const backHref = threadBackHref(origin);
+  const backLabel = threadBackLabel(origin);
+  const backAlways = origin?.kind === "contact";
 
   useEffect(() => {
     if (conversationId) headingRef.current?.focus();
@@ -71,8 +81,15 @@ export function ThreadView({
   if (!participantPubky) {
     return (
       <article className="space-y-3">
-        <DetailBackLink href="/chats" listLabel="Chats" />
-        <h2 className="text-lg font-semibold">Invalid conversation</h2>
+        <DetailBackLink
+          href={backHref}
+          listLabel={backLabel}
+          always={backAlways}
+          onNavigate={() => takeThreadOrigin()}
+        />
+        <h1 ref={headingRef} tabIndex={-1} className="text-lg font-semibold">
+          Invalid conversation
+        </h1>
         <p className="text-sm text-muted-foreground">
           This path is not a DM conversation id.
         </p>
@@ -81,21 +98,27 @@ export function ThreadView({
   }
 
   const title = displayName ? sanitizeDisplayName(displayName) : null;
+  const mayCompose = canComposeMessages(status);
 
   return (
     <article className="flex h-full min-h-[28rem] flex-col" data-testid="threadScreen">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div className="min-w-0 space-y-2">
-          <DetailBackLink href="/chats" listLabel="Chats" />
+          <DetailBackLink
+            href={backHref}
+            listLabel={backLabel}
+            always={backAlways}
+            onNavigate={() => takeThreadOrigin()}
+          />
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Direct message</p>
-          <h2
+          <h1
             ref={headingRef}
             tabIndex={-1}
             className="text-lg font-semibold"
             data-testid="threadPeer"
           >
             {title ?? <TruncatedPubky pubky={participantPubky} />}
-          </h2>
+          </h1>
         </div>
         <Link
           href={`/contacts/${encodeURIComponent(participantPubky)}`}
@@ -105,7 +128,7 @@ export function ThreadView({
         </Link>
       </header>
 
-      {!isMessagingEnabled(status) ? enableCta : null}
+      {!mayCompose ? enableCta : null}
 
       <div
         className="flex-1 space-y-3 overflow-y-auto py-4"
@@ -150,7 +173,7 @@ export function ThreadView({
 
       {error ? <ErrorDetails fallback="Could not load this thread." details={error} /> : null}
 
-      {isMessagingEnabled(status) ? (
+      {mayCompose ? (
         <Composer
           draft={draft}
           sending={sending}

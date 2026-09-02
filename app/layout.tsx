@@ -53,10 +53,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <SessionBootstrap />
         <BackupLeaveGuard />
-        <a
-          href="#main-content"
-          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-brand focus:px-4 focus:py-2 focus:text-white"
-        >
+        <a href="#main-content" className="skip-link">
           Skip to main content
         </a>
         <SessionBanner />

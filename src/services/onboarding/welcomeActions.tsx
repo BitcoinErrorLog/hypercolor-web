@@ -128,6 +128,12 @@ export function WelcomePageHost() {
       }}
       onConfirmAdoption={() => void confirmAdoption(true)}
       onCancelAdoption={() => void confirmAdoption(false)}
+      onCancelWaiting={() => {
+        cancelled.current = true;
+        connect.cancel();
+        setError(null);
+        setPending(null);
+      }}
     />
   );
 }

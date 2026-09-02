@@ -8,8 +8,8 @@ import { ErrorDetails } from "@/components/error-details";
 import { rememberAndOpen } from "@/components/detail-back";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
-import { chatRowDomId, takeListRow } from "@/lib/list-detail-focus";
-import { isMessagingEnabled } from "@/lib/session-ui";
+import { chatRowDomId, rememberThreadOrigin, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
+import { canComposeMessages } from "@/lib/session-ui";
 import type { SessionUiStatus } from "@/stores/sessionStatusStore";
 
 export type ChatsPageRow = {
@@ -36,6 +36,7 @@ export function ChatsPage({
   pendingRequests,
   inboxError,
   inboxLoading,
+  onRetryInbox,
   peerDraft,
   starting,
   startError,
@@ -51,6 +52,7 @@ export function ChatsPage({
   pendingRequests: number;
   inboxError: string | null;
   inboxLoading?: boolean;
+  onRetryInbox?: () => void;
   peerDraft: string;
   starting: boolean;
   startError: string | null;
@@ -60,13 +62,12 @@ export function ChatsPage({
   emptyStateHint?: string;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const composeEnabled = isMessagingEnabled(status);
+  const composeEnabled = canComposeMessages(status);
 
   useEffect(() => {
     if (conversationId) return;
     const rowId = takeListRow("chats");
-    const node = rowId ? document.getElementById(rowId) : headingRef.current;
-    node?.focus();
+    restoreListFocus(rowId, headingRef.current);
   }, [conversationId]);
 
   return (
@@ -120,7 +121,13 @@ export function ChatsPage({
           {startError ? <ErrorDetails fallback="Could not start this chat." details={startError} /> : null}
         </form>
 
-        {rows.length === 0 ? (
+        {inboxLoading && rows.length === 0 ? (
+          <ul className="mt-4 space-y-2" data-testid="chatsLoading">
+            <li className="h-11 animate-pulse rounded-md bg-secondary" />
+            <li className="h-11 animate-pulse rounded-md bg-secondary" />
+            <li className="h-11 animate-pulse rounded-md bg-secondary" />
+          </ul>
+        ) : rows.length === 0 ? (
           <div className="mt-8 space-y-2" data-testid="chatsEmpty">
             <p className="text-muted-foreground">No chats yet.</p>
             <p className="text-sm text-muted-foreground">{emptyStateHint}</p>
@@ -141,7 +148,10 @@ export function ChatsPage({
                     data-testid="chatRow"
                     aria-label={`Open chat ${labelName}`}
                     className="flex min-h-11 items-start gap-3 py-3 hover:bg-accent/40"
-                    onClick={() => rememberAndOpen("chats", rowId)}
+                    onClick={() => {
+                      rememberAndOpen("chats", rowId);
+                      rememberThreadOrigin({ kind: "chats" });
+                    }}
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-brand">
                       {labelName.charAt(0).toUpperCase()}
@@ -172,7 +182,11 @@ export function ChatsPage({
         )}
         {inboxError ? (
           <div className="mt-3">
-            <ErrorDetails fallback="Could not load your chats." details={inboxError} />
+            <ErrorDetails
+              fallback="Could not load your chats."
+              details={inboxError}
+              onRetry={onRetryInbox}
+            />
           </div>
         ) : null}
         <p className="sr-only" role="status" aria-live="polite">

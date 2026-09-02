@@ -102,6 +102,11 @@ export function isMessagingEnabled(status: SessionUiStatus): boolean {
   return status.kind === "enabled";
 }
 
+/** Offline sends stay in the composer and queue as Queued. Needs-enable does not. */
+export function canComposeMessages(status: SessionUiStatus): boolean {
+  return status.kind === "enabled" || status.kind === "session-offline";
+}
+
 export function sessionStatusLabel(status: SessionUiStatus): string {
   return sessionCopy(status).label;
 }

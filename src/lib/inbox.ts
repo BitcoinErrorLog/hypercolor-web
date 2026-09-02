@@ -105,17 +105,3 @@ export function channelListRows(
 ): InboxRow[] {
   return sortInboxRows(groups.map(inboxRowFromGroup));
 }
-
-export function mergeInboxRows(input: {
-  dms: readonly LinkConversationSummary[];
-  groups: readonly {
-    channel: GroupChannel;
-    preview: string;
-    unreadCount: number;
-  }[];
-}): InboxRow[] {
-  return sortInboxRows([
-    ...input.dms.map(inboxRowFromDm),
-    ...input.groups.map(inboxRowFromGroup),
-  ]);
-}

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/hooks/useBlockingGate";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChannelView } from "@/components/channel-view";
 import { PublicTopicsPanel } from "@/components/discover-page";
@@ -13,7 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import { useQueryParam } from "@/hooks/useQueryParam";
-import { formatRelativeTime, shortPubky } from "@/lib/format";
+import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
 import { PRIVATE_GROUP_MEMBER_CAP } from "@/flags/config";
 import { GroupService, subscribeGroupEvents } from "@/services/group/GroupService";
 import { StorageService } from "@/services/StorageService";
@@ -21,7 +21,7 @@ import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { loadChannelRows, useChannelsStore } from "@/stores/channelsStore";
 import { contactsWithEstablishedLinks } from "@/lib/group-members";
-import { channelRowDomId, takeListRow } from "@/lib/list-detail-focus";
+import { channelRowDomId, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import type { Contact } from "@/types";
@@ -30,7 +30,7 @@ import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 
 export function ChannelsPage() {
-  const router = useRouter();
+  const router = useGuardedRouter();
   const pathId = usePathSegment("channels");
   const modeParam = useQueryParam("mode");
   const mode = modeParam === "public" ? "public" : "private";
@@ -42,6 +42,8 @@ export function ChannelsPage() {
   const setRows = useChannelsStore((s) => s.setRows);
   const loading = useChannelsStore((s) => s.loading);
   const setLoading = useChannelsStore((s) => s.setLoading);
+  const storeError = useChannelsStore((s) => s.error);
+  const setStoreError = useChannelsStore((s) => s.setError);
   const [eligible, setEligible] = useState<Contact[]>([]);
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
@@ -57,19 +59,26 @@ export function ChannelsPage() {
       setEligible([]);
       setLoaded(true);
       setLoading(false);
+      setStoreError(null);
       return;
     }
     setLoading(true);
-    const [channelRows, people, links] = await Promise.all([
-      loadChannelRows(ownerPubky),
-      StorageService.getAllContacts(ownerPubky),
-      StorageService.getAllLinks(ownerPubky),
-    ]);
-    setRows(channelRows);
-    setEligible(contactsWithEstablishedLinks(people, links));
-    setLoaded(true);
-    setLoading(false);
-  }, [ownerPubky, setRows, setLoading]);
+    setStoreError(null);
+    try {
+      const [channelRows, people, links] = await Promise.all([
+        loadChannelRows(ownerPubky),
+        StorageService.getAllContacts(ownerPubky),
+        StorageService.getAllLinks(ownerPubky),
+      ]);
+      setRows(channelRows);
+      setEligible(contactsWithEstablishedLinks(people, links));
+    } catch (err) {
+      setStoreError(err instanceof Error ? err.message : "Could not load channels.");
+    } finally {
+      setLoaded(true);
+      setLoading(false);
+    }
+  }, [ownerPubky, setRows, setLoading, setStoreError]);
 
   useEffect(() => {
     void (async () => {
@@ -95,8 +104,7 @@ export function ChannelsPage() {
   useEffect(() => {
     if (pathId) return;
     const rowId = takeListRow("channels");
-    const node = rowId ? document.getElementById(rowId) : headingRef.current;
-    node?.focus();
+    restoreListFocus(rowId, headingRef.current);
   }, [pathId, mode]);
 
   const selectedPubkys = Object.keys(selected).filter((key) => selected[key]);
@@ -232,7 +240,25 @@ export function ChannelsPage() {
               {error ? <ErrorDetails fallback="Could not create group." details={error} /> : null}
             </form>
 
-            {rows.length === 0 ? (
+            {storeError ? (
+              <div className="mt-3">
+                <ErrorDetails
+                  fallback="Could not load your channels."
+                  details={storeError}
+                  onRetry={() => {
+                    void reload();
+                  }}
+                />
+              </div>
+            ) : null}
+
+            {loading && rows.length === 0 ? (
+              <ul className="mt-4 space-y-2" data-testid="channelsLoading">
+                <li className="h-11 animate-pulse rounded-md bg-secondary" />
+                <li className="h-11 animate-pulse rounded-md bg-secondary" />
+                <li className="h-11 animate-pulse rounded-md bg-secondary" />
+              </ul>
+            ) : rows.length === 0 ? (
               <div className="mt-8 space-y-2" data-testid="channelsEmpty">
                 <p className="text-muted-foreground">No private groups yet.</p>
                 <p className="text-sm text-muted-foreground">
@@ -257,8 +283,18 @@ export function ChannelsPage() {
                           Private group
                           {row.lastMessageAt ? ` · ${formatRelativeTime(row.lastMessageAt)}` : ""}
                         </span>
-                        <span className="mt-1 block truncate text-sm text-muted-foreground">
-                          {row.preview}
+                        <span className="mt-1 flex items-center justify-between gap-2">
+                          <span className="block truncate text-sm text-muted-foreground">
+                            {row.preview}
+                          </span>
+                          {row.unreadCount > 0 ? (
+                            <span
+                              className="rounded-full bg-brand px-2 text-xs text-white"
+                              data-testid="channelUnread"
+                            >
+                              {unreadLabel(row.unreadCount)}
+                            </span>
+                          ) : null}
                         </span>
                       </Link>
                     </li>

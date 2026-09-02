@@ -14,7 +14,7 @@ export function SessionBanner() {
 
   return (
     <div
-      role="status"
+      role="alert"
       className="border-b border-border bg-card px-6 py-3 text-sm"
       data-testid="sessionBanner"
       aria-live="assertive"

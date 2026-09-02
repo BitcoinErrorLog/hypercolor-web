@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useGuardedRouter } from "@/hooks/useBlockingGate";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ContactDetail } from "@/components/contact-detail";
 import { FollowsImportPanel } from "@/components/follows-import-panel";
@@ -18,7 +18,7 @@ import {
 } from "@/lib/contacts-sort";
 import { sanitizePublicBio, sanitizePublicName } from "@/lib/public-text";
 import { shortPubky } from "@/lib/format";
-import { contactRowDomId, takeListRow } from "@/lib/list-detail-focus";
+import { contactRowDomId, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
 import { addManualContact } from "@/services/contacts/addManualContact";
 import {
   isFollowsImportEnabled,
@@ -36,7 +36,7 @@ import { emitCoarseError } from "@/services/vibeware/coarse";
 import { parsePubky } from "@/utils/pubkyId";
 
 export function ContactsPage() {
-  const router = useRouter();
+  const router = useGuardedRouter();
   const selected = usePathSegment("contacts");
   const ownerPubky = useAuthStore((s) => s.pubky);
   const upsertContact = useContactStore((s) => s.upsertContact);
@@ -74,8 +74,7 @@ export function ContactsPage() {
   useEffect(() => {
     if (selected) return;
     const rowId = takeListRow("contacts");
-    const node = rowId ? document.getElementById(rowId) : headingRef.current;
-    node?.focus();
+    restoreListFocus(rowId, headingRef.current);
   }, [selected]);
 
   async function addPeer(raw: string, displayName?: string): Promise<void> {

@@ -11,6 +11,7 @@ import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { unreadLabel } from "@/lib/format";
 import { hasIdentity, sessionCopy } from "@/lib/session-ui";
+import { loadChannelRows, totalChannelUnread, useChannelsStore } from "@/stores/channelsStore";
 
 const PRIMARY = [
   { href: "/chats", label: "Chats", prefix: "/chats", icon: IconChats },
@@ -67,12 +68,12 @@ function IconProfile() {
   );
 }
 
-function NavBadge({ count }: { count: number }) {
+function NavBadge({ count, testId }: { count: number; testId: string }) {
   if (count <= 0) return null;
   return (
     <span
       className="ml-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1 text-[11px] font-medium text-white"
-      data-testid="chatsNavBadge"
+      data-testid={testId}
     >
       {unreadLabel(count)}
     </span>
@@ -85,6 +86,9 @@ export function SiteNav() {
   const pubky = useAuthStore((s) => s.pubky);
   const pendingRequests = useInboxStore((s) => s.pendingRequests);
   const setPendingRequests = useInboxStore((s) => s.setPendingRequests);
+  const channelRows = useChannelsStore((s) => s.rows);
+  const setChannelRows = useChannelsStore((s) => s.setRows);
+  const channelUnread = totalChannelUnread(channelRows);
   const showEnable = hasIdentity(status) && status.kind !== "enabled";
   const copy = sessionCopy(status);
   const fromRoute = useRef<ProductRoute | null>(null);
@@ -102,7 +106,14 @@ export function SiteNav() {
     void StorageService.countPendingMessageRequests(pubky).then((count) => {
       setPendingRequests(count);
     });
-  }, [pubky, pathname, setPendingRequests]);
+    void loadChannelRows(pubky)
+      .then((rows) => {
+        setChannelRows(rows);
+      })
+      .catch(() => {
+        // list page owns the error surface
+      });
+  }, [pubky, pathname, setPendingRequests, setChannelRows]);
 
   if (pathname.startsWith("/e2e")) return null;
 
@@ -142,12 +153,15 @@ export function SiteNav() {
               aria-current={active ? "page" : undefined}
               className={
                 active
-                  ? "inline-flex min-h-11 items-center font-semibold text-foreground underline underline-offset-4"
-                  : "inline-flex min-h-11 items-center text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                  ? "inline-flex min-h-11 min-w-11 items-center font-semibold text-foreground underline underline-offset-4"
+                  : "inline-flex min-h-11 min-w-11 items-center text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
               }
             >
               {link.label}
-              {link.label === "Chats" ? <NavBadge count={pendingRequests} /> : null}
+              {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
+              {link.label === "Channels" ? (
+                <NavBadge count={channelUnread} testId="channelsNavBadge" />
+              ) : null}
             </Link>
           );
         })}
@@ -170,7 +184,9 @@ export function SiteNav() {
                   aria-label={
                     link.label === "Chats" && pendingRequests > 0
                       ? `Chats, ${pendingRequests} message requests`
-                      : link.label
+                      : link.label === "Channels" && channelUnread > 0
+                        ? `Channels, ${channelUnread} unread`
+                        : link.label
                   }
                   className={
                     active
@@ -183,10 +199,18 @@ export function SiteNav() {
                     {link.label === "Chats" && pendingRequests > 0 ? (
                       <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-brand" />
                     ) : null}
+                    {link.label === "Channels" && channelUnread > 0 ? (
+                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-brand" />
+                    ) : null}
                   </span>
                   <span className="inline-flex items-center">
                     {link.label}
-                    {link.label === "Chats" ? <NavBadge count={pendingRequests} /> : null}
+                    {link.label === "Chats" ? (
+                      <NavBadge count={pendingRequests} testId="chatsNavBadge" />
+                    ) : null}
+                    {link.label === "Channels" ? (
+                      <NavBadge count={channelUnread} testId="channelsNavBadge" />
+                    ) : null}
                   </span>
                 </Link>
               </li>

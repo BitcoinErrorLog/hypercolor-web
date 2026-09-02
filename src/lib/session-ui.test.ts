@@ -3,6 +3,7 @@ import {
   PUBLIC_GRAPH_WARNING,
   PUBLIC_SUBSTRATE_LINE,
   CUSTODY_LINE,
+  canComposeMessages,
   hasIdentity,
   isMessagingEnabled,
   OFFLINE_BANNER_LABEL,
@@ -50,6 +51,13 @@ describe("session-ui", () => {
     expect(copy.primary).toBe("Try again");
     expect(copy.primaryAction).toBe("retry");
     expect(copy.primaryHref).toBeNull();
+  });
+
+  it("lets session-offline compose and queue while needs-enable cannot", () => {
+    expect(canComposeMessages({ kind: "session-offline", pubky: "abc" })).toBe(true);
+    expect(canComposeMessages({ kind: "enabled", pubky: "abc" })).toBe(true);
+    expect(canComposeMessages({ kind: "needs-enable" })).toBe(false);
+    expect(isMessagingEnabled({ kind: "session-offline", pubky: "abc" })).toBe(false);
   });
 
   it("keeps unknown as a loading label, not a banner state", () => {

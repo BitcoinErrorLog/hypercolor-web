@@ -27,6 +27,7 @@ export function EnablePage({
   onDone,
   onNotNow,
   onCancel,
+  retryBusy = false,
 }: {
   enabled: boolean;
   offline: boolean;
@@ -43,6 +44,7 @@ export function EnablePage({
   onDone: () => void;
   onNotNow: () => void;
   onCancel: () => void;
+  retryBusy?: boolean;
 }) {
   const statusLabel = enabled
     ? "Encrypted messaging enabled"
@@ -114,8 +116,8 @@ export function EnablePage({
             Pubky Ring did not grant the scopes Hypercolor asked for.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={onRetry}>
-              Try again
+            <Button type="button" onClick={onRetry} disabled={retryBusy}>
+              {retryBusy ? "Trying…" : "Try again"}
             </Button>
             <Button type="button" variant="outline" onClick={onCancel}>
               Cancel
@@ -150,8 +152,8 @@ export function EnablePage({
 
       {offline ? (
         <div className="space-y-3">
-          <Button type="button" onClick={onRetry}>
-            Try again
+          <Button type="button" onClick={onRetry} disabled={retryBusy} data-testid="enableOfflineRetry">
+            {retryBusy ? "Trying…" : "Try again"}
           </Button>
           <Button type="button" variant="outline" onClick={onCancel}>
             Cancel

@@ -113,4 +113,24 @@ test.describe("empty-state product screens", () => {
     await expect(page).toHaveURL(/\/settings/);
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
   });
+
+  test("desktop primary links meet the 44px minimum", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/chats");
+    await expect(page.getByRole("heading", { name: "Chats" })).toBeVisible({ timeout: 30_000 });
+    const chats = page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: /^Chats/ });
+    await expect(chats).toBeVisible();
+    const box = await chats.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+    expect(box!.width).toBeGreaterThanOrEqual(44);
+  });
+
+  test("reduced motion removes transforms", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.goto("/chats");
+    await expect(page.getByRole("heading", { name: "Chats" })).toBeVisible({ timeout: 30_000 });
+    const transform = await page.locator("body").evaluate((el) => getComputedStyle(el).transform);
+    expect(transform).toBe("none");
+  });
 });

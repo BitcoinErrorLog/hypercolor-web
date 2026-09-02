@@ -62,6 +62,41 @@ describe("channelsStore", () => {
     expect(rows[0]?.kind).toBe("group");
     expect(rows[0]?.title).toBe("Crew");
     expect(rows[0]?.preview).toBe("hi crew");
+    expect(rows[0]?.unreadCount).toBe(0);
     expect(listLinkConversations).not.toHaveBeenCalled();
+  });
+
+  it("counts peer messages after the read cursor as unread and totals them", async () => {
+    const peer = "p1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+    listGroupChannels.mockResolvedValue([
+      {
+        channelId: CHANNEL_ID,
+        ownerPubky: OWNER,
+        name: "Crew",
+        createdAt: 1,
+        updatedAt: 2,
+        createdBy: OWNER,
+        isPublic: false,
+        lastMessageAt: 80,
+        membershipEpoch: 0,
+      },
+    ]);
+    listMessageRequests.mockResolvedValue([]);
+    listGroupMessages.mockResolvedValue([
+      {
+        senderPubky: peer,
+        kind: "chat.group.message.v0",
+        body: "hello",
+        sentAt: 80,
+        deleted: false,
+      },
+    ]);
+    getLinkReadCursor.mockResolvedValue(10);
+
+    const { loadChannelRows, totalChannelUnread } = await import("./channelsStore");
+    const rows = await loadChannelRows(OWNER);
+    expect(rows[0]?.unreadCount).toBe(1);
+    expect(totalChannelUnread(rows)).toBe(1);
+    expect(totalChannelUnread([])).toBe(0);
   });
 });

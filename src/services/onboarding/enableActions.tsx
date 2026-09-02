@@ -1,11 +1,12 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { EnablePage } from "@/components/enable-page";
 import { useAuthUrl } from "@/hooks/useAuthUrl";
+import { useGuardedRouter } from "@/hooks/useBlockingGate";
+import { retrySessionRestore } from "@/lib/session-retry";
 import { KeyStore } from "@/services/KeyStore";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus } from "@/services/link/session";
@@ -35,11 +36,12 @@ function buildAuthPanel(url: string): ReactNode {
 }
 
 export function EnablePageHost() {
-  const router = useRouter();
+  const router = useGuardedRouter();
   const status = useSessionStatusStore((s) => s.status);
   const setEnabled = useSessionStatusStore((s) => s.setEnabled);
   const [error, setError] = useState<string | null>(null);
   const [provisionedPath, setProvisionedPath] = useState<string | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
 
   const onApproved = useCallback(
     async (session: SessionHandle) => {
@@ -125,10 +127,15 @@ export function EnablePageHost() {
       provisionedPath={provisionedPath}
       authPanel={!enabled && !auth.isExpired && !denied ? buildAuthPanel(auth.url) : null}
       onRegenerate={() => void auth.fetchUrl()}
+      retryBusy={retryBusy}
       onRetry={() => {
+        if (retryBusy) return;
+        setRetryBusy(true);
         setError(null);
-        void getEnableStatus();
-        void auth.fetchUrl();
+        const work = offline
+          ? retrySessionRestore()
+          : auth.fetchUrl();
+        void Promise.resolve(work).finally(() => setRetryBusy(false));
       }}
       onOpenChats={() => {
         router.replace("/chats");

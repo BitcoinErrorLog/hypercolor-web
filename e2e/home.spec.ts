@@ -10,7 +10,15 @@ test("static home page titles Hypercolor", async ({ page }) => {
 
 test("home skip link and primary nav destinations", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "Skip to main content" })).toBeAttached();
+  const skip = page.getByRole("link", { name: "Skip to main content" });
+  await expect(skip).toBeAttached();
+  await skip.focus();
+  const box = await skip.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.width).toBeGreaterThan(1);
+  expect(box!.height).toBeGreaterThan(1);
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
   const nav = page.getByRole("navigation", { name: "Primary" });
   await expect(nav.getByRole("link", { name: /^Chats/ })).toBeVisible();
   await expect(nav.getByRole("link", { name: "Channels" })).toBeVisible();

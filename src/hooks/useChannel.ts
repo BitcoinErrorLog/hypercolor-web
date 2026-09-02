@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { groupConversationId } from "@/lib/inbox";
 import { isHeldFounderChannel, heldGroupFounderSet } from "@/lib/group-invites";
-import { isMessagingEnabled } from "@/lib/session-ui";
+import { canComposeMessages } from "@/lib/session-ui";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
 import { GroupService, subscribeGroupEvents } from "@/services/group/GroupService";
 import { LinkService } from "@/services/link/LinkService";
@@ -13,7 +13,7 @@ import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import type { AttachmentRecord } from "@/types/attachment";
 import type { Contact } from "@/types";
 import type { GroupChannel, GroupMember, GroupMessage } from "@/types/group";
-import { isGroupTimelineVisible } from "@/types/group";
+import { GROUP_REACTION_KIND, isGroupTimelineVisible } from "@/types/group";
 import { parsePubky } from "@/utils/pubkyId";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
@@ -23,6 +23,7 @@ export function useChannel(channelId: string | null) {
   const status = useSessionStatusStore((s) => s.status);
   const [channel, setChannel] = useState<GroupChannel | null>(null);
   const [messages, setMessages] = useState<GroupMessage[]>([]);
+  const [reactions, setReactions] = useState<GroupMessage[]>([]);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -37,6 +38,7 @@ export function useChannel(channelId: string | null) {
     if (!channelId || !localPubky) {
       setChannel(null);
       setMessages([]);
+      setReactions([]);
       setMembers([]);
       setAttachments([]);
       setLoading(false);
@@ -46,6 +48,7 @@ export function useChannel(channelId: string | null) {
     if (isHeldFounderChannel(channelId, heldGroupFounderSet(requests))) {
       setChannel(null);
       setMessages([]);
+      setReactions([]);
       setMembers([]);
       setAttachments([]);
       setContacts([]);
@@ -63,6 +66,7 @@ export function useChannel(channelId: string | null) {
     ]);
     setChannel(ch);
     setMessages(msgs.filter(isGroupTimelineVisible));
+    setReactions(msgs.filter((message) => message.kind === GROUP_REACTION_KIND));
     setMembers(mems);
     setAttachments(atts);
     setContacts(people);
@@ -268,7 +272,8 @@ export function useChannel(channelId: string | null) {
     error,
     isAdmin,
     selfActive,
-    messagingEnabled: isMessagingEnabled(status),
+    messagingEnabled: canComposeMessages(status),
+    reactions,
     send,
     sendAttachment,
     react,

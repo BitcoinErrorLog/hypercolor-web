@@ -71,6 +71,14 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
     await navigator.clipboard.writeText(started.url);
   }, [started]);
 
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setStarted(null);
+    setIsExpired(false);
+    setIsLoading(false);
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -106,5 +114,6 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
     isExpired,
     start,
     copyUrl,
+    cancel,
   };
 }

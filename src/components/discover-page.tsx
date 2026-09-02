@@ -103,8 +103,3 @@ export function PublicTopicsPanel({
     </div>
   );
 }
-
-/** @deprecated Discover is Channels → Public; this name stays for existing imports. */
-export function DiscoverPage() {
-  return <PublicTopicsPanel selectedTag={null} />;
-}

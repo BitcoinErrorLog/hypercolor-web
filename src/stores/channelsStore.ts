@@ -29,6 +29,10 @@ export const useChannelsStore = create<ChannelsState>((set) => ({
   reset: () => set({ rows: [], loading: false, error: null }),
 }));
 
+export function totalChannelUnread(rows: InboxRow[]): number {
+  return rows.reduce((sum, row) => sum + Math.max(0, row.unreadCount), 0);
+}
+
 export async function loadChannelRows(ownerPubky: string): Promise<InboxRow[]> {
   const [channels, requests] = await Promise.all([
     StorageService.listGroupChannels(ownerPubky),

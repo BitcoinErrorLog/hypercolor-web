@@ -17,11 +17,7 @@ export function AuthQr({
   if (!value || !dataUri) return null;
 
   return (
-    <div
-      data-testid={testID}
-      className="mx-auto w-fit rounded-xl bg-white p-4"
-      aria-hidden="true"
-    >
+    <div data-testid={testID} className="mx-auto w-fit rounded-xl bg-white p-4">
       {/* data URI QR — next/image is not used for generated PNGs */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

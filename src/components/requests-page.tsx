@@ -1,17 +1,18 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CopyPubkyButton } from "@/components/truncated-pubky";
 import { DetailBackLink } from "@/components/detail-back";
 import { ErrorDetails } from "@/components/error-details";
+import { useGuardedRouter } from "@/hooks/useBlockingGate";
 import { sanitizeDisplayName } from "@/lib/display-name";
-import { shortPubky } from "@/lib/format";
+import { formatRelativeTime, shortPubky } from "@/lib/format";
 import { collectGroupInvitations, type HeldGroupInvitation } from "@/lib/group-invites";
 import { LinkService } from "@/services/link/LinkService";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
+import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { threadRouteParams } from "@/types/link";
 import type { Contact, MessageRequest } from "@/types";
 import { emit } from "@/services/vibeware/collector";
@@ -57,12 +58,24 @@ function InviteBlock({ pubky }: { pubky: string | null }) {
   );
 }
 
+function SkeletonRows() {
+  return (
+    <ul className="divide-y divide-border" data-testid="requestsLoading">
+      <li className="h-16 animate-pulse rounded-md bg-secondary" />
+      <li className="mt-2 h-16 animate-pulse rounded-md bg-secondary" />
+    </ul>
+  );
+}
+
 export function RequestsPage() {
-  const router = useRouter();
+  const router = useGuardedRouter();
   const ownerPubky = useAuthStore((s) => s.pubky);
+  const status = useSessionStatusStore((s) => s.status);
+  const offline = status.kind === "session-offline";
   const [rows, setRows] = useState<RequestRow[]>([]);
   const [busyPeer, setBusyPeer] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const emptyEmitted = useRef(false);
 
@@ -70,23 +83,30 @@ export function RequestsPage() {
     if (!ownerPubky) {
       setRows([]);
       setLoaded(true);
+      setLoadError(null);
       return;
     }
-    const pending = await StorageService.listMessageRequests(ownerPubky, "pending");
-    const next: RequestRow[] = [];
-    for (const request of pending) {
-      const [contact, streamItems] = await Promise.all([
-        StorageService.getContact(request.peerPubky, ownerPubky),
-        StorageService.getUnprocessedLinkStreamItems(ownerPubky, request.peerPubky),
-      ]);
-      next.push({
-        request,
-        contact,
-        invitations: collectGroupInvitations(streamItems, request.peerPubky),
-      });
+    try {
+      const pending = await StorageService.listMessageRequests(ownerPubky, "pending");
+      const next: RequestRow[] = [];
+      for (const request of pending) {
+        const [contact, streamItems] = await Promise.all([
+          StorageService.getContact(request.peerPubky, ownerPubky),
+          StorageService.getUnprocessedLinkStreamItems(ownerPubky, request.peerPubky),
+        ]);
+        next.push({
+          request,
+          contact,
+          invitations: collectGroupInvitations(streamItems, request.peerPubky),
+        });
+      }
+      setRows(next);
+      setLoadError(null);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Could not load requests.");
+    } finally {
+      setLoaded(true);
     }
-    setRows(next);
-    setLoaded(true);
   }, [ownerPubky]);
 
   useEffect(() => {
@@ -108,8 +128,20 @@ export function RequestsPage() {
       <DetailBackLink href="/chats" listLabel="Chats" always />
       <h1 className="text-2xl font-semibold tracking-tight">Message requests</h1>
       <p className="text-sm text-muted-foreground">{EXPLAIN}</p>
+      {loadError ? (
+        <ErrorDetails
+          fallback="Could not load requests."
+          details={loadError}
+          onRetry={() => {
+            setLoaded(false);
+            void load();
+          }}
+        />
+      ) : null}
       {error ? <ErrorDetails fallback="Could not update this request." details={error} /> : null}
-      {rows.length === 0 ? (
+      {!loaded ? (
+        <SkeletonRows />
+      ) : rows.length === 0 ? (
         <div className="space-y-4" data-testid="requestsEmpty">
           <p className="text-muted-foreground">No pending requests.</p>
           <p className="text-sm text-muted-foreground">
@@ -132,12 +164,16 @@ export function RequestsPage() {
                   ? `claims to be ${sanitizeDisplayName(row.contact.displayName)}`
                   : null;
               const busy = busyPeer === peer;
+              const decisionDisabled = busy || offline;
               return (
                 <li key={peer} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="font-medium">{name}</p>
                     {claimed ? <p className="text-sm text-muted-foreground">{claimed}</p> : null}
                     <p className="break-all font-mono text-xs text-muted-foreground">{peer}</p>
+                    <p className="text-xs text-muted-foreground" data-testid="requestArrived">
+                      {formatRelativeTime(row.request.createdAt)}
+                    </p>
                     {row.invitations.length > 0 ? (
                       <ul className="mt-2 space-y-1" data-testid="groupInvitation">
                         {row.invitations.map((invite) => (
@@ -153,7 +189,7 @@ export function RequestsPage() {
                     <Button
                       type="button"
                       size="sm"
-                      disabled={busy}
+                      disabled={decisionDisabled}
                       data-testid="messageRequestAccept"
                       onClick={() => {
                         setBusyPeer(peer);
@@ -182,7 +218,7 @@ export function RequestsPage() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={busy}
+                      disabled={decisionDisabled}
                       data-testid="messageRequestDecline"
                       onClick={() => {
                         setBusyPeer(peer);

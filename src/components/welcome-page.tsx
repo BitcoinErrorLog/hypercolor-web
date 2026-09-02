@@ -21,6 +21,7 @@ export function WelcomePage({
   onGenerateLink,
   onConfirmAdoption,
   onCancelAdoption,
+  onCancelWaiting,
 }: {
   appName: string;
   isAuthenticated: boolean;
@@ -35,7 +36,9 @@ export function WelcomePage({
   onGenerateLink: () => void;
   onConfirmAdoption: () => void;
   onCancelAdoption: () => void;
+  onCancelWaiting: () => void;
 }) {
+  const presentingAuth = linkLive || isExpired;
   return (
     <article className="space-y-6">
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
@@ -52,7 +55,7 @@ export function WelcomePage({
             Enable encrypted messaging
           </Link>
         </p>
-      ) : (
+      ) : presentingAuth ? null : (
         <Button
           type="button"
           data-testid="welcomeConnect"
@@ -72,7 +75,7 @@ export function WelcomePage({
           <p className="text-sm text-muted-foreground">
             This paykit-connect link expired. Generate a new one.
           </p>
-          <Button type="button" onClick={onGenerateLink}>
+          <Button type="button" data-testid="welcomeGenerate" onClick={onGenerateLink}>
             Generate new link
           </Button>
         </div>
@@ -81,10 +84,20 @@ export function WelcomePage({
       )}
 
       {linkLive && !isExpired ? (
-        <p className="text-sm text-muted-foreground">
-          Waiting for Pubky Ring… Approve the request in Pubky Ring, or scan the code on another
-          device.
-        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Waiting for Pubky Ring… Approve the request in Pubky Ring, or scan the code on another
+            device.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="welcomeCancel"
+            onClick={onCancelWaiting}
+          >
+            Cancel
+          </Button>
+        </div>
       ) : null}
 
       {pendingPubky ? (

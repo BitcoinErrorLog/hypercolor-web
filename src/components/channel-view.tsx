@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Composer } from "@/components/composer";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { AttachmentBubble } from "@/components/attachment-bubble";
@@ -17,11 +17,12 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
   const channel = useChannel(channelId);
   const [addDraft, setAddDraft] = useState("");
   const [showMembers, setShowMembers] = useState(false);
+  const headingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     if (!channelId) return;
-    document.querySelector<HTMLElement>("[data-testid=channelName]")?.focus();
-  }, [channelId]);
+    headingRef.current?.focus();
+  }, [channelId, channel.channel, channel.loading]);
 
   if (!channelId) {
     return (
@@ -39,7 +40,9 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
     return (
       <article className="space-y-3">
         <DetailBackLink href="/channels" listLabel="Channels" />
-        <h2 className="text-lg font-semibold">Channel not found</h2>
+        <h1 ref={headingRef} tabIndex={-1} className="text-lg font-semibold">
+          Channel not found
+        </h1>
         <p className="text-sm text-muted-foreground">
           This group is not on this device. You must be invited over an Encrypted Link.
         </p>
@@ -59,9 +62,9 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
         <div>
           <DetailBackLink href="/channels" listLabel="Channels" />
           <p className="text-xs uppercase tracking-wide text-muted-foreground">Private group</p>
-          <h2 className="text-lg font-semibold" data-testid="channelName" tabIndex={-1}>
+          <h1 className="text-lg font-semibold" data-testid="channelName" tabIndex={-1} ref={headingRef}>
             {sanitizeDisplayName(channel.channel.name)}
-          </h2>
+          </h1>
         </div>
         <Button
           type="button"
@@ -168,6 +171,13 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
                 localPubky={channel.localPubky}
                 onRetry={channel.retryFailed}
                 onReact={(emoji) => void channel.react(message.eventId, message.senderPubky, emoji)}
+                pressedEmojis={channel.reactions
+                  .filter(
+                    (reaction) =>
+                      reaction.senderPubky === channel.localPubky &&
+                      reaction.targetEventId === message.eventId,
+                  )
+                  .map((reaction) => reaction.body)}
                 onEdit={() => {
                   channel.setEditingEventId(message.eventId);
                   channel.setDraft(message.body);

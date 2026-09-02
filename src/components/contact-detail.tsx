@@ -10,6 +10,7 @@ import { relationshipBadges } from "@/lib/contacts-sort";
 import { StorageService } from "@/services/StorageService";
 import { TrustEngine, type TrustExplanation } from "@/services/TrustEngine";
 import { buildDmConversationId } from "@/types/link";
+import { rememberThreadOrigin } from "@/lib/list-detail-focus";
 import type { Contact } from "@/types";
 import type { LinkRecord } from "@/types/link";
 
@@ -66,11 +67,11 @@ export function ContactDetail({
       <DetailBackLink href="/contacts" listLabel="Contacts" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-        <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
+        <h1 ref={headingRef} tabIndex={-1} className="text-xl font-semibold">
           {contact?.displayName ? sanitizeDisplayName(contact.displayName) : (
             <TruncatedPubky pubky={pubky} />
           )}
-        </h2>
+        </h1>
         <p className="mt-2 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
         <Button
           type="button"
@@ -127,7 +128,12 @@ export function ContactDetail({
       </section>
 
       <Button asChild>
-        <Link href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}>Message</Link>
+        <Link
+          href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}
+          onClick={() => rememberThreadOrigin({ kind: "contact", pubky })}
+        >
+          Message
+        </Link>
       </Button>
     </article>
   );

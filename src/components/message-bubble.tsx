@@ -71,6 +71,7 @@ export function GroupMessageBubble({
   onReact,
   onEdit,
   onDelete,
+  pressedEmojis,
 }: {
   message: GroupMessage;
   attachmentSlot?: ReactNode;
@@ -80,6 +81,7 @@ export function GroupMessageBubble({
   onReact?: (emoji: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  pressedEmojis?: readonly string[];
 }) {
   if (message.kind === GROUP_MEMBERSHIP_KIND) {
     return (
@@ -121,17 +123,21 @@ export function GroupMessageBubble({
         </p>
         {!message.deleted && localPubky ? (
           <div className="flex flex-wrap gap-1">
-            {REACTIONS.map((reaction) => (
+            {REACTIONS.map((reaction) => {
+              const pressed = Boolean(pressedEmojis?.includes(reaction.emoji));
+              return (
               <button
                 key={reaction.emoji}
                 type="button"
                 className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-sm opacity-80 hover:opacity-100"
                 aria-label={`React with ${reaction.name}`}
+                aria-pressed={pressed}
                 onClick={() => onReact?.(reaction.emoji)}
               >
                 {reaction.emoji}
               </button>
-            ))}
+              );
+            })}
             {mine && onEdit ? (
               <button
                 type="button"
