@@ -19,8 +19,9 @@ const devUrl = "http://localhost:3000";
  *
  *   npm run test:e2e:static
  *
- * `preview:static` serves `out/` and refuses a tree that contains `.e2e-harness`.
- * Do not point it at `out-e2e/` without `--allow-e2e-harness`.
+ * `preview:static` serves `out/` and refuses a tree that contains `.e2e-harness`
+ * or live `__hypercolor*` harness hook symbols. Do not point it at `out-e2e/`
+ * without `--allow-e2e-harness`.
  *
  * Manual harness preview:
  *

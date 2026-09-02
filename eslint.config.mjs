@@ -10,6 +10,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "out-e2e/**",
     "out-e2e.tmp-*/**",
+    "out-e2e.*/**",
     ".e2e-build/**",
     ".build-e2e-static.lock/**",
     "build/**",

@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:static": "npm run build:e2e:static && PLAYWRIGHT_STATIC=1 playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts",
+    "test:e2e:static": "npm run build:e2e:static && PLAYWRIGHT_STATIC=1 playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts e2e/sw-upgrade.spec.ts e2e/production-hooks.spec.ts",
     "proof:staging": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_DM=1 playwright test e2e/dm-staging.spec.ts",
     "proof:staging:attach": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_ATTACH=1 playwright test e2e/attachment-staging.spec.ts",
     "proof:staging:backup": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_BACKUP=1 playwright test e2e/backup-staging.spec.ts",

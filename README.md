@@ -200,22 +200,27 @@ npm run preview:static   # serve production out/ with vercel.json rewrites (defa
 npm run build:e2e:static # isolated NEXT_PUBLIC_E2E_HARNESS=1 rebuild into out-e2e/
                          # production out/ and .next/ are never touched
 npm run test:e2e         # Playwright against next dev (harness env), or PLAYWRIGHT_BASE_URL
-npm run test:e2e:static  # build:e2e:static then thread-origin + recovery-gate on out-e2e :3300
+npm run test:e2e:static  # build:e2e:static then static proofs on out-e2e :3300
+                         # (thread-origin, recovery-gate, sw-upgrade, production-hooks)
 ```
 
 `npm run test:e2e:static` is the CI-style static proof. It always rebuilds
 `out-e2e/` from an isolated copy of the working tree so production `out/` and
 `.next/` stay untouched. The copy includes git-tracked files and untracked
 files that are not gitignored (the same set `npm run build` would see), plus
-gitignored inputs Next needs (`public/sqlite3.wasm`, `next-env.d.ts`, and the
-production `.env` files). After taking its lock it deletes leftover
-`out-e2e.tmp-*`, `out-e2e.old-*`, and `hypercolor-e2e-isol-*` trees from a
-previous crash. Publish renames the live `out-e2e/` aside, renames the new
-tree in, then deletes the aside. Interrupted builds wait `E2E_STATIC_KILL_TIMEOUT_MS`
+gitignored inputs Next needs (`public/sqlite3.wasm`, `next-env.d.ts`). `.env*`
+files are never copied; `NEXT_PUBLIC_E2E_HARNESS=1` is passed via the child
+env. After taking its lock, if `out-e2e/` is missing and exactly one
+`out-e2e.old-*` exists, that tree is renamed back to `out-e2e/` before leftover
+`out-e2e.tmp-*`, `out-e2e.old-*`, and this root's `hypercolor-e2e-isol-<hash>-*`
+trees are deleted. Publish renames the live `out-e2e/` aside, renames the new
+tree in, then deletes the aside. A thrown failure of the second rename restores
+the previous tree. Interrupted builds wait `E2E_STATIC_KILL_TIMEOUT_MS`
 (default 10000) after SIGTERM before SIGKILL; a second interrupt escalates
 immediately. Do not run Playwright against a leftover `out/` — recovery tests
 need `NEXT_PUBLIC_E2E_HARNESS=1`, and a harness export is not a production
-preview. `preview:static` keeps serving the plain production export.
+preview. `preview:static` keeps serving the plain production export and also
+refuses unmarked trees whose chunks contain live `__hypercolor*` harness hooks.
 
 ## Vibeware
 
