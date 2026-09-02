@@ -8,6 +8,10 @@ const eslintConfig = defineConfig([
   globalIgnores([
     ".next/**",
     "out/**",
+    "out-e2e/**",
+    ".out-prod-stash/**",
+    ".out-prod-stash-*/**",
+    ".build-e2e-static.lock/**",
     "build/**",
     "next-env.d.ts",
     "vendor/**",
