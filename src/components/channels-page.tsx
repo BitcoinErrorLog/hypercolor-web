@@ -112,7 +112,7 @@ export function ChannelsPage() {
 
   return (
     <div
-      className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]"
+      className="hc-master-detail"
       data-testid="channelsScreen"
     >
       <aside className={detailOpen ? "hidden md:block" : undefined} aria-busy={loading || undefined}>
@@ -276,7 +276,7 @@ export function ChannelsPage() {
                         id={rowId}
                         href={row.href}
                         data-testid="channelRow"
-                        className="block min-h-11 py-3 hover:bg-accent/40"
+                        className="block min-h-11 py-3 hover:bg-accent"
                         onClick={() => rememberAndOpen("channels", rowId)}
                       >
                         <span className="font-medium">{sanitizeDisplayName(row.title)}</span>
@@ -290,7 +290,7 @@ export function ChannelsPage() {
                           </span>
                           {row.unreadCount > 0 ? (
                             <span
-                              className="rounded-full bg-brand px-2 text-xs text-white"
+                              className="rounded-full hc-brand-fill px-2 text-xs"
                               data-testid="channelUnread"
                             >
                               {unreadLabel(row.unreadCount)}

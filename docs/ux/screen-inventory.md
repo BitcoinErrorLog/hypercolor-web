@@ -1,6 +1,24 @@
 # Screen inventory — Hypercolor web
 
-Inventory of every App Router route, page host, panel, inline surface, and banner as implemented on `main` @ `eeb6710`. Every row cites a file that was read. No dialog / sheet / drawer primitive exists (`src/components/ui/` contains only `button.tsx` and `input.tsx`).
+Inventory of every App Router route, page host, panel, inline surface, and banner as implemented on `main` @ `eeb6710`. Every row cites a file that was read. Wave 4b adds the primitive coverage noted below.
+
+## Wave 4b Primitive Coverage
+
+| Primitive | Files / consumers |
+| --- | --- |
+| Responsive shell | `app/layout.tsx`, `src/components/site-nav.tsx`, `.hc-master-detail` |
+| Dialog / sheet | `src/components/ui/sheet.tsx`, `src/components/sign-out-confirm.tsx`, backup leave gate, composer sheet |
+| Toast / status | `src/components/session-banner.tsx`, `src/components/tab-lock-banner.tsx`, `src/components/pwa-register.tsx`, `ErrorDetails` live regions |
+| Skeleton | tokenized loading rows in chats, channels, catalog, and route loaders |
+| Badge | request/channel unread badges in `SiteNav`, chats, channels |
+| Tabs | Channels Private/Public segmented tablist |
+| Avatar | list/profile/catalog avatar patterns with `shortPubky` fallback |
+| Status banner | session, tab-lock, public-graph, recovery/sign-out warnings |
+| Empty/error/loading states | `ChatsPage`, `ChannelsPage`, `ContactsPage`, `RequestsPage`, `ThreadView`, `TagChannelView`, `ErrorDetails` |
+| List row | chats, channels, contacts, requests, catalog rows |
+| Page header | `DetailBackLink`, `DetailHeading`, route headings |
+| Button variants | `src/components/ui/button.tsx`, including destructive and disabled states |
+| Screen catalog | `app/e2e/ux-catalog/page.tsx`, `src/components/ux-catalog/**`, `e2e/ux-catalog.spec.ts` |
 
 **Chrome (every non-`/e2e` route):** `app/layout.tsx` mounts `SessionBootstrap`, `PwaRegister`, `TabLockBanner`, `SessionBanner`, a header (`APP_NAME` + `SiteNav`), then `<main>{children}</main>`. `/e2e/*` still gets the header brand and banners; `SiteNav` returns `null` when `pathname.startsWith("/e2e")` (`src/components/site-nav.tsx`).
 

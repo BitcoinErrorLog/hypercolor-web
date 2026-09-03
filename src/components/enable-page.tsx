@@ -62,9 +62,9 @@ export function EnablePage({
 
   if (enabled) {
     return (
-      <article className="flex min-h-[28rem] flex-col items-center justify-center space-y-6 text-center">
+      <article className="flex hc-enable-panel flex-col items-center justify-center space-y-6 text-center">
         <div
-          className="flex h-16 w-16 items-center justify-center rounded-full bg-brand text-2xl text-white"
+          className="flex h-16 w-16 items-center justify-center rounded-full hc-brand-fill text-2xl"
           aria-hidden="true"
         >
           ✓

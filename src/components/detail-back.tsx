@@ -21,8 +21,8 @@ export function DetailBackLink({
       type="button"
       className={
         always
-          ? "inline-flex min-h-11 min-w-11 items-center text-sm text-brand underline-offset-4 hover:underline"
-          : "md:hidden inline-flex min-h-11 min-w-11 items-center text-sm text-brand underline-offset-4 hover:underline"
+          ? "inline-flex min-h-11 min-w-11 items-center text-sm hc-brand-text underline-offset-4 hover:underline"
+          : "md:hidden inline-flex min-h-11 min-w-11 items-center text-sm hc-brand-text underline-offset-4 hover:underline"
       }
       data-testid="detailBack"
       aria-label={label}

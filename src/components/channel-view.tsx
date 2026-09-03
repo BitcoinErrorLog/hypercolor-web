@@ -58,7 +58,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
   );
 
   return (
-    <article className="flex h-full min-h-[28rem] flex-col" data-testid="channelScreen">
+    <article className="flex h-full hc-detail-panel flex-col" data-testid="channelScreen">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div>
           <DetailBackLink href="/channels" listLabel="Channels" />
@@ -190,7 +190,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
         )}
       </div>
 
-      {channel.error ? <p className="mb-2 text-sm text-red-400">{channel.error}</p> : null}
+      {channel.error ? <p className="mb-2 text-sm hc-danger-text">{channel.error}</p> : null}
 
       <Composer
         draft={channel.draft}

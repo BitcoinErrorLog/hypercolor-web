@@ -16,7 +16,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:static": "npm run build:e2e:static && PLAYWRIGHT_STATIC=1 playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts e2e/sw-upgrade.spec.ts e2e/production-hooks.spec.ts",
+    "test:e2e:static": "npm run build:e2e:static && PLAYWRIGHT_STATIC=1 playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts e2e/sw-upgrade.spec.ts e2e/production-hooks.spec.ts e2e/ux-catalog.spec.ts && npm run vrt:report",
+    "icons:web": "node scripts/generate-web-icons.mjs",
+    "vrt:report": "node scripts/build-ux-vrt-report.mjs",
     "proof:staging": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_DM=1 playwright test e2e/dm-staging.spec.ts",
     "proof:staging:attach": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_ATTACH=1 playwright test e2e/attachment-staging.spec.ts",
     "proof:staging:backup": "NEXT_PUBLIC_E2E_HARNESS=1 RUN_STAGING_BACKUP=1 playwright test e2e/backup-staging.spec.ts",
@@ -48,6 +50,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^20",
@@ -59,6 +62,8 @@
     "eslint-config-next": "16.3.3",
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^29.1.1",
+    "pixelmatch": "^7.2.0",
+    "sharp": "^0.35.4",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.11"

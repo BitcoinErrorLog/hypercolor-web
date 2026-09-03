@@ -32,10 +32,36 @@ export default defineConfig({
   testDir: "./e2e",
   testIgnore: /\._/,
   fullyParallel: true,
+  snapshotPathTemplate: "e2e/vrt-baselines/{projectName}/{testFilePath}/{arg}{ext}",
+  reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? (useStaticPreview ? staticUrl : devUrl),
     trace: "on-first-retry",
+    colorScheme: "dark",
+    locale: "en-US",
+    timezoneId: "UTC",
+    deviceScaleFactor: 1,
   },
+  projects: [
+    {
+      name: "chromium",
+      testIgnore: /ux-catalog\.spec\.ts/,
+    },
+    {
+      name: "chromium-mobile-pixel",
+      testMatch: /ux-catalog\.spec\.ts/,
+      use: {
+        viewport: { width: 390, height: 844 },
+      },
+    },
+    {
+      name: "chromium-desktop-pixel",
+      testMatch: /ux-catalog\.spec\.ts/,
+      use: {
+        viewport: { width: 1280, height: 800 },
+      },
+    },
+  ],
   webServer: process.env.PLAYWRIGHT_BASE_URL
     ? undefined
     : useStaticPreview

@@ -61,7 +61,7 @@ export function PublicTopicsPanel({
         </Button>
       ) : null}
       {error ? (
-        <p className="mt-6 text-sm text-red-400" data-testid="discoverError">
+        <p className="mt-6 text-sm hc-danger-text" data-testid="discoverError">
           Could not reach the public index.
         </p>
       ) : null}
@@ -82,7 +82,7 @@ export function PublicTopicsPanel({
                   id={rowId}
                   href={topicHref(label)}
                   data-testid="discoverTagRow"
-                  className="block min-h-11 py-3 hover:bg-accent/40"
+                  className="block min-h-11 py-3 hover:bg-accent"
                   onClick={() => rememberAndOpen("channels", rowId)}
                 >
                   <span className="font-medium">#{sanitizePublicTag(label)}</span>

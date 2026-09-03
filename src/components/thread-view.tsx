@@ -108,7 +108,7 @@ export function ThreadView({
   const mayCompose = canComposeMessages(status);
 
   return (
-    <article className="flex h-full min-h-[28rem] flex-col" data-testid="threadScreen">
+    <article className="flex h-full hc-detail-panel flex-col" data-testid="threadScreen">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div className="min-w-0 space-y-2">
           <DetailBackLink
@@ -128,7 +128,7 @@ export function ThreadView({
         </div>
         <Link
           href={`/contacts/${encodeURIComponent(participantPubky)}`}
-          className="inline-flex min-h-11 items-center text-sm text-brand underline-offset-4 hover:underline"
+          className="inline-flex min-h-11 items-center text-sm hc-brand-text underline-offset-4 hover:underline"
         >
           Contact
         </Link>

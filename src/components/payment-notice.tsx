@@ -12,16 +12,16 @@ export function PaymentNotice({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="paymentNotice">
       <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm ${
-          mine ? "bg-brand text-white" : "bg-card"
+        className={`hc-bubble space-y-2 ${
+          mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
       >
         <p className="font-medium">{notice.title}</p>
         {notice.amount ? <p>{notice.amount}</p> : null}
         {notice.reference ? (
-          <p className={mine ? "text-white/80" : "text-muted-foreground"}>{notice.reference}</p>
+          <p className={mine ? "hc-on-brand-muted" : "text-muted-foreground"}>{notice.reference}</p>
         ) : null}
-        <p className={`text-xs ${mine ? "text-white/80" : "text-muted-foreground"}`}>
+        <p className={`text-xs ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {PAYMENT_NOTICE_LINE}
         </p>
       </div>

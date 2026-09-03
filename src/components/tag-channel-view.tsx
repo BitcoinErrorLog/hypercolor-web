@@ -77,7 +77,7 @@ function TagChannelTimeline({ tag }: { tag: string }) {
       </div>
       {loading ? <p className="text-sm text-muted-foreground">Loading public posts…</p> : null}
       {error ? (
-        <p className="text-sm text-red-400" data-testid="tagChannelError">
+        <p className="text-sm hc-danger-text" data-testid="tagChannelError">
           {error}
         </p>
       ) : null}

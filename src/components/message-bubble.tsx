@@ -41,14 +41,14 @@ export function DmMessageBubble({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage">
       <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm ${
-          mine ? "bg-brand text-white" : "bg-card"
+        className={`hc-bubble space-y-2 ${
+          mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
       >
         {attachmentSlot ?? (
           <p className="whitespace-pre-wrap break-words">{message.body}</p>
         )}
-        <p className={`text-xs ${mine ? "text-white/85" : "text-muted-foreground"}`}>
+        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
         </p>
@@ -104,8 +104,8 @@ export function GroupMessageBubble({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage">
       <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm ${
-          mine ? "bg-brand text-white" : "bg-card"
+        className={`hc-bubble space-y-2 ${
+          mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
       >
         {!mine ? <TruncatedPubky pubky={message.senderPubky} className="font-mono text-xs opacity-80" /> : null}
@@ -116,7 +116,7 @@ export function GroupMessageBubble({
             <p className="whitespace-pre-wrap break-words">{message.body}</p>
           )
         )}
-        <p className={`text-xs ${mine ? "text-white/85" : "text-muted-foreground"}`}>
+        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {message.editedAt ? " · edited" : ""}
           {mine && !publicTopic ? ` · ${deliveryLabel(message.deliveryState)}` : ""}

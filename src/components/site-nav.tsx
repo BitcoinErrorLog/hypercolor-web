@@ -72,7 +72,7 @@ function NavBadge({ count, testId }: { count: number; testId: string }) {
   if (count <= 0) return null;
   return (
     <span
-      className="ml-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1 text-[11px] font-medium text-white"
+      className="ml-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full hc-brand-fill px-1 hc-meta font-medium"
       data-testid={testId}
     >
       {unreadLabel(count)}
@@ -122,7 +122,7 @@ export function SiteNav() {
       <Link
         href="/"
         prefetch={false}
-        className="inline-flex min-h-11 items-center text-sm font-medium text-brand underline-offset-4 hover:underline"
+        className="inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline-offset-4 hover:underline"
       >
         Connect
       </Link>
@@ -132,8 +132,8 @@ export function SiteNav() {
         prefetch={false}
         className={
           pathname === "/enable"
-            ? "inline-flex min-h-11 items-center text-sm font-medium text-brand underline underline-offset-4"
-            : "inline-flex min-h-11 items-center text-sm font-medium text-brand underline-offset-4 hover:underline"
+            ? "inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline underline-offset-4"
+            : "inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline-offset-4 hover:underline"
         }
       >
         Enable
@@ -190,17 +190,17 @@ export function SiteNav() {
                   }
                   className={
                     active
-                      ? "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 text-[11px] font-semibold text-foreground"
-                      : "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 text-[11px] text-muted-foreground"
+                      ? "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 hc-nav-label font-semibold text-foreground"
+                      : "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 hc-nav-label text-muted-foreground"
                   }
                 >
                   <span className="relative">
                     <Icon />
                     {link.label === "Chats" && pendingRequests > 0 ? (
-                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-brand" />
+                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
                     ) : null}
                     {link.label === "Channels" && channelUnread > 0 ? (
-                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full bg-brand" />
+                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
                     ) : null}
                   </span>
                   <span className="inline-flex items-center">

@@ -71,7 +71,7 @@ export function ChatsPage({
   }, [conversationId]);
 
   return (
-    <div className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]" data-testid="chatsScreen">
+    <div className="hc-master-detail" data-testid="chatsScreen">
       <aside className={conversationId ? "hidden md:block" : undefined} aria-busy={inboxLoading || undefined}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight">
@@ -86,7 +86,7 @@ export function ChatsPage({
         >
           <span>Message requests</span>
           {pendingRequests > 0 ? (
-            <span className="rounded-full bg-brand px-2 py-0.5 text-xs text-white">
+            <span className="rounded-full hc-brand-fill px-2 py-0.5 text-xs">
               {unreadLabel(pendingRequests)}
             </span>
           ) : null}
@@ -147,13 +147,13 @@ export function ChatsPage({
                     href={row.href}
                     data-testid="chatRow"
                     aria-label={`Open chat ${labelName}`}
-                    className="flex min-h-11 items-start gap-3 py-3 hover:bg-accent/40"
+                    className="flex min-h-11 items-start gap-3 py-3 hover:bg-accent"
                     onClick={() => {
                       rememberAndOpen("chats", rowId);
                       rememberThreadOrigin({ kind: "chats" });
                     }}
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-brand">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary hc-brand-text">
                       {labelName.charAt(0).toUpperCase()}
                     </span>
                     <span className="min-w-0 flex-1">
@@ -168,7 +168,7 @@ export function ChatsPage({
                       <span className="mt-1 flex items-center justify-between gap-2">
                         <span className="truncate text-sm text-muted-foreground">{row.preview}</span>
                         {row.unreadCount > 0 ? (
-                          <span className="rounded-full bg-brand px-2 text-xs text-white">
+                          <span className="rounded-full hc-brand-fill px-2 text-xs">
                             {unreadLabel(row.unreadCount)}
                           </span>
                         ) : null}

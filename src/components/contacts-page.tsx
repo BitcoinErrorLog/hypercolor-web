@@ -113,7 +113,7 @@ export function ContactsPage() {
 
   return (
     <div
-      className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]"
+      className="hc-master-detail"
       data-testid="contactsScreen"
     >
       <aside className={selected ? "hidden md:block" : undefined}>
@@ -221,7 +221,7 @@ export function ContactsPage() {
                 </p>
                 <PubkyAnchors pubky={hit.pubky} />
                 {hit.lookalike ? (
-                  <p className="text-xs text-amber-400" data-testid="contactSearchLookalike">
+                  <p className="text-xs hc-warning-text" data-testid="contactSearchLookalike">
                     This name mixes character sets that can look alike. The check is incomplete — compare the full pubky.
                   </p>
                 ) : null}
@@ -295,7 +295,7 @@ export function ContactsPage() {
                       ? sanitizeDisplayName(contact.displayName)
                       : shortPubky(contact.pubky)
                   }`}
-                  className="block min-h-11 py-3 hover:bg-accent/40"
+                  className="block min-h-11 py-3 hover:bg-accent"
                   onClick={() => rememberAndOpen("contacts", contactRowDomId(contact.pubky))}
                 >
                   <span className="font-medium">
