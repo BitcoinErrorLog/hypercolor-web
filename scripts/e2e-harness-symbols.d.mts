@@ -5,6 +5,9 @@ export function findE2eHarnessHookSymbols(
   exportRoot: string,
   symbols: string[],
 ): { file: string; symbol: string }[];
+export function shouldAssertProductionOut(
+  env?: NodeJS.ProcessEnv,
+): boolean;
 export function classifyHarnessHookInSource(
   source: string,
   symbol: string,

@@ -103,6 +103,10 @@ jobs:
         run: npm run build
 
       - name: Assert production out/ has zero live harness hooks
+        env:
+          HYPERCOLOR_ASSERT_PRODUCTION_OUT: "1"
+          # Filesystem-only spec — any base URL disables playwright webServer.
+          PLAYWRIGHT_BASE_URL: "http://127.0.0.1:9"
         run: npx playwright test e2e/production-hooks.spec.ts
 
       - name: Static e2e suite

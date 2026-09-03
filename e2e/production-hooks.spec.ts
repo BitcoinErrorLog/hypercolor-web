@@ -16,9 +16,9 @@ type ScanHit = {
 
 test("production out/ contains no live __hypercolor hook registration", () => {
   if (!existsSync(OUT)) {
-    if (process.env.CI) {
+    if (process.env.HYPERCOLOR_ASSERT_PRODUCTION_OUT === "1") {
       throw new Error(
-        "production out/ is missing in CI — run npm run build before this assertion",
+        "production out/ is missing — run npm run build before this assertion",
       );
     }
     test.skip(true, "run npm run build to produce production out/");

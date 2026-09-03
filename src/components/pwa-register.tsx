@@ -120,6 +120,13 @@ export function PwaRegister() {
     };
   }, [pathname]);
 
+  useEffect(() => {
+    return () => {
+      cancelArmRef.current?.();
+      cancelArmRef.current = null;
+    };
+  }, []);
+
   if (!updateReady) return null;
 
   return (

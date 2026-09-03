@@ -14,6 +14,7 @@ import {
 } from "./static-preview.mjs";
 import {
   classifyHarnessHookInSource,
+  shouldAssertProductionOut,
   findE2eHarnessHookSymbols,
   listE2eHarnessHookSymbols,
   listHarnessHookSourceFiles,
@@ -221,9 +222,9 @@ describe("static preview rewrites", () => {
   it("production out/ has no live __hypercolor hook registration", () => {
     const out = path.join(REPO_ROOT, "out");
     if (!existsSync(out)) {
-      if (process.env.CI) {
+      if (shouldAssertProductionOut()) {
         throw new Error(
-          "production out/ is missing in CI — run npm run build before this assertion",
+          "production out/ is missing — run npm run build before this assertion",
         );
       }
       return;
@@ -246,5 +247,38 @@ describe("static preview rewrites", () => {
       }
     }
     expect(live, live.join(", ")).toEqual([]);
+  });
+
+  it("CI=true alone does not assert production out/", () => {
+    expect(shouldAssertProductionOut({ CI: "true" })).toBe(false);
+    expect(shouldAssertProductionOut({})).toBe(false);
+    expect(shouldAssertProductionOut({ HYPERCOLOR_ASSERT_PRODUCTION_OUT: "1" })).toBe(true);
+  });
+
+  it("production out missing throws only when HYPERCOLOR_ASSERT_PRODUCTION_OUT=1", () => {
+    const decide = (env) => {
+      const outExists = false;
+      if (outExists) return "assert";
+      if (shouldAssertProductionOut(env)) {
+        throw new Error("production out/ is missing — run npm run build before this assertion");
+      }
+      return "skip";
+    };
+    expect(decide({ CI: "true" })).toBe("skip");
+    expect(() => decide({ HYPERCOLOR_ASSERT_PRODUCTION_OUT: "1" })).toThrow(
+      /production out\/ is missing/,
+    );
+  });
+
+  it("classifyHarnessHookInSource keeps real assignments live and quoted equals inert", () => {
+    const symbol = "__hypercolorSetBackupGate";
+    expect(classifyHarnessHookInSource(`window.${symbol}=function(){}`, symbol)).toBe("live");
+    expect(classifyHarnessHookInSource(`.${symbol}=1`, symbol)).toBe("live");
+    expect(classifyHarnessHookInSource(`${symbol}=1`, symbol)).toBe("live");
+    expect(classifyHarnessHookInSource(`window["${symbol}"]=1`, symbol)).toBe("live");
+    expect(classifyHarnessHookInSource(`window['${symbol}']=1`, symbol)).toBe("live");
+    expect(classifyHarnessHookInSource(`const msg = "${symbol}=";`, symbol)).toBe("inert");
+    expect(classifyHarnessHookInSource(`const msg = '${symbol}=';`, symbol)).toBe("inert");
+    expect(classifyHarnessHookInSource("nope", symbol)).toBe("absent");
   });
 });

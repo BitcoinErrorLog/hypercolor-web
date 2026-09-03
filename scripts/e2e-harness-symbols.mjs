@@ -150,13 +150,26 @@ export function findE2eHarnessHookSymbols(exportRoot, symbols) {
  * @param {string} symbol
  * @returns {"absent" | "live" | "inert"}
  */
+/**
+ * True only when a job opts in after a production build. Plain `CI=true`
+ * must not fail the unit-test job, which never builds `out/`.
+ *
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+export function shouldAssertProductionOut(env = process.env) {
+  return env.HYPERCOLOR_ASSERT_PRODUCTION_OUT === "1";
+}
+
 export function classifyHarnessHookInSource(source, symbol) {
   if (!source.includes(symbol)) return "absent";
   const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Member access (.__foo= / ["__foo"]=) or bare assignment (__foo=) that is
+  // not inside a string/template token. `__foo=` inside quotes must stay inert.
   const live = new RegExp(
-    String.raw`(?:\.|\[)?(?:${escaped}|["']${escaped}["'])\s*=`,
+    String.raw`(?:\.${escaped}|\[\s*["']${escaped}["']\s*\]|(?<![\w$'"\`])${escaped})\s*=`,
   );
-  if (live.test(source) || source.includes(`${symbol}=`)) return "live";
+  if (live.test(source)) return "live";
   return "inert";
 }
 
