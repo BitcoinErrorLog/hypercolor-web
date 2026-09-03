@@ -18,7 +18,7 @@ const RING_CALLBACK_KEYSTORE_ERROR = "Could not open the key store.";
 const RING_CALLBACK_HANDOFF_ERROR = "Could not complete this Ring handoff.";
 const RING_CALLBACK_RELAY_ERROR = "Could not notify the waiting computer.";
 
-type Phase =
+export type RingCallbackPhase =
   | { kind: "reading" }
   | { kind: "invalid"; reason: string }
   | { kind: "relay-forwarded" }
@@ -48,10 +48,12 @@ function readParamsFromLocation(): {
   };
 }
 
-export function RingCallbackPage() {
-  const [phase, setPhase] = useState<Phase>({ kind: "reading" });
+export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallbackPhase } = {}) {
+  const [livePhase, setPhase] = useState<RingCallbackPhase>({ kind: "reading" });
+  const phase = fixturePhase ?? livePhase;
 
   useEffect(() => {
+    if (fixturePhase) return;
     let cancelled = false;
     void (async () => {
       const { ch, params } = readParamsFromLocation();
@@ -127,7 +129,7 @@ export function RingCallbackPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [fixturePhase]);
 
   async function adopt() {
     if (phase.kind !== "confirm") return;
@@ -146,7 +148,7 @@ export function RingCallbackPage() {
   }
 
   return (
-    <article className="space-y-4">
+    <article className="space-y-4" data-surface="ring-callback-page">
       <h1 className="text-2xl font-semibold tracking-tight">Ring callback</h1>
 
       {phase.kind === "reading" ? (

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useGuardedRouter } from "@/hooks/useBlockingGate";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChannelView } from "@/components/channel-view";
+import { ChannelView, type ChannelViewFixture } from "@/components/channel-view";
 import { PublicTopicsPanel } from "@/components/discover-page";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { ErrorDetails } from "@/components/error-details";
@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import { useQueryParam } from "@/hooks/useQueryParam";
 import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
+import type { InboxRow } from "@/lib/inbox";
 import { PRIVATE_GROUP_MEMBER_CAP } from "@/flags/config";
 import { GroupService, subscribeGroupEvents } from "@/services/group/GroupService";
 import { StorageService } from "@/services/StorageService";
@@ -28,32 +29,70 @@ import type { Contact } from "@/types";
 import { GroupServiceError } from "@/types/group";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
+import type { DiscoverTopicsView } from "./discover-topics";
+import type { TagChannelFixture } from "./tag-channel-view";
 
-export function ChannelsPage() {
+export type ChannelsPageFixture = {
+  mode: "private" | "public";
+  pathId: string | null;
+  ownerPubky: string | null;
+  rows: InboxRow[];
+  eligible: Contact[];
+  name: string;
+  selected: Record<string, boolean>;
+  busy: boolean;
+  error: string | null;
+  loaded: boolean;
+  loading: boolean;
+  storeError: string | null;
+  channelDetail?: ChannelViewFixture;
+  channelMembersOpen?: boolean;
+  publicTopics?: DiscoverTopicsView;
+  tagDetail?: TagChannelFixture;
+};
+
+export function ChannelsPage({ fixture }: { fixture?: ChannelsPageFixture } = {}) {
   const router = useGuardedRouter();
-  const pathId = usePathSegment("channels");
+  const routePathId = usePathSegment("channels");
   const modeParam = useQueryParam("mode");
-  const mode = modeParam === "public" ? "public" : "private";
+  const pathId = fixture?.pathId ?? routePathId;
+  const mode = fixture?.mode ?? (modeParam === "public" ? "public" : "private");
   const channelId = mode === "private" ? pathId : null;
   const selectedTag = mode === "public" ? pathId : null;
-  const ownerPubky = useAuthStore((s) => s.pubky);
+  const storedOwnerPubky = useAuthStore((s) => s.pubky);
+  const ownerPubky = fixture?.ownerPubky ?? storedOwnerPubky;
   const status = useSessionStatusStore((s) => s.status);
-  const rows = useChannelsStore((s) => s.rows);
+  const storedRows = useChannelsStore((s) => s.rows);
   const setRows = useChannelsStore((s) => s.setRows);
-  const loading = useChannelsStore((s) => s.loading);
+  const storedLoading = useChannelsStore((s) => s.loading);
   const setLoading = useChannelsStore((s) => s.setLoading);
-  const storeError = useChannelsStore((s) => s.error);
+  const storedStoreError = useChannelsStore((s) => s.error);
   const setStoreError = useChannelsStore((s) => s.setError);
-  const [eligible, setEligible] = useState<Contact[]>([]);
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [eligible, setEligible] = useState<Contact[]>(fixture?.eligible ?? []);
+  const [name, setName] = useState(fixture?.name ?? "");
+  const [selected, setSelected] = useState<Record<string, boolean>>(fixture?.selected ?? {});
+  const [busy, setBusy] = useState(fixture?.busy ?? false);
+  const [error, setError] = useState<string | null>(fixture?.error ?? null);
+  const [loaded, setLoaded] = useState(fixture?.loaded ?? false);
   const emptyEmitted = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const rows = fixture?.rows ?? storedRows;
+  const loading = fixture?.loading ?? storedLoading;
+  const storeError = fixture?.storeError ?? storedStoreError;
 
   const reload = useCallback(async () => {
+    if (fixture) {
+      setRows(fixture.rows);
+      setEligible(fixture.eligible);
+      setName(fixture.name);
+      setSelected(fixture.selected);
+      setBusy(fixture.busy);
+      setError(fixture.error);
+      setLoaded(fixture.loaded);
+      setLoading(fixture.loading);
+      setStoreError(fixture.storeError);
+      return;
+    }
     if (!ownerPubky) {
       setRows([]);
       setEligible([]);
@@ -78,7 +117,7 @@ export function ChannelsPage() {
       setLoaded(true);
       setLoading(false);
     }
-  }, [ownerPubky, setRows, setLoading, setStoreError]);
+  }, [ownerPubky, setRows, setLoading, setStoreError, fixture]);
 
   useEffect(() => {
     void (async () => {
@@ -95,11 +134,12 @@ export function ChannelsPage() {
   }, [loaded, rows.length]);
 
   useEffect(() => {
+    if (fixture) return;
     if (!ownerPubky) return;
     return subscribeGroupEvents((owner) => {
       if (owner === ownerPubky) void reload();
     });
-  }, [ownerPubky, reload]);
+  }, [ownerPubky, reload, fixture]);
 
   useEffect(() => {
     if (pathId) return;
@@ -114,6 +154,7 @@ export function ChannelsPage() {
     <div
       className="hc-master-detail"
       data-testid="channelsScreen"
+      data-surface="channels-page"
     >
       <aside className={detailOpen ? "hidden md:block" : undefined} aria-busy={loading || undefined}>
         <div className="mb-4 flex items-center justify-between">
@@ -150,7 +191,7 @@ export function ChannelsPage() {
         <EnableMessagingCta testId="channelsEnableMessaging" />
 
         {mode === "public" ? (
-          <PublicTopicsPanel selectedTag={selectedTag} />
+          <PublicTopicsPanel selectedTag={selectedTag} fixture={fixture?.publicTopics} />
         ) : (
           <>
             <form
@@ -308,9 +349,9 @@ export function ChannelsPage() {
       </aside>
       <section className={!detailOpen ? "hidden md:block" : undefined}>
         {mode === "public" ? (
-          <TagChannelView tag={selectedTag} />
+          <TagChannelView tag={selectedTag} fixture={fixture?.tagDetail} />
         ) : (
-          <ChannelView channelId={channelId} />
+          <ChannelView channelId={channelId} fixture={fixture?.channelDetail} initialShowMembers={fixture?.channelMembersOpen} />
         )}
       </section>
     </div>

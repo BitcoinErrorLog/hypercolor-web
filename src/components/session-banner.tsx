@@ -3,10 +3,11 @@
 import { Button } from "@/components/ui/button";
 import { retrySessionRestore } from "@/lib/session-retry";
 import { sessionStatusLabel } from "@/lib/session-ui";
-import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { useSessionStatusStore, type SessionUiStatus } from "@/stores/sessionStatusStore";
 
-export function SessionBanner() {
-  const status = useSessionStatusStore((s) => s.status);
+export function SessionBanner({ fixtureStatus }: { fixtureStatus?: SessionUiStatus } = {}) {
+  const storedStatus = useSessionStatusStore((s) => s.status);
+  const status = fixtureStatus ?? storedStatus;
 
   if (status.kind !== "session-offline") {
     return null;
@@ -17,6 +18,7 @@ export function SessionBanner() {
       role="status"
       className="border-b border-border bg-card px-6 py-3 text-sm"
       data-testid="sessionBanner"
+      data-surface="session-banner"
     >
       <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
         <p>{sessionStatusLabel(status)}</p>

@@ -10,7 +10,7 @@ export function PaymentNotice({
   mine: boolean;
 }) {
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="paymentNotice">
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="paymentNotice" data-surface="payment-notice">
       <div
         className={`hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
@@ -21,7 +21,7 @@ export function PaymentNotice({
         {notice.reference ? (
           <p className={mine ? "hc-on-brand-muted" : "text-muted-foreground"}>{notice.reference}</p>
         ) : null}
-        <p className={`text-xs ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
+        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {PAYMENT_NOTICE_LINE}
         </p>
       </div>

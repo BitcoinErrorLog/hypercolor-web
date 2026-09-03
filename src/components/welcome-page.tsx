@@ -40,7 +40,7 @@ export function WelcomePage({
 }) {
   const presentingAuth = linkLive || isExpired;
   return (
-    <article className="space-y-6">
+    <article className="space-y-6" data-surface="welcome-page">
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
       <p className="text-muted-foreground leading-7">{CUSTODY_LINE}</p>
       <p className="text-muted-foreground leading-7">

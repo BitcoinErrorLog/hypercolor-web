@@ -12,6 +12,7 @@ import { TagChannelReader } from "@/services/nexus/tagChannel";
 import type { NexusHotTag } from "@/services/nexus/NexusDiscoveryClient";
 import {
   createDiscoverTopicsLoader,
+  type DiscoverTopicsView,
   initialDiscoverTopicsView,
 } from "./discover-topics";
 
@@ -21,16 +22,19 @@ export function topicHref(tag: string): string {
 
 export function PublicTopicsPanel({
   selectedTag,
+  fixture,
 }: {
   selectedTag: string | null;
+  fixture?: DiscoverTopicsView;
 }) {
   const [loader] = useState(() =>
     createDiscoverTopicsLoader(() => TagChannelReader.loadDirectory()),
   );
-  const [tags, setTags] = useState<NexusHotTag[]>(initialDiscoverTopicsView().tags);
+  const initial = fixture ?? initialDiscoverTopicsView();
+  const [tags, setTags] = useState<NexusHotTag[]>(initial.tags);
   const [loading, setLoading] = useState(false);
-  const [loaded, setLoaded] = useState(initialDiscoverTopicsView().loaded);
-  const [error, setError] = useState<string | null>(initialDiscoverTopicsView().error);
+  const [loaded, setLoaded] = useState(initial.loaded);
+  const [error, setError] = useState<string | null>(initial.error);
 
   async function loadTopics(): Promise<void> {
     setLoading(true);
@@ -43,7 +47,7 @@ export function PublicTopicsPanel({
   }
 
   return (
-    <div data-testid="discoverScreen">
+    <div data-testid="discoverScreen" data-surface="discover-page">
       <p className="mt-2 text-sm text-muted-foreground" data-testid="discoverPrivacyCopy">
         {PUBLIC_GRAPH_WARNING}
       </p>

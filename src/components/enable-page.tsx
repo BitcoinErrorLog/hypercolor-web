@@ -62,7 +62,7 @@ export function EnablePage({
 
   if (enabled) {
     return (
-      <article className="flex hc-enable-panel flex-col items-center justify-center space-y-6 text-center">
+      <article className="flex hc-enable-panel flex-col items-center justify-center space-y-6 text-center" data-surface="enable-page">
         <div
           className="flex h-16 w-16 items-center justify-center rounded-full hc-brand-fill text-2xl"
           aria-hidden="true"
@@ -87,7 +87,7 @@ export function EnablePage({
   }
 
   return (
-    <article className="space-y-6">
+    <article className="space-y-6" data-surface="enable-page">
       <DetailBackLink href="/chats" listLabel="Chats" always />
       <h1 className="text-2xl font-semibold tracking-tight">Enable encrypted messaging</h1>
       <p className="text-muted-foreground leading-7">{SCOPE_SENTENCE}</p>

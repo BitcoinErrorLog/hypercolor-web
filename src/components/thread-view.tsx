@@ -79,7 +79,7 @@ export function ThreadView({
 
   if (!conversationId) {
     return (
-      <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground">
+      <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground" data-surface="thread-view">
         Select a conversation.
       </div>
     );
@@ -87,7 +87,7 @@ export function ThreadView({
 
   if (!participantPubky) {
     return (
-      <article className="space-y-3">
+      <article className="space-y-3" data-surface="thread-view">
         <DetailBackLink
           href={backHref}
           listLabel={backLabel}
@@ -108,7 +108,7 @@ export function ThreadView({
   const mayCompose = canComposeMessages(status);
 
   return (
-    <article className="flex h-full hc-detail-panel flex-col" data-testid="threadScreen">
+    <article className="flex h-full hc-detail-panel flex-col" data-testid="threadScreen" data-surface="thread-view">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div className="min-w-0 space-y-2">
           <DetailBackLink

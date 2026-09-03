@@ -293,7 +293,7 @@ test.describe("recovery-code gate attack matrix", () => {
     await armGate(page);
     await (await chatsNav(page)).click();
     await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
-    await expect(page.getByText("Leave without saving your recovery code?")).toBeVisible();
+    await expect(page.getByRole("alertdialog", { name: "Leave without saving your recovery code?" })).toBeVisible();
     await page.getByTestId("backupLeaveStay").click();
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
     await expect(page).toHaveURL(/\/settings/);

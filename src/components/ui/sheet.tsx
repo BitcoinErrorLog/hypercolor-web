@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { listFocusable, moveRovingIndex, trapTabKey } from "@/lib/focus-trap";
 import { scriptedMotionMs } from "@/lib/reduced-motion";
@@ -48,6 +48,7 @@ export function ModalSheet({
   children,
   testId,
   closeOnBackdrop = true,
+  surface,
 }: {
   open: boolean;
   onClose: () => void;
@@ -61,10 +62,12 @@ export function ModalSheet({
   children: ReactNode;
   testId?: string;
   closeOnBackdrop?: boolean;
+  surface?: string;
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
+  const [catalogPortal, setCatalogPortal] = useState<HTMLElement | null>(null);
   const labelId = useId();
   const dialogRole = role === "menu" ? "dialog" : role;
   const shown = open && (layer === "gate" || !gateOverlayMounted());
@@ -104,6 +107,14 @@ export function ModalSheet({
       target?.focus();
     };
   }, [shown, initialFocusRef, restoreFocus]);
+
+  useEffect(() => {
+    if (!__HYPERCOLOR_E2E_HARNESS__) return;
+    const timer = window.setTimeout(() => {
+      setCatalogPortal(document.querySelector<HTMLElement>("[data-vrt-portal-root]"));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   if (!shown) return null;
 
@@ -150,7 +161,9 @@ export function ModalSheet({
         aria-labelledby={labelledBy ?? titleId ?? (role === "menu" ? labelId : undefined)}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="sheet-enter w-full max-w-md space-y-4 rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
+        className="sheet-enter max-h-[calc(100dvh-2rem)] max-w-md space-y-4 overflow-y-auto rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
+        style={{ width: "100vw", maxWidth: "28rem" }}
+        data-surface={surface}
         onKeyDown={onKeyDown}
       >
         {role === "menu" && !labelledBy && !titleId ? (
@@ -170,5 +183,5 @@ export function ModalSheet({
   );
 
   if (typeof document === "undefined") return overlay;
-  return createPortal(overlay, document.body);
+  return createPortal(overlay, catalogPortal ?? document.body);
 }

@@ -7,6 +7,15 @@ theme colors, radii, font roles, icon sizes, motion durations, and easing values
 map to those variables; component code uses token classes and the shared utility
 classes in `globals.css`.
 
+## Wave 4b Round 2 Addendum
+
+Web mirrors the mobile polish addendum:
+
+- `--color-textSecondary` is `#9ca3af`, measured at 7.80:1 on canvas.
+- `--color-textMuted` is `#808692`, measured at 5.41:1 on canvas.
+- `--color-onBrandMuted` is `#efe6fd`, measured at 4.72:1 on brand and used for outgoing-bubble metadata.
+- `--color-onDanger` is `#0a0a0a`; destructive controls use it over `--color-dangerSurface` (`#ef4444`) and `--color-dangerSurfacePressed` (`#f87171`) for AA body contrast.
+
 ## Token Counts
 
 | Set | Count |
@@ -19,7 +28,7 @@ classes in `globals.css`.
 | Measure tokens | 3 |
 | Motion durations | 4 |
 | Easing tokens | 3 CSS-facing roles |
-| Text-on-surface pairs under test | 30 |
+| Text-on-surface pairs under test | 33 |
 
 ## Raw Value Mapping
 
@@ -41,13 +50,14 @@ classes in `globals.css`.
 | `#111`, `#111111` | `--color-surface` | map |
 | `#a78bfa` | `--color-brandSoft` | map |
 | `#f59e0b` | `--color-warning` | map |
-| `#ef4444` | `--color-dangerStrong` | map |
+| `#ef4444` | `--color-dangerStrong`, `--color-dangerSurface` | map by role |
 | `#e9d5ff` | `--color-brandHighlight` | map |
 | `#141414` | `--color-surface` | delete, one-off surface fill |
 | `#fbbf24` | `--color-warningStrong` | map |
 | `#1f1b2e` | `--color-surfaceBrand` | map |
 | `#4c1d95` | `--color-brandDeep` | map |
-| `#e5e7eb`, `#f87171`, `#d1d5db`, `#111827` | existing semantic text/surface tokens | delete, duplicate palette values |
+| `#e5e7eb`, `#d1d5db`, `#111827` | existing semantic text/surface tokens | delete, duplicate palette values |
+| `#f87171` | `--color-dangerSurfacePressed` | map |
 | `rgba(0,0,0,0.6)` | `--color-overlay` | map |
 | `rgba(0,0,0,0.25)` | `--color-overlaySoft` | map |
 | white alpha body text | `--color-textOnBrandMuted` | delete low-contrast variants |

@@ -14,32 +14,44 @@ import { sanitizeDisplayName } from "@/lib/display-name";
 import { shortPubky } from "@/lib/format";
 import { CHAT_ATTACHMENT_KIND } from "@/types/attachment";
 
-export function ChannelView({ channelId }: { channelId: string | null }) {
-  const channel = useChannel(channelId);
+export type ChannelViewFixture = ReturnType<typeof useChannel>;
+
+export function ChannelView({
+  channelId,
+  fixture,
+  initialShowMembers = false,
+}: {
+  channelId: string | null;
+  fixture?: ChannelViewFixture;
+  initialShowMembers?: boolean;
+}) {
+  const liveChannel = useChannel(fixture ? null : channelId);
+  const channel = fixture ?? liveChannel;
   const [addDraft, setAddDraft] = useState("");
-  const [showMembers, setShowMembers] = useState(false);
+  const [showMembers, setShowMembers] = useState(initialShowMembers);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const effectiveChannelId = channelId ?? fixture?.channel?.channelId ?? null;
 
   useEffect(() => {
-    if (!channelId) return;
+    if (!effectiveChannelId) return;
     headingRef.current?.focus();
-  }, [channelId, channel.channel, channel.loading]);
+  }, [effectiveChannelId, channel.channel, channel.loading]);
 
-  if (!channelId) {
+  if (!effectiveChannelId) {
     return (
-      <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground">
+      <div className="flex h-full min-h-64 items-center justify-center text-sm text-muted-foreground" data-surface="channel-view">
         Select a channel.
       </div>
     );
   }
 
   if (channel.loading) {
-    return <p className="text-sm text-muted-foreground">Loading channel…</p>;
+    return <p className="text-sm text-muted-foreground" data-surface="channel-view">Loading channel…</p>;
   }
 
   if (!channel.channel) {
     return (
-      <article className="space-y-3">
+      <article className="space-y-3" data-surface="channel-view">
         <DetailBackLink href="/channels" listLabel="Channels" />
         <DetailHeading headingRef={headingRef} className="text-lg font-semibold">
           Channel not found
@@ -58,7 +70,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
   );
 
   return (
-    <article className="flex h-full hc-detail-panel flex-col" data-testid="channelScreen">
+    <article className="flex h-full hc-detail-panel flex-col" data-testid="channelScreen" data-surface="channel-view">
       <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
         <div>
           <DetailBackLink href="/channels" listLabel="Channels" />
@@ -119,7 +131,7 @@ export function ChannelView({ channelId }: { channelId: string | null }) {
               className="space-y-2"
               onSubmit={(event) => {
                 event.preventDefault();
-                void channel.addMember(addDraft).then(() => setAddDraft(""));
+              void channel.addMember(addDraft).then(() => setAddDraft(""));
               }}
             >
               <p className="text-muted-foreground">

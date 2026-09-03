@@ -25,21 +25,31 @@ import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-export function SettingsPage() {
+export type SettingsPageFixture = {
+  recoveryCode?: string | null;
+  confirmedSaved?: boolean;
+  copied?: boolean;
+  backupError?: string | null;
+  restoreCode?: string;
+  restoreError?: string | null;
+  restoreNote?: string | null;
+};
+
+export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}) {
   const homeserver = useAuthStore((s) => s.homeserver);
   const pubky = useAuthStore((s) => s.pubky);
   const status = useSessionStatusStore((s) => s.status);
   const { signOut, busy: signingOut } = useSignOut();
   const [backupBusy, setBackupBusy] = useState(false);
   const [recoveryCode, setRecoveryCode] = useState<string | null>(
-    () => getBackupGate().recoveryCode,
+    () => fixture?.recoveryCode ?? getBackupGate().recoveryCode,
   );
-  const [confirmedSaved, setConfirmedSaved] = useState(() => getBackupGate().confirmedSaved);
-  const [copied, setCopied] = useState(false);
-  const [restoreCode, setRestoreCode] = useState("");
-  const [backupError, setBackupError] = useState<string | null>(null);
-  const [restoreError, setRestoreError] = useState<string | null>(null);
-  const [restoreNote, setRestoreNote] = useState<string | null>(null);
+  const [confirmedSaved, setConfirmedSaved] = useState(() => fixture?.confirmedSaved ?? getBackupGate().confirmedSaved);
+  const [copied, setCopied] = useState(fixture?.copied ?? false);
+  const [restoreCode, setRestoreCode] = useState(fixture?.restoreCode ?? "");
+  const [backupError, setBackupError] = useState<string | null>(fixture?.backupError ?? null);
+  const [restoreError, setRestoreError] = useState<string | null>(fixture?.restoreError ?? null);
+  const [restoreNote, setRestoreNote] = useState<string | null>(fixture?.restoreNote ?? null);
 
   useLeaveOnce(
     "settings-backup",
@@ -70,7 +80,7 @@ export function SettingsPage() {
   }, []);
 
   return (
-    <article className="space-y-8" data-testid="settingsScreen">
+    <article className="space-y-8" data-testid="settingsScreen" data-surface="settings-page">
       <DetailBackLink href="/profile" listLabel="Profile" always />
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
 

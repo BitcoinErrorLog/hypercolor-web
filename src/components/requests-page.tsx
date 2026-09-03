@@ -18,10 +18,19 @@ import type { Contact, MessageRequest } from "@/types";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 
-type RequestRow = {
+export type RequestRow = {
   request: MessageRequest;
   contact: Contact | null;
   invitations: HeldGroupInvitation[];
+};
+
+export type RequestsPageFixture = {
+  ownerPubky: string | null;
+  rows: RequestRow[];
+  loaded: boolean;
+  loadError: string | null;
+  error: string | null;
+  busyPeer: string | null;
 };
 
 const EXPLAIN =
@@ -67,19 +76,28 @@ function SkeletonRows() {
   );
 }
 
-export function RequestsPage() {
+export function RequestsPage({ fixture }: { fixture?: RequestsPageFixture } = {}) {
   const router = useGuardedRouter();
-  const ownerPubky = useAuthStore((s) => s.pubky);
+  const storedOwnerPubky = useAuthStore((s) => s.pubky);
+  const ownerPubky = fixture?.ownerPubky ?? storedOwnerPubky;
   const status = useSessionStatusStore((s) => s.status);
   const offline = status.kind === "session-offline";
-  const [rows, setRows] = useState<RequestRow[]>([]);
-  const [busyPeer, setBusyPeer] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [rows, setRows] = useState<RequestRow[]>(fixture?.rows ?? []);
+  const [busyPeer, setBusyPeer] = useState<string | null>(fixture?.busyPeer ?? null);
+  const [error, setError] = useState<string | null>(fixture?.error ?? null);
+  const [loadError, setLoadError] = useState<string | null>(fixture?.loadError ?? null);
+  const [loaded, setLoaded] = useState(fixture?.loaded ?? false);
   const emptyEmitted = useRef(false);
 
   const load = useCallback(async () => {
+    if (fixture) {
+      setRows(fixture.rows);
+      setBusyPeer(fixture.busyPeer);
+      setError(fixture.error);
+      setLoadError(fixture.loadError);
+      setLoaded(fixture.loaded);
+      return;
+    }
     if (!ownerPubky) {
       setRows([]);
       setLoaded(true);
@@ -107,7 +125,7 @@ export function RequestsPage() {
     } finally {
       setLoaded(true);
     }
-  }, [ownerPubky]);
+  }, [ownerPubky, fixture]);
 
   useEffect(() => {
     void (async () => {
@@ -124,7 +142,7 @@ export function RequestsPage() {
   }, [loaded, rows.length]);
 
   return (
-    <article className="space-y-6" data-testid="messageRequestsScreen" aria-busy={!loaded || undefined}>
+    <article className="space-y-6" data-testid="messageRequestsScreen" data-surface="requests-page" aria-busy={!loaded || undefined}>
       <DetailBackLink href="/chats" listLabel="Chats" always />
       <h1 className="text-2xl font-semibold tracking-tight">Message requests</h1>
       <p className="text-sm text-muted-foreground">{EXPLAIN}</p>
@@ -213,7 +231,7 @@ export function RequestsPage() {
                           .finally(() => setBusyPeer(null));
                       }}
                     >
-                      Accept
+                      {busy ? "Accepting…" : "Accept"}
                     </Button>
                     <Button
                       type="button"
@@ -240,7 +258,7 @@ export function RequestsPage() {
                           .finally(() => setBusyPeer(null));
                       }}
                     >
-                      Decline
+                      {busy ? "Declining…" : "Decline"}
                     </Button>
                   </div>
                 </li>

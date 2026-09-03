@@ -17,6 +17,7 @@
 /coverage
 /test-results/
 /playwright-report/
+/ux-vrt-report/
 /blob-report/
 /playwright/.cache/
 

@@ -17,7 +17,7 @@ export function AuthQr({
   if (!value || !dataUri) return null;
 
   return (
-    <div data-testid={testID} className="mx-auto w-fit hc-qr-frame">
+    <div data-testid={testID} className="mx-auto w-fit hc-qr-frame" data-surface="auth-qr">
       {/* data URI QR — next/image is not used for generated PNGs */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

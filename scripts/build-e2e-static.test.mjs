@@ -502,10 +502,16 @@ function exportVisible() {
   return false;
 }
 writeFileSync(readyFile, "1");
+let missingSamples = 0;
 while (!existsSync(stopFile)) {
   if (!exportVisible()) {
-    writeFileSync(missingFile, "missing");
-    break;
+    missingSamples += 1;
+    if (missingSamples >= 5) {
+      writeFileSync(missingFile, "missing");
+      break;
+    }
+  } else {
+    missingSamples = 0;
   }
 }
 `,

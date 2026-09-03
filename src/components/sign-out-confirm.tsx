@@ -11,12 +11,14 @@ export function SignOutConfirm({
   triggerTestId,
   busy,
   onSignOut,
+  initialOpen = false,
 }: {
   triggerTestId: string;
   busy: boolean;
   onSignOut: () => boolean | void;
+  initialOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initialOpen);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -52,6 +54,7 @@ export function SignOutConfirm({
         initialFocusRef={cancelRef}
         restoreFocus={restoreTrigger}
         testId="signOutDialog"
+        surface="sign-out-confirm"
       >
         <h2 id="sign-out-title" className="text-lg font-semibold">
           Sign out of Hypercolor?

@@ -8,7 +8,7 @@ import { productRouteFromPathname, type ProductRoute } from "@/services/vibeware
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
 import { useInboxStore } from "@/stores/inboxStore";
-import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { useSessionStatusStore, type SessionUiStatus } from "@/stores/sessionStatusStore";
 import { unreadLabel } from "@/lib/format";
 import { hasIdentity, sessionCopy } from "@/lib/session-ui";
 import { loadChannelRows, totalChannelUnread, useChannelsStore } from "@/stores/channelsStore";
@@ -80,14 +80,25 @@ function NavBadge({ count, testId }: { count: number; testId: string }) {
   );
 }
 
-export function SiteNav() {
-  const pathname = usePathname();
-  const status = useSessionStatusStore((s) => s.status);
+export function SiteNav({
+  fixturePathname,
+  fixtureStatus,
+  fixturePendingRequests,
+}: {
+  fixturePathname?: string;
+  fixtureStatus?: SessionUiStatus;
+  fixturePendingRequests?: number;
+} = {}) {
+  const routePathname = usePathname();
+  const pathname = fixturePathname ?? routePathname;
+  const storedStatus = useSessionStatusStore((s) => s.status);
+  const status = fixtureStatus ?? storedStatus;
   const pubky = useAuthStore((s) => s.pubky);
-  const pendingRequests = useInboxStore((s) => s.pendingRequests);
+  const storedPendingRequests = useInboxStore((s) => s.pendingRequests);
   const setPendingRequests = useInboxStore((s) => s.setPendingRequests);
   const channelRows = useChannelsStore((s) => s.rows);
   const setChannelRows = useChannelsStore((s) => s.setRows);
+  const pendingRequests = fixturePendingRequests ?? storedPendingRequests;
   const channelUnread = totalChannelUnread(channelRows);
   const showEnable = hasIdentity(status) && status.kind !== "enabled";
   const copy = sessionCopy(status);
@@ -141,7 +152,7 @@ export function SiteNav() {
     ) : null;
 
   return (
-    <nav aria-label="Primary" className="w-full">
+    <nav aria-label="Primary" className={fixturePathname ? "min-h-11 w-full" : "w-full"} data-surface="site-nav">
       <div className="hidden items-center gap-x-4 md:flex">
         {PRIMARY.map((link) => {
           const active = isActive(pathname, link.href, link.prefix);

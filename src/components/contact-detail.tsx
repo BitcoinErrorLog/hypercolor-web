@@ -15,24 +15,34 @@ import { rememberThreadOrigin } from "@/lib/list-detail-focus";
 import type { Contact } from "@/types";
 import type { LinkRecord } from "@/types/link";
 
+export type ContactDetailFixture = {
+  contact: Contact | null;
+  link: LinkRecord | null;
+  trust: TrustExplanation | null;
+  loading?: boolean;
+};
+
 export function ContactDetail({
   ownerPubky,
   pubky,
+  fixture,
 }: {
   ownerPubky: string | null;
   pubky: string;
+  fixture?: ContactDetailFixture;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
-  const [contact, setContact] = useState<Contact | null>(null);
-  const [link, setLink] = useState<LinkRecord | null>(null);
-  const [trust, setTrust] = useState<TrustExplanation | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [contact, setContact] = useState<Contact | null>(fixture?.contact ?? null);
+  const [link, setLink] = useState<LinkRecord | null>(fixture?.link ?? null);
+  const [trust, setTrust] = useState<TrustExplanation | null>(fixture?.trust ?? null);
+  const [loading, setLoading] = useState(fixture?.loading ?? true);
 
   useEffect(() => {
     headingRef.current?.focus();
   }, [pubky]);
 
   useEffect(() => {
+    if (fixture) return;
     let cancelled = false;
     void (async () => {
       if (!ownerPubky) {
@@ -53,23 +63,28 @@ export function ContactDetail({
     return () => {
       cancelled = true;
     };
-  }, [ownerPubky, pubky]);
+  }, [ownerPubky, pubky, fixture]);
 
-  if (loading) {
+  const visibleContact = fixture?.contact ?? contact;
+  const visibleLink = fixture?.link ?? link;
+  const visibleTrust = fixture?.trust ?? trust;
+  const visibleLoading = fixture?.loading ?? loading;
+
+  if (visibleLoading) {
     return (
-      <p className="text-sm text-muted-foreground" aria-busy="true">
+      <p className="text-sm text-muted-foreground" aria-busy="true" data-surface="contact-detail">
         Loading contact…
       </p>
     );
   }
 
   return (
-    <article className="space-y-6" data-testid="contactDetail">
+    <article className="space-y-6" data-testid="contactDetail" data-surface="contact-detail">
       <DetailBackLink href="/contacts" listLabel="Contacts" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
         <DetailHeading headingRef={headingRef} className="text-xl font-semibold">
-          {contact?.displayName ? sanitizeDisplayName(contact.displayName) : (
+          {visibleContact?.displayName ? sanitizeDisplayName(visibleContact.displayName) : (
             <TruncatedPubky pubky={pubky} />
           )}
         </DetailHeading>
@@ -91,12 +106,12 @@ export function ContactDetail({
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Relationship</h2>
         <div className="flex flex-wrap gap-2">
-          {(contact ? relationshipBadges(contact) : []).map((badge) => (
+          {(visibleContact ? relationshipBadges(visibleContact) : []).map((badge) => (
             <span key={badge} className="rounded-full bg-secondary px-2 py-0.5 text-xs">
               {badge}
             </span>
           ))}
-          {!contact ? (
+          {!visibleContact ? (
             <span className="text-sm text-muted-foreground">Not in your contacts yet.</span>
           ) : null}
         </div>
@@ -105,8 +120,8 @@ export function ContactDetail({
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Encrypted Link</h2>
         <p className="text-sm text-muted-foreground">
-          {link
-            ? `${link.status}${link.role ? ` · ${link.role}` : ""}`
+          {visibleLink
+            ? `${visibleLink.status}${visibleLink.role ? ` · ${visibleLink.role}` : ""}`
             : "No Encrypted Link on this device yet. Sending a DM starts the handshake."}
         </p>
       </section>
@@ -114,12 +129,12 @@ export function ContactDetail({
       <section className="space-y-2">
         <h2 className="text-sm font-medium">Trust</h2>
         <p className="text-sm text-muted-foreground">
-          Score {trust ? trust.score.toFixed(3) : "0"} — used only for sorting, never to block
+          Score {visibleTrust ? visibleTrust.score.toFixed(3) : "0"} — used only for sorting, never to block
           delivery.
         </p>
-        {trust && trust.reasons.length > 0 ? (
+        {visibleTrust && visibleTrust.reasons.length > 0 ? (
           <ul className="text-sm text-muted-foreground">
-            {trust.reasons.map((reason) => (
+            {visibleTrust.reasons.map((reason) => (
               <li key={reason.code}>
                 {reason.label} ({reason.contribution})
               </li>

@@ -65,7 +65,7 @@ export function AttachmentBubble({
   }
 
   return (
-    <div className="space-y-2 rounded-md border border-border bg-background/40 p-3 text-sm">
+    <div className="space-y-2 rounded-md border border-border bg-background/40 p-3 text-sm" data-surface="attachment-bubble">
       <p className="font-medium">Attachment</p>
       <p className="text-muted-foreground">
         {record.contentType} · {record.size} bytes

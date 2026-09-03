@@ -39,7 +39,7 @@ export function DmMessageBubble({
 }) {
   const failed = mine && isFailedDelivery(message.deliveryState);
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage">
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage" data-surface="message-bubble">
       <div
         className={`hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
@@ -102,7 +102,7 @@ export function GroupMessageBubble({
   const failed = mine && isFailedDelivery(message.deliveryState);
 
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage">
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage" data-surface="message-bubble">
       <div
         className={`hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"

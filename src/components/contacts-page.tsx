@@ -37,19 +37,41 @@ import { parsePubky } from "@/utils/pubkyId";
 
 const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
 
-export function ContactsPage() {
+export type ContactsPageFixture = {
+  ownerPubky: string | null;
+  selected: string | null;
+  contacts: Contact[];
+  draft: string;
+  busy: boolean;
+  searchBusy: boolean;
+  error: string | null;
+  hits: UsernameSearchHit[] | null;
+};
+
+export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}) {
   const router = useGuardedRouter();
-  const selected = usePathSegment("contacts");
-  const ownerPubky = useAuthStore((s) => s.pubky);
+  const routeSelected = usePathSegment("contacts");
+  const selected = fixture?.selected ?? routeSelected;
+  const storedOwnerPubky = useAuthStore((s) => s.pubky);
+  const ownerPubky = fixture?.ownerPubky ?? storedOwnerPubky;
   const upsertContact = useContactStore((s) => s.upsertContact);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [searchBusy, setSearchBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hits, setHits] = useState<UsernameSearchHit[] | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>(fixture?.contacts ?? []);
+  const [draft, setDraft] = useState(fixture?.draft ?? "");
+  const [busy, setBusy] = useState(fixture?.busy ?? false);
+  const [searchBusy, setSearchBusy] = useState(fixture?.searchBusy ?? false);
+  const [error, setError] = useState<string | null>(fixture?.error ?? null);
+  const [hits, setHits] = useState<UsernameSearchHit[] | null>(fixture?.hits ?? null);
 
   const reload = useCallback(async () => {
+    if (fixture) {
+      setContacts(fixture.contacts);
+      setDraft(fixture.draft);
+      setBusy(fixture.busy);
+      setSearchBusy(fixture.searchBusy);
+      setError(fixture.error);
+      setHits(fixture.hits);
+      return;
+    }
     if (!ownerPubky) {
       setContacts([]);
       return;
@@ -57,9 +79,10 @@ export function ContactsPage() {
     const rows = await StorageService.getAllContacts(ownerPubky);
     rows.forEach(upsertContact);
     setContacts(rows);
-  }, [ownerPubky, upsertContact]);
+  }, [ownerPubky, upsertContact, fixture]);
 
   useEffect(() => {
+    if (fixture) return;
     void (async () => {
       await reload();
       if (ownerPubky && isFollowsImportEnabled(ownerPubky)) {
@@ -67,7 +90,7 @@ export function ContactsPage() {
         if (result.ok && !result.skipped) await reload();
       }
     })();
-  }, [reload, ownerPubky]);
+  }, [reload, ownerPubky, fixture]);
 
   const roster = rosterContacts(contacts);
   const suggestions = followSuggestionContacts(contacts);
@@ -115,6 +138,7 @@ export function ContactsPage() {
     <div
       className="hc-master-detail"
       data-testid="contactsScreen"
+      data-surface="contacts-page"
     >
       <aside className={selected ? "hidden md:block" : undefined}>
         <div className="mb-4 flex items-center justify-between gap-3">

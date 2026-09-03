@@ -48,6 +48,7 @@ export function Composer({
   onAttach,
   testIdPrefix,
   liveStatus,
+  initialMenuOpen = false,
 }: {
   draft: string;
   sending: boolean;
@@ -58,11 +59,12 @@ export function Composer({
   onAttach?: (file: File) => void;
   testIdPrefix: string;
   liveStatus?: string | null;
+  initialMenuOpen?: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [accept, setAccept] = useState<string | undefined>(undefined);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(initialMenuOpen);
   const blocked = Boolean(disabled) || sending;
   const menuId = `${testIdPrefix}AttachMenu`;
 
@@ -80,6 +82,7 @@ export function Composer({
   return (
     <form
       className="flex flex-wrap items-end gap-2 border-t border-border pt-3"
+      data-surface="composer"
       aria-busy={sending || undefined}
       onSubmit={(event) => {
         event.preventDefault();
@@ -122,6 +125,7 @@ export function Composer({
             role="menu"
             labelledBy={`${testIdPrefix}AttachMenuLabel`}
             testId={menuId}
+            surface="attachment-menu"
           >
             <p id={`${testIdPrefix}AttachMenuLabel`} className="text-sm font-medium">
               Attach

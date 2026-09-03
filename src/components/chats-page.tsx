@@ -71,7 +71,7 @@ export function ChatsPage({
   }, [conversationId]);
 
   return (
-    <div className="hc-master-detail" data-testid="chatsScreen">
+    <div className="hc-master-detail" data-testid="chatsScreen" data-surface="chats-page">
       <aside className={conversationId ? "hidden md:block" : undefined} aria-busy={inboxLoading || undefined}>
         <div className="mb-4 flex items-center justify-between gap-3">
           <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight">

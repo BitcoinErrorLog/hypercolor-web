@@ -1,9 +1,15 @@
 import { Suspense } from "react";
-import { UxCatalog } from "@/components/ux-catalog/ux-catalog";
-import { requireE2eHarness } from "@/lib/require-e2e-harness";
+import dynamic from "next/dynamic";
+import { notFound } from "next/navigation";
+
+const UxCatalog = dynamic(() =>
+  __HYPERCOLOR_E2E_HARNESS__
+    ? import("@/components/ux-catalog/ux-catalog").then((mod) => mod.UxCatalog)
+    : Promise.resolve(() => null),
+);
 
 export default async function UxCatalogPage() {
-  requireE2eHarness();
+  if (!__HYPERCOLOR_E2E_HARNESS__) notFound();
   return (
     <Suspense fallback={<p>Loading UX catalog…</p>}>
       <UxCatalog />

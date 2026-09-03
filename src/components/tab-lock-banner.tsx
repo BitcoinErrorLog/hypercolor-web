@@ -9,7 +9,7 @@ import {
   type TabLock,
 } from "@/services/tabLock";
 
-export function TabLockBanner() {
+export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
   const [lock, setLock] = useState<TabLock | null>(null);
 
   useEffect(() => {
@@ -21,13 +21,14 @@ export function TabLockBanner() {
     return () => unsubscribe();
   }, []);
 
-  const current = lock ?? getTabLock();
+  const current = fixtureLock ?? lock ?? getTabLock();
   if (current.mode === "writer") return null;
 
   return (
     <div
       role="status"
       className="border-b border-border bg-card px-6 py-3 text-sm text-card-foreground"
+      data-surface="tab-lock-banner"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
         <p>Hypercolor is open in another tab. Only one tab can send.</p>
