@@ -204,8 +204,20 @@ function recoverOrphanedPublish(root) {
   const live = path.join(root, OUT_E2E_NAME);
   if (existsSync(live) || !existsSync(root)) return;
   const olds = readdirSync(root).filter((name) => name.startsWith(`${OUT_E2E_NAME}.old-`));
-  if (olds.length !== 1) return;
-  renameSync(path.join(root, olds[0]), live);
+  if (olds.length === 0) return;
+  // Newest mtime wins when multiple crashed publishes remain; drop the rest
+  // so a later sweep cannot leave the project with no export.
+  olds.sort((a, b) => {
+    const am = statSync(path.join(root, a)).mtimeMs;
+    const bm = statSync(path.join(root, b)).mtimeMs;
+    if (bm !== am) return bm - am;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  const winner = olds[0];
+  for (const name of olds.slice(1)) {
+    rmSync(path.join(root, name), { recursive: true, force: true });
+  }
+  renameSync(path.join(root, winner), live);
 }
 
 /**

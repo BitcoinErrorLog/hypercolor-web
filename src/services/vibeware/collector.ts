@@ -31,8 +31,9 @@ function ingestToken(): string | undefined {
 
 function attachHarnessSink(): void {
   if (typeof window === "undefined") return;
-  if (process.env.NEXT_PUBLIC_E2E_HARNESS !== "1") return;
-  window.__vibewareSink = memorySink;
+  if (__HYPERCOLOR_E2E_HARNESS__) {
+    window.__vibewareSink = memorySink;
+  }
 }
 
 function pushMemorySink(event: EvidenceEvent): void {

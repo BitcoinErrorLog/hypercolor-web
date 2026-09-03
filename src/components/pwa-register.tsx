@@ -9,10 +9,67 @@ type BeforeInstallPromptLike = Event & {
   userChoice?: Promise<{ outcome?: string }>;
 };
 
+
+/** Fallback if `controllerchange` never fires (waiting worker stuck / activate rejects). */
+export const CONTROLLER_CHANGE_RELOAD_TIMEOUT_MS = 3_000;
+
+type ArmReloadOptions = {
+  serviceWorker: ServiceWorkerContainer;
+  waiting: ServiceWorker | null;
+  reload?: () => void;
+  timeoutMs?: number;
+  postMessage?: (worker: ServiceWorker) => void;
+};
+
+/**
+ * Arm a one-shot reload on controllerchange, with a bounded timeout fallback.
+ * Re-arming cancels any prior listener/timer so clicks do not accumulate.
+ * Returns a cancel function.
+ */
+export function armControllerChangeReload(options: ArmReloadOptions): () => void {
+  const {
+    serviceWorker,
+    waiting,
+    reload = () => {
+      window.location.reload();
+    },
+    timeoutMs = CONTROLLER_CHANGE_RELOAD_TIMEOUT_MS,
+    postMessage = (worker) => {
+      worker.postMessage({ type: "hypercolor-skip-waiting" });
+    },
+  } = options;
+
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    serviceWorker.removeEventListener("controllerchange", onChange);
+    clearTimeout(timer);
+    reload();
+  };
+  const onChange = () => {
+    finish();
+  };
+  serviceWorker.addEventListener("controllerchange", onChange);
+  const timer = setTimeout(finish, timeoutMs);
+  if (waiting) {
+    postMessage(waiting);
+  } else {
+    finish();
+  }
+  return () => {
+    if (done) return;
+    done = true;
+    serviceWorker.removeEventListener("controllerchange", onChange);
+    clearTimeout(timer);
+  };
+}
+
 export function PwaRegister() {
   const pathname = usePathname();
   const emitted = useRef(false);
   const waitingRef = useRef<ServiceWorker | null>(null);
+  const cancelArmRef = useRef<(() => void) | null>(null);
   const [updateReady, setUpdateReady] = useState(false);
 
   useEffect(() => {
@@ -77,19 +134,11 @@ export function PwaRegister() {
           type="button"
           size="sm"
           onClick={() => {
-            const waiting = waitingRef.current;
-            let reloaded = false;
-            const reload = () => {
-              if (reloaded) return;
-              reloaded = true;
-              window.location.reload();
-            };
-            navigator.serviceWorker.addEventListener("controllerchange", reload, { once: true });
-            if (waiting) {
-              waiting.postMessage({ type: "hypercolor-skip-waiting" });
-            } else {
-              reload();
-            }
+            cancelArmRef.current?.();
+            cancelArmRef.current = armControllerChangeReload({
+              serviceWorker: navigator.serviceWorker,
+              waiting: waitingRef.current,
+            });
           }}
         >
           Reload

@@ -9,6 +9,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -763,5 +764,29 @@ setInterval(() => {}, 1000);
     expect(existsSync(crashedTmp)).toBe(false);
     expect(oldPublishDirs(root)).toEqual([]);
     expect(tmpPublishDirs(root)).toEqual([]);
+  });
+
+  it("restores the newest out-e2e.old-* when several orphans exist and live is missing", async () => {
+    const root = tempDir();
+    initTrackedRepo(root);
+    const older = path.join(root, "out-e2e.old-10001");
+    const newer = path.join(root, "out-e2e.old-10002");
+    mkdirSync(older);
+    writeFileSync(path.join(older, "index.html"), "OLDER");
+    const past = new Date(Date.now() - 60_000);
+    utimesSync(older, past, past);
+    mkdirSync(newer);
+    writeFileSync(path.join(newer, "index.html"), "NEWER");
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: () => ({ status: 1 }),
+    });
+    expect(result.status).toBe(1);
+    expect(existsSync(path.join(root, "out-e2e", "index.html"))).toBe(true);
+    expect(readFileSync(path.join(root, "out-e2e", "index.html"), "utf8")).toBe("NEWER");
+    expect(existsSync(older)).toBe(false);
+    expect(existsSync(newer)).toBe(false);
+    expect(oldPublishDirs(root)).toEqual([]);
   });
 });

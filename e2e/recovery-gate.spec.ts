@@ -734,16 +734,19 @@ test.describe("recovery-code gate attack matrix", () => {
     }
   });
 
-  test("pageshow persisted while gated keeps the recovery code in memory", async ({ page }) => {
-    // A gated Settings document arms `beforeunload`, which Chromium treats as a
-    // BFCache exclusion even with `--enable-features=BackForwardCache`. The
-    // closest deterministic equivalent is a persisted `pageshow` on the live
-    // gated document: module memory must still hold the code and it must still
-    // not have entered Web Storage.
+  test("pagehide while gated keeps the recovery code in memory", async ({ page }) => {
+    // Playwright launches Chromium with --disable-back-forward-cache, and the
+    // automation delegate still reports BackForwardCacheDisabledForDelegate
+    // even when that flag is cleared — a real BFCache traverse is unreachable
+    // under this harness. beforeunload is not the excluding reason here.
+    // Dispatch the pagehide/pageshow pair that BFCache entry would fire: the
+    // product pagehide listener closes SQLite (src/db/index.ts; covered by the
+    // unit test), and module memory must still hold the recovery code.
     await gotoSettings(page);
     await showRecovery(page);
     await expect(page.getByTestId("recoveryCode")).toBeVisible();
     await page.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
       window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
     });
     await expect(page.getByTestId("recoveryCode")).toBeVisible();

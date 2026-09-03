@@ -1,18 +1,76 @@
 /**
  * Window-hook names registered only when the e2e harness is compiled in.
- * Enumerated from source so static-preview and tests share one list.
+ * Derived by scanning `src/` + `app/` for assignments so static-preview and
+ * tests share one list that cannot silently miss a new hook file.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const HARNESS_HOOK_SOURCE_FILES = [
-  "src/components/backup-leave-guard.tsx",
-  "src/components/settings-page.tsx",
-];
-
-const HOOK_RE = /__hypercolor[A-Za-z0-9]+/g;
+const HOOK_ASSIGN_RE =
+  /(?:window\.)?__(?:hypercolor[A-Za-z0-9]+|vibewareSink)\s*=/g;
+const HOOK_NAME_RE = /__(?:hypercolor[A-Za-z0-9]+|vibewareSink)/g;
 const EXCLUDE = new Set(["__hypercolorLiveSession"]);
+const SOURCE_ROOTS = ["src", "app"];
+const SOURCE_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
+
+/**
+ * @param {string} dir
+ * @param {(full: string) => void} visit
+ */
+function walkSourceFiles(dir, visit) {
+  if (!existsSync(dir)) return;
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name.startsWith(".") || name === "node_modules") continue;
+    const full = path.join(dir, name);
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      walkSourceFiles(full, visit);
+    } else if (SOURCE_EXTS.has(path.extname(name))) {
+      visit(full);
+    }
+  }
+}
+
+/**
+ * Source files that assign a harness window hook.
+ * @param {string} repoRoot
+ * @returns {string[]}
+ */
+export function listHarnessHookSourceFiles(repoRoot) {
+  const found = new Set();
+  for (const root of SOURCE_ROOTS) {
+    walkSourceFiles(path.join(repoRoot, root), (full) => {
+      let text;
+      try {
+        text = readFileSync(full, "utf8");
+      } catch {
+        return;
+      }
+      HOOK_ASSIGN_RE.lastIndex = 0;
+      if (HOOK_ASSIGN_RE.test(text)) {
+        found.add(path.relative(repoRoot, full).split(path.sep).join("/"));
+      }
+    });
+  }
+  return [...found].sort();
+}
+
+/** @deprecated Prefer listHarnessHookSourceFiles(repoRoot); kept as a snapshot for type consumers. */
+export const HARNESS_HOOK_SOURCE_FILES = listHarnessHookSourceFiles(
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."),
+);
 
 /**
  * @param {string} repoRoot
@@ -20,10 +78,10 @@ const EXCLUDE = new Set(["__hypercolorLiveSession"]);
  */
 export function listE2eHarnessHookSymbols(repoRoot) {
   const found = new Set();
-  for (const rel of HARNESS_HOOK_SOURCE_FILES) {
+  for (const rel of listHarnessHookSourceFiles(repoRoot)) {
     const file = path.join(repoRoot, rel);
     const text = readFileSync(file, "utf8");
-    for (const match of text.matchAll(HOOK_RE)) {
+    for (const match of text.matchAll(HOOK_NAME_RE)) {
       if (!EXCLUDE.has(match[0])) found.add(match[0]);
     }
   }
@@ -86,7 +144,7 @@ export function findE2eHarnessHookSymbols(exportRoot, symbols) {
 /**
  * A hook registration is live when the compiled chunk assigns the window
  * property. An inert leftover is the identifier appearing only as a string
- * compare / comment, never as `.__hypercolorFoo=`.
+ * compare / comment, never as `.__hypercolorFoo=` / `__vibewareSink=`.
  *
  * @param {string} source
  * @param {string} symbol
@@ -94,8 +152,9 @@ export function findE2eHarnessHookSymbols(exportRoot, symbols) {
  */
 export function classifyHarnessHookInSource(source, symbol) {
   if (!source.includes(symbol)) return "absent";
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const live = new RegExp(
-    String.raw`(?:\.|\[)(?:${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|["']${symbol.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["'])\s*=`,
+    String.raw`(?:\.|\[)?(?:${escaped}|["']${escaped}["'])\s*=`,
   );
   if (live.test(source) || source.includes(`${symbol}=`)) return "live";
   return "inert";
@@ -119,7 +178,7 @@ function main(argv) {
         file: hit.file,
         symbol: hit.symbol,
         kind: classifyHarnessHookInSource(source, hit.symbol),
-        gated: /NEXT_PUBLIC_E2E_HARNESS/.test(source),
+        gated: /NEXT_PUBLIC_E2E_HARNESS|__HYPERCOLOR_E2E_HARNESS__/.test(source),
       };
     });
     process.stdout.write(JSON.stringify({ symbols, hits }));

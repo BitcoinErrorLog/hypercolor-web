@@ -11,6 +11,19 @@ import { useContactStore } from "@/stores/contactStore";
 import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
+function safeErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function runClear(label: string, clear: () => void): void {
+  try {
+    clear();
+  } catch (err) {
+    // Storage can throw SecurityError in private mode / policy blocks.
+    console.warn(`[useSignOut] ${label} failed:`, safeErrorMessage(err));
+  }
+}
+
 function evictServiceWorkerCache() {
   if (typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return;
   navigator.serviceWorker.controller.postMessage({ type: "hypercolor-sign-out" });
@@ -25,9 +38,11 @@ export function useSignOut() {
     setBusy(true);
     try {
       await LinkService.clearSession();
-      clearListDetailFocus();
-      clearCohortKey();
-      clearBackupGate();
+      // Each clear is fault-isolated so a storage throw cannot skip store
+      // resets, SW eviction, or navigation after the session wipe.
+      runClear("clearListDetailFocus", clearListDetailFocus);
+      runClear("clearCohortKey", clearCohortKey);
+      runClear("clearBackupGate", clearBackupGate);
       useInboxStore.getState().reset();
       useChannelsStore.getState().reset();
       useContactStore.setState({ contacts: {}, meshPeers: {} });

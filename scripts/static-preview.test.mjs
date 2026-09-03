@@ -16,6 +16,7 @@ import {
   classifyHarnessHookInSource,
   findE2eHarnessHookSymbols,
   listE2eHarnessHookSymbols,
+  listHarnessHookSourceFiles,
 } from "./e2e-harness-symbols.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -209,17 +210,41 @@ describe("static preview rewrites", () => {
     }
   });
 
+  it("derives harness hook source files by scanning src/ and app/", () => {
+    const files = listHarnessHookSourceFiles(REPO_ROOT);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files.every((f) => f.startsWith("src/") || f.startsWith("app/"))).toBe(true);
+    const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+    expect(symbols).toContain("__vibewareSink");
+  });
+
   it("production out/ has no live __hypercolor hook registration", () => {
     const out = path.join(REPO_ROOT, "out");
-    if (!existsSync(out) || existsSync(path.join(out, E2E_HARNESS_MARKER))) return;
+    if (!existsSync(out)) {
+      if (process.env.CI) {
+        throw new Error(
+          "production out/ is missing in CI — run npm run build before this assertion",
+        );
+      }
+      return;
+    }
+    if (existsSync(path.join(out, E2E_HARNESS_MARKER))) {
+      throw new Error("production out/ still carries the e2e-harness marker");
+    }
     const symbols = listE2eHarnessHookSymbols(REPO_ROOT);
+    expect(symbols.length).toBeGreaterThan(0);
     const hits = findE2eHarnessHookSymbols(out, symbols);
+    const live = [];
     for (const hit of hits) {
       const source = readFileSync(hit.file, "utf8");
       const kind = classifyHarnessHookInSource(source, hit.symbol);
       if (kind === "live") {
-        expect(source, `${hit.symbol} in ${hit.file}`).toMatch(/NEXT_PUBLIC_E2E_HARNESS/);
+        live.push(`${hit.symbol} in ${hit.file}`);
+        expect(source, `${hit.symbol} in ${hit.file}`).toMatch(
+          /NEXT_PUBLIC_E2E_HARNESS|__HYPERCOLOR_E2E_HARNESS__/,
+        );
       }
     }
+    expect(live, live.join(", ")).toEqual([]);
   });
 });

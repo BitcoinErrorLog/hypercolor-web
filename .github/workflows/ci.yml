@@ -78,3 +78,32 @@ jobs:
         env:
           HYPERCOLOR_REPO: vendor/hypercolor-wire-pin
         run: bash scripts/check-wire-drift.sh
+
+  production-hooks:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout hypercolor-web
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Production build
+        run: npm run build
+
+      - name: Assert production out/ has zero live harness hooks
+        run: npx playwright test e2e/production-hooks.spec.ts
+
+      - name: Static e2e suite
+        run: npm run test:e2e:static

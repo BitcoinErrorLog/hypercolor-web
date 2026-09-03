@@ -14,9 +14,11 @@ import {
   takeListRow,
 } from "@/lib/list-detail-focus";
 import { COHORT_STORAGE_KEY, clearCohortKey } from "@/services/vibeware/cohort";
+import { useInboxStore } from "@/stores/inboxStore";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 const clearSession = vi.fn(async () => undefined);
+const requestPush = vi.fn(() => true);
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/settings",
@@ -31,6 +33,18 @@ vi.mock("@/services/link/LinkService", () => ({
   LinkService: {
     clearSession: () => clearSession(),
   },
+}));
+
+vi.mock("@/hooks/useBlockingGate", () => ({
+  useBlockingGate: () => ({
+    requestPush,
+    requestRun: (run: () => void) => {
+      run();
+      return true;
+    },
+    requestReplace: () => true,
+    requestBack: () => true,
+  }),
 }));
 
 function Probe() {
@@ -57,14 +71,17 @@ describe("useSignOut local cleanup", () => {
     document.body.append(host);
     root = createRoot(host);
     clearSession.mockClear();
+    requestPush.mockClear();
     sessionStorage.clear();
     localStorage.clear();
     clearListDetailFocus();
     clearCohortKey();
     setBackupGate({ recoveryCode: null, confirmedSaved: false });
+    useInboxStore.getState().reset();
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     act(() => {
       root.unmount();
     });
@@ -96,5 +113,35 @@ describe("useSignOut local cleanup", () => {
     expect(sessionStorage.getItem("hypercolor.list-detail-origin")).toBeNull();
     expect(localStorage.getItem(COHORT_STORAGE_KEY)).toBeNull();
     expect(getBackupGate().recoveryCode).toBeNull();
+    expect(requestPush).toHaveBeenCalledWith("/");
+  });
+
+  it("still resets stores and navigates when a storage clear throws", async () => {
+    rememberThreadOrigin({ kind: "contact", pubky: OWNER });
+    localStorage.setItem(COHORT_STORAGE_KEY, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    setBackupGate({ recoveryCode: "zzzz9999yyyy", confirmedSaved: true });
+    useInboxStore.setState({
+      rows: [{ id: "row-1" } as never],
+      pendingRequests: 2,
+      loading: false,
+      error: null,
+    });
+
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new DOMException("The operation is insecure.", "SecurityError");
+    });
+
+    await render(<Probe />);
+    await act(async () => {
+      host.querySelector("[data-testid=signOutProbe]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(clearSession).toHaveBeenCalled();
+    });
+    expect(useInboxStore.getState().rows).toEqual([]);
+    expect(useInboxStore.getState().pendingRequests).toBe(0);
+    expect(requestPush).toHaveBeenCalledWith("/");
   });
 });

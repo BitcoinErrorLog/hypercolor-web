@@ -15,14 +15,24 @@ type ScanHit = {
 };
 
 test("production out/ contains no live __hypercolor hook registration", () => {
-  test.skip(!existsSync(OUT), "run npm run build to produce production out/");
+  if (!existsSync(OUT)) {
+    if (process.env.CI) {
+      throw new Error(
+        "production out/ is missing in CI — run npm run build before this assertion",
+      );
+    }
+    test.skip(true, "run npm run build to produce production out/");
+  }
   expect(existsSync(join(OUT, ".e2e-harness"))).toBe(false);
   const report = JSON.parse(
     execFileSync(process.execPath, [SCANNER, "scan", OUT], { encoding: "utf8" }),
   ) as { symbols: string[]; hits: ScanHit[] };
   expect(report.symbols.length).toBeGreaterThan(0);
-  for (const hit of report.hits) {
-    if (hit.kind === "absent" || hit.kind === "inert") continue;
+  const live = report.hits.filter((hit) => hit.kind === "live");
+  // Positive invariant: production export ships zero live harness hooks.
+  expect(live, live.map((h) => `${h.symbol} in ${h.file}`).join(", ")).toEqual([]);
+  // Secondary diagnostic: if anything were live, it must still be env-gated.
+  for (const hit of live) {
     expect(hit.gated, `${hit.symbol} assigned in ${hit.file} without a harness env gate`).toBe(
       true,
     );
