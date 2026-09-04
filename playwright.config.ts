@@ -45,11 +45,12 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /ux-catalog\.spec\.ts/,
+      testIgnore: [/ux-catalog\.spec\.ts/, /\._/],
     },
     {
       name: "chromium-mobile-pixel",
       testMatch: /ux-catalog\.spec\.ts/,
+      testIgnore: /\._/,
       use: {
         viewport: { width: 390, height: 844 },
       },
@@ -57,6 +58,7 @@ export default defineConfig({
     {
       name: "chromium-desktop-pixel",
       testMatch: /ux-catalog\.spec\.ts/,
+      testIgnore: /\._/,
       use: {
         viewport: { width: 1280, height: 800 },
       },

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
-import { compareImages, findNearDuplicatePngs } from "./ux-vrt-integrity.mjs";
+import { compareImages, findNearDuplicatePngs, listPngs } from "./ux-vrt-integrity.mjs";
 
 let tempDirs = [];
 
@@ -46,4 +46,15 @@ describe("ux VRT integrity gate", () => {
     expect(result.sizeMismatch).toBe(true);
     expect(result.identity).toBeCloseTo(0.8, 4);
   });
+
+  it("keeps committed catalog baselines free of unwaived near-duplicates", async () => {
+    const root = new URL("..", import.meta.url).pathname;
+    const projects = ["chromium-mobile-pixel", "chromium-desktop-pixel"];
+    const failures = (
+      await Promise.all(projects.map((project) =>
+        findNearDuplicatePngs(listPngs(join(root, "e2e/vrt-baselines", project, "ux-catalog.spec.ts"))),
+      ))
+    ).flat();
+    expect(failures).toEqual([]);
+  }, 240_000);
 });

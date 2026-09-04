@@ -22,7 +22,43 @@ import {
 } from "@/lib/list-detail-focus";
 import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
 import type { LinkMessage } from "@/types/link";
+import {
+  decodePaymentEnvelope,
+  isProposalExpired,
+  PAYKIT_PAYMENT_ACCEPTANCE_KIND,
+  PAYKIT_PAYMENT_CANCELLATION_KIND,
+  PAYKIT_PAYMENT_PROOF_KIND,
+  PAYKIT_PAYMENT_REJECTION_KIND,
+  PAYKIT_PAYMENT_REQUEST_KIND,
+  PAYKIT_PRIVATE_PAYMENT_LIST_KIND,
+} from "@/types/payment";
 import type { SessionUiStatus } from "@/stores/sessionStatusStore";
+
+function paymentNoticeStatus(message: LinkMessage, now?: number): string {
+  const decoded =
+    (message.rawJson ? decodePaymentEnvelope(message.rawJson) : null) ??
+    (message.body ? decodePaymentEnvelope(message.body) : null);
+
+  if (decoded?.kind === PAYKIT_PAYMENT_REQUEST_KIND) {
+    const expiresAt = decoded.request.proposal_expires_at
+      ? Date.parse(decoded.request.proposal_expires_at)
+      : null;
+    return isProposalExpired(expiresAt, now ?? Date.now()) ? "Expired before acceptance" : "Requested by peer";
+  }
+
+  switch (message.kind) {
+    case PAYKIT_PAYMENT_ACCEPTANCE_KIND:
+    case PAYKIT_PAYMENT_PROOF_KIND:
+      return "Paid on mobile wallet";
+    case PAYKIT_PAYMENT_REJECTION_KIND:
+    case PAYKIT_PAYMENT_CANCELLATION_KIND:
+      return "Failed before wallet handoff";
+    case PAYKIT_PRIVATE_PAYMENT_LIST_KIND:
+      return "Unverified payment methods";
+    default:
+      return "Payment";
+  }
+}
 
 export function ThreadView({
   conversationId,
@@ -43,6 +79,7 @@ export function ThreadView({
   onAttach,
   onRetry,
   onResolved,
+  now,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -62,6 +99,7 @@ export function ThreadView({
   onAttach: (file: File) => void;
   onRetry: () => void;
   onResolved: () => void;
+  now?: number;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const origin = useSyncExternalStore(
@@ -154,6 +192,7 @@ export function ThreadView({
                 <PaymentNotice
                   key={`${message.senderPubky}:${message.kind}:${message.eventId}`}
                   notice={describePaymentNotice(message)}
+                  status={paymentNoticeStatus(message, now)}
                   mine={message.senderPubky === localPubky}
                 />
               );

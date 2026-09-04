@@ -8,7 +8,7 @@ const out = join(repo, "ux-vrt-report");
 const assets = join(out, "assets");
 const projects = ["chromium-mobile-pixel", "chromium-desktop-pixel"];
 const scenesSource = readText(join(repo, "src/components/ux-catalog/scenes.ts"));
-const UX_CATALOG_SCENES = [...scenesSource.matchAll(/\{\s*id: "([^"]+)", journey: "([^"]+)", surface: "([^"]+)", state: "([^"]+)"\s*\}/g)]
+const UX_CATALOG_SCENES = [...scenesSource.matchAll(/\{\s*id: "([^"]+)", journey: "([^"]+)", surface: "([^"]+)", state: "([^"]+)"/g)]
   .map((match) => ({ id: match[1], journey: match[2], surface: match[3], state: match[4] }));
 
 function readText(path) {

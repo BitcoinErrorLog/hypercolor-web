@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { avatarInitial } from "@/components/avatar-initial";
 import { ErrorDetails } from "@/components/error-details";
 import { rememberAndOpen } from "@/components/detail-back";
 import { sanitizeDisplayName } from "@/lib/display-name";
@@ -44,6 +45,7 @@ export function ChatsPage({
   onChangePeerDraft,
   onStartChat,
   emptyStateHint = CHATS_EMPTY_STATE_BODY,
+  now,
 }: {
   conversationId: string | null;
   enableCta: ReactNode;
@@ -60,6 +62,7 @@ export function ChatsPage({
   onChangePeerDraft: (value: string) => void;
   onStartChat: () => void;
   emptyStateHint?: string;
+  now?: number;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const composeEnabled = canComposeMessages(status);
@@ -154,14 +157,14 @@ export function ChatsPage({
                     }}
                   >
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary hc-brand-text">
-                      {labelName.charAt(0).toUpperCase()}
+                      {avatarInitial(labelName)}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
                         <span className="truncate font-medium">{shortPubky(row.title)}</span>
                         {row.lastMessageAt ? (
                           <span className="text-xs text-muted-foreground">
-                            {formatRelativeTime(row.lastMessageAt)}
+                            {formatRelativeTime(row.lastMessageAt, now)}
                           </span>
                         ) : null}
                       </span>

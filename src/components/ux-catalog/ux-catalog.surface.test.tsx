@@ -157,7 +157,13 @@ describe("UX catalog production surfaces", () => {
       });
       const marker = document.querySelector(`[data-vrt-scene="${scene.id}"]`);
       expect(marker).not.toBeNull();
-      expect(Boolean(marker?.matches("[data-surface]") || marker?.querySelector("[data-surface]"))).toBe(true);
+      const scope = scene.surface === "sign-out" || scene.surface === "composer-menu"
+        ? document
+        : marker;
+      expect(scope?.querySelector(`[data-surface="${scene.expectedSurface}"]`)).not.toBeNull();
+      if (scene.id.startsWith("thread-payment-")) {
+        expect(marker?.querySelector('[data-surface="payment-notice"]')).not.toBeNull();
+      }
     });
   }
 });

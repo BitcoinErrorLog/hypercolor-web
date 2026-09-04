@@ -32,6 +32,8 @@ const textOnSurfacePairs = [
   ["dangerButton/default", "--color-onDanger", "--color-dangerSurface", "body"],
   ["dangerButton/hover", "--color-onDanger", "--color-dangerSurfacePressed", "body"],
   ["brandText/canvas", "--color-brandText", "--color-canvas", "body"],
+  ["brandText/surface", "--color-brandText", "--color-surface", "body"],
+  ["brandText/surfaceRaised", "--color-brandText", "--color-surfaceRaised", "body"],
   ["brandMuted/canvas", "--color-brandMuted", "--color-canvas", "body"],
   ["brandSoft/canvas", "--color-brandSoft", "--color-canvas", "body"],
   ["brandHighlight/canvas", "--color-brandHighlight", "--color-canvas", "body"],
@@ -44,6 +46,19 @@ const textOnSurfacePairs = [
   ["success/canvas", "--color-success", "--color-canvas", "body"],
   ["qrModules/qrQuietZone", "--color-qrModules", "--color-qrQuietZone", "body"],
 ];
+
+const approvedClassPairs = new Map([
+  ["bg-background::text-foreground", "textPrimary/canvas"],
+  ["bg-background::text-muted-foreground", "textSecondary/canvas"],
+  ["bg-card::text-card-foreground", "textPrimary/surface"],
+  ["bg-card::text-muted-foreground", "textSecondary/surface"],
+  ["bg-primary::text-primary-foreground", "textOnBrand/brand"],
+  ["bg-secondary::hc-brand-text", "brandText/surfaceRaised"],
+  ["bg-secondary::text-xs", "textPrimary/surfaceRaised"],
+  ["bg-secondary::text-secondary-foreground", "textPrimary/surfaceRaised"],
+  ["hc-brand-fill::hc-meta", "textOnBrand/brand"],
+  ["hc-brand-fill::text-xs", "textOnBrand/brand"],
+]);
 
 function cssVariables(css) {
   const vars = new Map();
@@ -124,6 +139,12 @@ function walk(dir) {
 }
 
 describe("web design tokens", () => {
+  it("keeps component role pairings backed by contrast checks", () => {
+    const checkedNames = new Set(textOnSurfacePairs.map(([name]) => name));
+    const missing = [...approvedClassPairs.values()].filter((name) => !checkedNames.has(name));
+    expect(missing).toEqual([]);
+  });
+
   it("meets WCAG AA for every approved text-on-surface pair", () => {
     const vars = cssVariables(globals);
     const failures = textOnSurfacePairs.flatMap(([name, fgVar, bgVar, usage]) => {
@@ -138,11 +159,40 @@ describe("web design tokens", () => {
     const files = [...walk(join(root, "app")), ...walk(join(root, "src/components"))]
       .filter((file) => /\.(?:ts|tsx|css)$/.test(file))
       .filter((file) => file !== globalsPath);
-    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|(?:^|[\s"`])(?:text-red|text-amber|text-white|bg-white|bg-brand|text-brand|bg-red|bg-green|bg-yellow|border-white|bg-\[|text-\[|h-8|h-9|w-9|min-h-\[|min-w-\[|max-w-\[|p[xy]?-\[|m[xy]?-\[|gap-\[|rounded-\[)/;
+    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|style=\{\{|(?:^|[\s"`])(?:text-red|text-amber|text-white|bg-white|bg-brand|text-brand|bg-red|bg-green|bg-yellow|border-white|bg-\[|text-\[|h-8|h-9|w-9|min-h-\[|min-w-\[|max-h-\[|max-w-\[|p[xy]?-\[|m[xy]?-\[|gap-\[|rounded-\[)/;
     const failures = files.flatMap((file) =>
       readFileSync(file, "utf8")
         .split("\n")
         .flatMap((line, index) => raw.test(line) ? [`${relative(root, file)}:${index + 1}: ${line.trim()}`] : []),
+    );
+    expect(failures).toEqual([]);
+  });
+
+  it("declares same-element text and surface utility pairings used by components", () => {
+    const files = walk(join(root, "src/components"))
+      .filter((file) => /\.(?:ts|tsx)$/.test(file));
+    const surfaceClasses = ["bg-background", "bg-card", "bg-primary", "bg-secondary", "hc-brand-fill"];
+    const textClasses = [
+      "hc-brand-text",
+      "hc-meta",
+      "text-card-foreground",
+      "text-foreground",
+      "text-muted-foreground",
+      "text-primary-foreground",
+      "text-secondary-foreground",
+      "text-xs",
+    ];
+    const failures = files.flatMap((file) =>
+      readFileSync(file, "utf8")
+        .match(/className=(?:"[^"]+"|`[^`]+`)/g)?.flatMap((className) => {
+          const surfaces = surfaceClasses.filter((token) => className.includes(token));
+          const texts = textClasses.filter((token) => className.includes(token));
+          return surfaces.flatMap((surface) =>
+            texts.flatMap((text) => approvedClassPairs.has(`${surface}::${text}`)
+              ? []
+              : [`${relative(root, file)}: ${surface} with ${text} is not in approvedClassPairs`]),
+          );
+        }) ?? [],
     );
     expect(failures).toEqual([]);
   });

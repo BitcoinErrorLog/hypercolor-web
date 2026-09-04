@@ -152,7 +152,7 @@ export function SiteNav({
     ) : null;
 
   return (
-    <nav aria-label="Primary" className={fixturePathname ? "min-h-11 w-full" : "w-full"} data-surface="site-nav">
+    <nav aria-label="Primary" className="w-full" data-surface="site-nav">
       <div className="hidden items-center gap-x-4 md:flex">
         {PRIMARY.map((link) => {
           const active = isActive(pathname, link.href, link.prefix);
@@ -181,7 +181,7 @@ export function SiteNav({
 
       <div className="flex items-center justify-end md:hidden">{sessionLink}</div>
 
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background md:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background md:hidden" data-surface="site-nav-mobile">
         <ul className="mx-auto grid max-w-5xl grid-cols-4">
           {PRIMARY.map((link) => {
             const active = isActive(pathname, link.href, link.prefix);

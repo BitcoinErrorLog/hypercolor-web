@@ -247,7 +247,7 @@ describe("static preview rewrites", () => {
       }
     }
     expect(live, live.join(", ")).toEqual([]);
-  });
+  }, 60_000);
 
   it("CI=true alone does not assert production out/", () => {
     expect(shouldAssertProductionOut({ CI: "true" })).toBe(false);

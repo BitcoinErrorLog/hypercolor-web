@@ -161,8 +161,7 @@ export function ModalSheet({
         aria-labelledby={labelledBy ?? titleId ?? (role === "menu" ? labelId : undefined)}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="sheet-enter max-h-[calc(100dvh-2rem)] max-w-md space-y-4 overflow-y-auto rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
-        style={{ width: "100vw", maxWidth: "28rem" }}
+        className="sheet-enter hc-sheet-panel space-y-4 rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
         data-surface={surface}
         onKeyDown={onKeyDown}
       >

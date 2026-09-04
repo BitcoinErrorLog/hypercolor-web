@@ -51,7 +51,7 @@ export type ChannelsPageFixture = {
   tagDetail?: TagChannelFixture;
 };
 
-export function ChannelsPage({ fixture }: { fixture?: ChannelsPageFixture } = {}) {
+export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; now?: number } = {}) {
   const router = useGuardedRouter();
   const routePathId = usePathSegment("channels");
   const modeParam = useQueryParam("mode");
@@ -323,7 +323,7 @@ export function ChannelsPage({ fixture }: { fixture?: ChannelsPageFixture } = {}
                         <span className="font-medium">{sanitizeDisplayName(row.title)}</span>
                         <span className="mt-1 block text-xs text-muted-foreground">
                           Private group
-                          {row.lastMessageAt ? ` · ${formatRelativeTime(row.lastMessageAt)}` : ""}
+                          {row.lastMessageAt ? ` · ${formatRelativeTime(row.lastMessageAt, now)}` : ""}
                         </span>
                         <span className="mt-1 flex items-center justify-between gap-2">
                           <span className="block truncate text-sm text-muted-foreground">
@@ -349,7 +349,7 @@ export function ChannelsPage({ fixture }: { fixture?: ChannelsPageFixture } = {}
       </aside>
       <section className={!detailOpen ? "hidden md:block" : undefined}>
         {mode === "public" ? (
-          <TagChannelView tag={selectedTag} fixture={fixture?.tagDetail} />
+          <TagChannelView tag={selectedTag} fixture={fixture?.tagDetail} now={now} />
         ) : (
           <ChannelView channelId={channelId} fixture={fixture?.channelDetail} initialShowMembers={fixture?.channelMembersOpen} />
         )}

@@ -20,7 +20,7 @@ describe("catalog production bundle scan", () => {
     expect(scanOutForCatalogSymbols(dir)).toEqual(["_next/static/chunks/page.js: thread-populated"]);
   });
 
-  it("passes normal production output text", () => {
+  it("scans static HTML and passes normal production output text", () => {
     const dir = join(tmpdir(), `hc-out-${Date.now()}-clean`);
     dirs.push(dir);
     mkdirSync(dir, { recursive: true });

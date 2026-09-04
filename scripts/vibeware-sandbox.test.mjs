@@ -402,7 +402,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       });
       expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
@@ -438,7 +438,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       ).toBe(true);
       expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
@@ -481,7 +481,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       });
       expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(

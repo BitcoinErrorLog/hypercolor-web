@@ -13,7 +13,7 @@
   --color-brandDeep: #4c1d95;
   --color-brandMuted: #c4b5fd;
   --color-brandSoft: #a78bfa;
-  --color-brandText: #8f57f0;
+  --color-brandText: #9a67f2;
   --color-brandHighlight: #e9d5ff;
   --color-textPrimary: #f9fafb;
   --color-textSecondary: #9ca3af;
@@ -139,7 +139,7 @@
   --color-brandDeep: #4c1d95;
   --color-brandMuted: #c4b5fd;
   --color-brandSoft: #a78bfa;
-  --color-brandText: #8f57f0;
+  --color-brandText: #9a67f2;
   --color-brandHighlight: #e9d5ff;
   --color-textPrimary: #f9fafb;
   --color-textSecondary: #9ca3af;
@@ -291,6 +291,13 @@ body {
 .hc-nav-label {
   font-size: var(--type-meta-size);
   line-height: var(--type-meta-line);
+}
+
+.hc-sheet-panel {
+  width: min(100%, 28rem);
+  max-width: calc(100vw - var(--space-xxxl));
+  max-height: calc(100dvh - var(--space-xxxl));
+  overflow-y: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { avatarInitial } from "@/components/avatar-initial";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { SignOutConfirm } from "@/components/sign-out-confirm";
@@ -21,12 +22,9 @@ export function ProfilePage() {
       <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
       <div className="flex flex-col items-center gap-3 py-8">
         <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl hc-brand-text">
-          {(profile?.displayName
+          {avatarInitial(profile?.displayName
             ? sanitizeDisplayName(profile.displayName)
-            : pubky ?? "?"
-          )
-            .charAt(0)
-            .toUpperCase()}
+            : pubky ?? "?")}
         </div>
         <p className="text-lg font-medium">
           {profile?.displayName ? sanitizeDisplayName(profile.displayName) : "Unnamed"}

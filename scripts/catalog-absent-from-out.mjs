@@ -6,11 +6,11 @@ const DEFAULT_SYMBOLS = [
   "data-vrt-scene",
   "thread-populated",
   "profile-sign-out",
-  "contact-detail-populated",
+  "contact-detail-trust",
 ];
 
 function walk(dir) {
-  if (!existsSync(dir)) return [];
+  if (!existsSync(dir)) throw new Error(`Missing output directory: ${dir}`);
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const path = join(dir, entry.name);
     if (entry.isDirectory()) return walk(path);
@@ -20,8 +20,7 @@ function walk(dir) {
 
 export function scanOutForCatalogSymbols(outDir, symbols = DEFAULT_SYMBOLS) {
   return walk(outDir).flatMap((file) => {
-    if (!file.includes(join("_next", "static", "chunks"))) return [];
-    if (!/\.(?:js|css)$/.test(file)) return [];
+    if (!/\.(?:html|txt|json|js|css|rsc)$/.test(file)) return [];
     const body = readFileSync(file, "utf8");
     return symbols.flatMap((symbol) =>
       body.includes(symbol) ? [`${relative(outDir, file)}: ${symbol}`] : [],

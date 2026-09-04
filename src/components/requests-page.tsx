@@ -76,7 +76,7 @@ function SkeletonRows() {
   );
 }
 
-export function RequestsPage({ fixture }: { fixture?: RequestsPageFixture } = {}) {
+export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; now?: number } = {}) {
   const router = useGuardedRouter();
   const storedOwnerPubky = useAuthStore((s) => s.pubky);
   const ownerPubky = fixture?.ownerPubky ?? storedOwnerPubky;
@@ -191,7 +191,7 @@ export function RequestsPage({ fixture }: { fixture?: RequestsPageFixture } = {}
                     {claimed ? <p className="text-sm text-muted-foreground">{claimed}</p> : null}
                     <p className="break-all font-mono text-xs text-muted-foreground">{peer}</p>
                     <p className="text-xs text-muted-foreground" data-testid="requestArrived">
-                      {formatRelativeTime(row.request.createdAt)}
+                      {formatRelativeTime(row.request.createdAt, now)}
                     </p>
                     {row.invitations.length > 0 ? (
                       <ul className="mt-2 space-y-1" data-testid="groupInvitation">

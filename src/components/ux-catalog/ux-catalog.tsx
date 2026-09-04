@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AttachmentBubble } from "@/components/attachment-bubble";
 import { AuthQr } from "@/components/auth-qr";
@@ -31,6 +31,13 @@ import type { NexusHotTag, NexusPublicPost } from "@/services/nexus/NexusDiscove
 import { useAuthStore } from "@/stores/authStore";
 import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore, type SessionUiStatus } from "@/stores/sessionStatusStore";
+import {
+  buildPaymentCancellationEnvelope,
+  buildPaymentProofEnvelope,
+  buildPaymentRequestEnvelope,
+  PAYKIT_PAYMENT_REQUEST_KIND,
+  PAYKIT_PRIVATE_PAYMENT_LIST_KIND,
+} from "@/types/payment";
 import { findUxCatalogScene, UX_CATALOG_SCENES, type UxCatalogScene } from "./scenes";
 
 const OWNER = "ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u";
@@ -39,6 +46,7 @@ const BRAMBLE = "dynd4tffjtzbnhzqoy7c6xijp7kgfhaqdynd4tffjtzbnhzqoy7c";
 const NOW = Date.UTC(2026, 8, 3, 12, 0, 0);
 const DM_ID = buildDmConversationId(ASTER);
 const CHANNEL_ID = `${OWNER}:22222222-2222-4222-8222-222222222222`;
+const PAYMENT_REQUEST_ID = "66666666-6666-4666-8666-666666666666";
 const noop = () => undefined;
 const asyncNoop = async () => undefined;
 
@@ -156,6 +164,46 @@ function link(partial: Partial<LinkRecord> = {}): LinkRecord {
     updatedAt: NOW,
     ...partial,
   };
+}
+
+function paymentRawJson(state: string): { kind: string; rawJson: string; body: string } {
+  if (state === "payment-paid") {
+    const { json } = buildPaymentProofEnvelope({
+      eventId: "77777777-7777-4777-8777-777777777777",
+      paymentRequestId: PAYMENT_REQUEST_ID,
+      paymentReference: "Design review invoice",
+      paymentEndpointIdentifier: "btc-lightning-bolt11",
+      proofData: "fixture-preimage",
+    });
+    return { kind: "paykit.payment_proof", rawJson: json, body: "Payment proof" };
+  }
+
+  if (state === "payment-failed") {
+    const { json } = buildPaymentCancellationEnvelope({
+      eventId: "88888888-8888-4888-8888-888888888888",
+      paymentRequestId: PAYMENT_REQUEST_ID,
+      reason: "Invoice expired before wallet handoff.",
+    });
+    return { kind: "paykit.payment_request_cancellation", rawJson: json, body: "Payment failed" };
+  }
+
+  if (state === "payment-unverified") {
+    return {
+      kind: PAYKIT_PRIVATE_PAYMENT_LIST_KIND,
+      rawJson: JSON.stringify({ version: 1, kind: PAYKIT_PRIVATE_PAYMENT_LIST_KIND, payment_endpoints: {} }),
+      body: "Payment unverified",
+    };
+  }
+
+  const { json } = buildPaymentRequestEnvelope({
+    eventId: "55555555-5555-4555-8555-555555555555",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+    amountValue: "0.00042",
+    paymentReference: state === "payment-expired" ? "Expired design review" : "Design review invoice",
+    endpointIds: ["btc-lightning-bolt11"],
+    expiresAtMs: state === "payment-expired" ? NOW - 60_000 : NOW + 600_000,
+  });
+  return { kind: PAYKIT_PAYMENT_REQUEST_KIND, rawJson: json, body: "Payment request" };
 }
 
 function contactDetailFixture(state: string): ContactDetailFixture {
@@ -289,10 +337,12 @@ function channelFixture(state: string): ChannelsPageFixture["channelDetail"] {
       groupMessage({ channelId: CHANNEL_ID, eventId: "55555555-5555-4555-8555-555555555555", senderPubky: BRAMBLE, body: "Member reply with enough body text to make the populated state visibly different.", sentAt: NOW + 120_000 }),
     ],
     attachments: [],
-    members: [member(OWNER, "admin"), member(ASTER), member(BRAMBLE)],
+    members: state === "composer-disabled"
+      ? [member(OWNER, "admin")]
+      : [member(OWNER, "admin"), member(ASTER), member(BRAMBLE)],
     contacts: [contact(), contact({ pubky: BRAMBLE, displayName: "Bramble Example" })],
     establishedPeers: [ASTER, BRAMBLE],
-    draft: state === "editing" ? "Edited group message" : "",
+    draft: state === "editing" ? "Editing this visible fixture message before resending" : "",
     setDraft: noop,
     editingEventId: state === "editing" ? "33333333-3333-4333-8333-333333333333" : null,
     setEditingEventId: noop,
@@ -350,24 +400,24 @@ function channelsFixture(scene: UxCatalogScene): ChannelsPageFixture {
     ownerPubky: OWNER,
     rows: scene.surface === "channels-private" && scene.state === "populated" ? [channelRow()] : [],
     eligible: [contact(), contact({ pubky: BRAMBLE, displayName: "Bramble Example" })],
-    name: scene.state === "busy" ? "Design Review" : "",
-    selected: {},
+    name: scene.state === "busy" ? "Creating Design Review" : "",
+    selected: scene.state === "busy" ? { [ASTER]: true, [BRAMBLE]: true } : {},
     busy: scene.state === "busy",
     error: scene.state === "error" ? "Could not create group." : null,
     loaded: true,
     loading: scene.state === "loading",
     storeError: scene.state === "error" ? "Could not load channels." : null,
     channelDetail: scene.surface === "channel" ? channelFixture(scene.state) : undefined,
-    channelMembersOpen: scene.state === "members-open",
+    channelMembersOpen: scene.state === "members-open" || scene.state === "members-non-admin",
     publicTopics: {
       tags: scene.surface === "channels-public" && scene.state === "populated" ? topics() : [],
-      loaded: scene.surface === "channels-public" && scene.state !== "initial",
+      loaded: scene.surface === "channels-public" && scene.state !== "initial" && scene.state !== "error",
       error: scene.state === "error" ? "Could not reach the public index." : null,
     },
     tagDetail: scene.surface === "public-topic"
       ? {
           posts: scene.state === "populated" ? publicPosts() : [],
-          unavailable: scene.state === "unavailable" ? 1 : 0,
+          unavailable: scene.state === "unavailable" ? 12 : 0,
           loading: scene.state === "loading",
           error: scene.state === "error" ? "Could not reach the public index." : null,
           empty: scene.state === "empty",
@@ -395,14 +445,15 @@ function ringPhase(state: string): RingCallbackPhase {
   if (state === "done") return { kind: "done", pubky: OWNER };
   if (state === "error") return { kind: "error", fallback: "Could not complete this Ring handoff.", details: "Fixture failure" };
   if (state === "relay-forwarded") return { kind: "relay-forwarded" };
+  if (state === "invalid-missing-params") return { kind: "invalid", reason: "Callback is missing pubky, request_id, mode, or homeserver." };
   return { kind: "reading" };
 }
 
 function settingsFixture(state: string): SettingsPageFixture {
-  if (state === "recovery-gate") {
+  if (state === "recovery-gate" || state === "recovery-ready") {
     return {
       recoveryCode: "alpha bravo charlie delta echo foxtrot golf hotel",
-      confirmedSaved: false,
+      confirmedSaved: state === "recovery-ready",
     };
   }
   if (state === "restore-success") {
@@ -422,15 +473,25 @@ function settingsFixture(state: string): SettingsPageFixture {
 
 function sessionStatusForScene(scene: UxCatalogScene): SessionUiStatus {
   if (scene.state === "no-identity" || scene.state === "not-connected") return { kind: "no-identity" };
-  if (scene.state === "needs-enable" || scene.state === "disabled-composer") return { kind: "needs-enable" };
+  if (scene.state === "needs-enable" || scene.state === "disabled-composer" || scene.state === "empty-enable") return { kind: "needs-enable" };
   if (scene.state === "offline") return { kind: "session-offline", pubky: OWNER };
   return { kind: "enabled", pubky: OWNER };
 }
 
+function CatalogAuthQr({ value, testID }: { value: string; testID: string }) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMounted(true), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return mounted ? <AuthQr value={value} testID={testID} /> : null;
+}
+
 function authPanel(testID = "welcomeQr") {
+  const value = "pubkyring://paykit-connect?request_id=vrt&caps=/pub/paykit/:rw";
   return (
     <div className="space-y-3">
-      <AuthQr value="pubkyring://paykit-connect?request_id=vrt&caps=/pub/paykit/:rw" testID={testID} />
+      <CatalogAuthQr value={value} testID={testID} />
       <p className="break-all font-mono text-xs text-muted-foreground">
         pubkyring://paykit-connect?request_id=vrt
       </p>
@@ -443,13 +504,15 @@ function EnableCtaFixture() {
 }
 
 function ThreadFixture({ state }: { state: string }) {
+  const payment = state.startsWith("payment-") ? paymentRawJson(state) : null;
   const messages =
     state === "empty"
       ? []
       : [
           message({ eventId: "11111111-1111-4111-8111-111111111111" }),
           message({ eventId: "22222222-2222-4222-8222-222222222222", senderPubky: OWNER, direction: "sent", body: "Looks good.", deliveryState: state === "failed-retry" ? "failed" : "sent", sentAt: NOW + 60_000 }),
-          ...(state === "payment-notice" ? [message({ eventId: "55555555-5555-4555-8555-555555555555", kind: "paykit.payment_request.v0", body: "Payment request", sentAt: NOW + 120_000 })] : []),
+          ...(state === "delivery-labels" ? [message({ eventId: "99999999-9999-4999-8999-999999999999", senderPubky: OWNER, direction: "sent", body: "Delivered state.", deliveryState: "delivered", sentAt: NOW + 120_000 })] : []),
+          ...(payment ? [message({ eventId: "55555555-5555-4555-8555-555555555555", ...payment, sentAt: NOW + 120_000 })] : []),
           ...(state === "populated" ? [message({ eventId: "44444444-4444-4444-8444-444444444444", kind: CHAT_ATTACHMENT_KIND, body: "Attachment", sentAt: NOW + 180_000 })] : []),
         ];
   return (
@@ -472,6 +535,7 @@ function ThreadFixture({ state }: { state: string }) {
       onAttach={noop}
       onRetry={noop}
       onResolved={noop}
+      now={NOW}
     />
   );
 }
@@ -481,7 +545,7 @@ function ChatsFixture({ state }: { state: string }) {
     <ChatsPage
       conversationId={null}
       enableCta={<EnableCtaFixture />}
-      thread={<ThreadView conversationId={null} participantPubky={null} localPubky={OWNER} messages={[]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} />}
+      thread={<ThreadView conversationId={null} participantPubky={null} localPubky={OWNER} messages={[]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} now={NOW} />}
       rows={state === "populated" || state === "error" ? rows() : []}
       pendingRequests={state === "populated" ? 2 : 0}
       inboxError={state === "error" ? "Could not load inbox." : null}
@@ -494,6 +558,7 @@ function ChatsFixture({ state }: { state: string }) {
       onChangePeerDraft={noop}
       onStartChat={noop}
       emptyStateHint={state === "empty-candidate" ? CHATS_EMPTY_STATE_CANDIDATE_HINT : undefined}
+      now={NOW}
     />
   );
 }
@@ -569,9 +634,9 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
   }
   if (scene.surface.includes("chats-list")) return <ChatsFixture state={scene.state} />;
   if (scene.surface === "thread") return <ThreadFixture state={scene.state} />;
-  if (scene.surface === "requests") return <RequestsPage fixture={requestsFixture(scene.state)} />;
+  if (scene.surface === "requests") return <RequestsPage fixture={requestsFixture(scene.state)} now={NOW} />;
   if (scene.surface.startsWith("channels") || scene.surface === "channel" || scene.surface === "public-topic") {
-    return <ChannelsPage fixture={channelsFixture(scene)} />;
+    return <ChannelsPage fixture={channelsFixture(scene)} now={NOW} />;
   }
   if (scene.surface === "contacts") return <ContactsPage fixture={contactsFixture(scene.state)} />;
   if (scene.surface === "contact-detail") return <ContactDetail ownerPubky={OWNER} pubky={ASTER} fixture={contactDetailFixture(scene.state)} />;
@@ -579,7 +644,7 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
   if (scene.surface === "sign-out") {
     return (
       <SurfaceShell surface="sign-out-confirm">
-        <SignOutConfirm triggerTestId="profileSignOut" busy={false} initialOpen onSignOut={noop} />
+        <SignOutConfirm triggerTestId="profileSignOut" busy={scene.state === "busy"} initialOpen now={NOW} onSignOut={noop} />
       </SurfaceShell>
     );
   }
@@ -587,14 +652,11 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
   if (scene.surface === "ring-callback") return <RingCallbackPage fixturePhase={ringPhase(scene.state)} />;
   if (scene.surface === "composer-menu") return <ComposerMenuFixture />;
   if (scene.surface === "attachment") return <AttachmentBubble record={attachment({ deliveryState: scene.state === "failed" ? "failed" : "delivered", resolveState: scene.state === "unavailable" ? "unavailable-from-backup" : "ready" })} />;
-  return <SurfaceShell surface={scene.surface}>Unknown catalog surface: {scene.id}</SurfaceShell>;
+  throw new Error(`Unknown catalog surface: ${scene.id}`);
 }
 
 function installFixtureStores(scene: UxCatalogScene) {
-  let status: SessionUiStatus = { kind: "enabled", pubky: OWNER };
-  if (scene.state === "no-identity" || scene.state === "not-connected") status = { kind: "no-identity" };
-  if (scene.state === "needs-enable" || scene.state === "disabled-composer") status = { kind: "needs-enable" };
-  if (scene.state === "offline") status = { kind: "session-offline", pubky: OWNER };
+  const status = sessionStatusForScene(scene);
   useSessionStatusStore.setState({ status });
   if (status.kind === "no-identity") {
     useAuthStore.getState().clearSession();
@@ -612,7 +674,23 @@ export function UxCatalog() {
   installFixtureStores(scene);
   useEffect(() => {
     const originalFetch = window.fetch;
-    window.fetch = () => Promise.reject(new Error("UX catalog blocks network"));
+    window.fetch = (input, init) => {
+      const url = new URL(
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url,
+        window.location.href,
+      );
+      if (
+        url.origin === window.location.origin &&
+        (url.pathname.startsWith("/_next/") || url.pathname === "/sqlite3.wasm")
+      ) {
+        return originalFetch(input, init);
+      }
+      return Promise.reject(new Error("UX catalog blocks network"));
+    };
     return () => {
       window.fetch = originalFetch;
     };

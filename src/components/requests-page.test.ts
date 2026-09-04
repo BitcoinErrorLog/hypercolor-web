@@ -11,7 +11,7 @@ const source = readFileSync(
 describe("requests page contract states", () => {
   it("renders arrival time, invite copy, loading rows, and offline-disabled decisions", () => {
     expect(source).toContain('data-testid="requestArrived"');
-    expect(source).toContain("formatRelativeTime(row.request.createdAt)");
+    expect(source).toContain("formatRelativeTime(row.request.createdAt, now)");
     expect(source).toContain('data-testid="requestsLoading"');
     expect(source).toContain('data-testid="requestsInvite"');
     expect(source).toContain('data-testid="groupInvitation"');

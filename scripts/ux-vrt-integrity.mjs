@@ -7,12 +7,72 @@ export const IDENTITY_THRESHOLD = 0.99;
 
 export const IDENTITY_ALLOWLIST = new Map([
   [
-    "chrome-nav-enabled::chrome-nav-needs-enable",
-    "Production nav differs only by the session CTA and message-request badge in this cropped chrome capture.",
+    "channel-composer-disabled::channel-editing",
+    "Both capture the same production channel thread; the reviewed difference is the composer disabled card versus the edit draft at the bottom.",
   ],
   [
-    "chrome-nav-enabled::chrome-nav-no-identity",
-    "Production nav differs only by the session CTA and message-request badge in this cropped chrome capture.",
+    "channel-composer-disabled::channel-populated",
+    "Both capture the same production channel thread; the reviewed difference is the enable-messaging composer block.",
+  ],
+  [
+    "channel-editing::channel-populated",
+    "Both capture the same production channel thread; the reviewed difference is the edit-mode composer draft.",
+  ],
+  [
+    "channels-private-busy::channels-private-empty",
+    "Both capture the same production create-group form; the reviewed difference is the busy create state with selected members.",
+  ],
+  [
+    "channels-public-error::channels-public-initial",
+    "Both capture the same production public-topics panel; the reviewed difference is the retry/error copy.",
+  ],
+  [
+    "channels-public-error::channels-public-populated",
+    "Both capture the same production public-topics panel; the reviewed difference is the error copy replacing topic rows.",
+  ],
+  [
+    "chrome-nav-enabled::chrome-nav-needs-enable",
+    "Both capture the real production navigation; the reviewed difference is the session-enabled request badge count.",
+  ],
+  [
+    "public-topic-empty::public-topic-loading",
+    "Both capture the same production public-topic reader; the reviewed difference is the loading status line.",
+  ],
+  [
+    "public-topic-empty::public-topic-unavailable",
+    "Both capture the same production public-topic reader; the reviewed difference is the unavailable-row status line.",
+  ],
+  [
+    "public-topic-error::public-topic-loading",
+    "Both capture the same production public-topic reader; the reviewed difference is error versus loading status copy.",
+  ],
+  [
+    "public-topic-error::public-topic-unavailable",
+    "Both capture the same production public-topic reader; the reviewed difference is error versus unavailable-row status copy.",
+  ],
+  [
+    "public-topic-loading::public-topic-unavailable",
+    "Both capture the same production public-topic reader; the reviewed difference is loading versus unavailable-row status copy.",
+  ],
+  [
+    "thread-empty::thread-loading",
+    "Both capture the same empty production thread shell; the reviewed difference is empty-state copy versus loading copy.",
+  ],
+  [
+    "thread-payment-expired::thread-payment-notice",
+    "Both capture the same production payment request bubble; the reviewed difference is requested versus expired status copy.",
+  ],
+  [
+    "thread-payment-failed::thread-payment-paid",
+    "Both capture the same production read-only payment bubble; the reviewed difference is paid versus failed status copy.",
+  ],
+  [
+    "thread-payment-failed::thread-payment-unverified",
+    "Both capture the same production read-only payment bubble; the reviewed difference is failed versus unverified status copy.",
+  ],
+  [
+    "thread-payment-paid::thread-payment-unverified",
+    "Both capture the same production read-only payment bubble; the reviewed difference is paid versus unverified status copy.",
   ],
 ]);
 
@@ -39,6 +99,44 @@ function pixelIndex(width, x, y) {
   return (y * width + x) * 4;
 }
 
+function samePixel(data, a, b) {
+  return (
+    data[a] === data[b] &&
+    data[a + 1] === data[b + 1] &&
+    data[a + 2] === data[b + 2] &&
+    data[a + 3] === data[b + 3]
+  );
+}
+
+function trimBackground(image) {
+  let minX = image.width;
+  let minY = image.height;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const offset = pixelIndex(image.width, x, y);
+      if (samePixel(image.data, 0, offset)) continue;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+  if (maxX < minX || maxY < minY) return image;
+  const width = maxX - minX + 1;
+  const height = maxY - minY + 1;
+  const data = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const out = pixelIndex(width, x, y);
+      const source = pixelIndex(image.width, minX + x, minY + y);
+      data.set(image.data.subarray(source, source + 4), out);
+    }
+  }
+  return { data, width, height };
+}
+
 export function cropToCommon(a, b) {
   const width = Math.min(a.width, b.width);
   const height = Math.min(a.height, b.height);
@@ -57,7 +155,7 @@ export function cropToCommon(a, b) {
 export function compareImages(a, b) {
   const common = cropToCommon(a, b);
   const diff = pixelmatch(common.a, common.b, new Uint8Array(common.width * common.height * 4), common.width, common.height, {
-    threshold: 0.1,
+    threshold: 0.01,
     includeAA: false,
   });
   const commonPixels = common.width * common.height;
@@ -67,7 +165,7 @@ export function compareImages(a, b) {
 }
 
 export async function findNearDuplicatePngs(files, allowlist = IDENTITY_ALLOWLIST) {
-  const decoded = await Promise.all(files.map(async (file) => ({ file, image: await readPng(file) })));
+  const decoded = await Promise.all(files.map(async (file) => ({ file, image: trimBackground(await readPng(file)) })));
   const failures = [];
   for (let i = 0; i < decoded.length; i += 1) {
     for (let j = i + 1; j < decoded.length; j += 1) {

@@ -20,9 +20,11 @@ export type TagChannelFixture = {
 export function TagChannelView({
   tag,
   fixture,
+  now,
 }: {
   tag: string | null;
   fixture?: TagChannelFixture;
+  now?: number;
 }) {
   if (!tag) {
     return (
@@ -31,10 +33,10 @@ export function TagChannelView({
       </p>
     );
   }
-  return <TagChannelTimeline key={tag} tag={tag} fixture={fixture} />;
+  return <TagChannelTimeline key={tag} tag={tag} fixture={fixture} now={now} />;
 }
 
-function TagChannelTimeline({ tag, fixture }: { tag: string; fixture?: TagChannelFixture }) {
+function TagChannelTimeline({ tag, fixture, now }: { tag: string; fixture?: TagChannelFixture; now?: number }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [posts, setPosts] = useState<NexusPublicPost[]>(fixture?.posts ?? []);
   const [unavailable, setUnavailable] = useState(fixture?.unavailable ?? 0);
@@ -119,7 +121,7 @@ function TagChannelTimeline({ tag, fixture }: { tag: string; fixture?: TagChanne
             <p className="break-all font-mono text-xs text-muted-foreground">{post.author}</p>
             <p className="mt-2 whitespace-pre-wrap text-sm">{sanitizePublicPost(post.content)}</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {formatRelativeTime(post.indexedAt)}
+              {formatRelativeTime(post.indexedAt, now)}
             </p>
           </li>
         ))}

@@ -13,6 +13,19 @@ rm -rf out-e2e
 npm run test:e2e:static
 ```
 
+Baseline updates are not a gate. When a visual change is intentional, refresh
+the committed PNGs explicitly:
+
+```bash
+rm -rf out-e2e
+npm run build:e2e:static
+PLAYWRIGHT_STATIC=1 npx playwright test e2e/ux-catalog.spec.ts --update-snapshots
+npm run vrt:report
+```
+
+The normal gate must run without `--update-snapshots`; it compares against the
+committed baselines with `maxDiffPixelRatio: 0.001`.
+
 The command builds the static harness export, serves `out-e2e`, runs the existing
 static e2e proofs, then runs `e2e/ux-catalog.spec.ts` in:
 
@@ -23,71 +36,65 @@ static e2e proofs, then runs `e2e/ux-catalog.spec.ts` in:
 
 Every scene must render `data-vrt-scene="<id>"` on the captured production
 surface root, and every scene must contain at least one
-`data-surface="<production-component-name>"` marker from the production
-component it mounts. Baselines are committed under `e2e/vrt-baselines/`.
-The spec captures only the marked surface with `locator.screenshot()` and checks
-that no two different scene PNGs in the same project are at least 99%
+`data-surface="<expected-production-component-name>"` marker from the production
+component declared in `scenes.ts`. Baselines are committed under
+`e2e/vrt-baselines/`. The spec captures only the marked surface with
+`toHaveScreenshot()` and checks that no two different scene PNGs in the same
+project are at least 99%
 pixel-identical. Size mismatches are compared by shared content plus a size
 penalty; they are never skipped.
 
-Fixtures are synthetic only. The catalog blocks `fetch` while mounted, seeds
-only deterministic invented identities, and never uses live credentials.
+Fixtures are synthetic only. The catalog blocks live `fetch` while mounted
+but allows same-origin static runtime assets, seeds only deterministic invented
+identities, and never uses live credentials.
+The catalog passes a fixed 2026-09-03T12:00:00Z `now` value into the production
+surfaces that render relative-time labels or payment-expiry state, so those
+labels remain deterministic without freezing browser timers.
 
 ## Integrity Waivers
 
-The near-identity allowlist is intentionally small and mirrored in
-`scripts/ux-vrt-integrity.mjs`.
+The near-identity allowlist is mirrored in `scripts/ux-vrt-integrity.mjs` and
+printed by the Playwright gate. Every entry must name both scene ids and state
+the real production difference that remains visible in the baseline:
+channel composer disabled/editing/populated variants, private-channel busy
+create, public-topic loading/error/unavailable status rows, public-topic
+directory error, nav enabled/needs-enable badge count, thread empty/loading,
+and payment requested/expired/paid/failed/unverified status rows. A future
+waiver must meet the same standard and be mirrored in the script.
 
-- `chrome-nav-enabled` / `chrome-nav-needs-enable`: both mount the production
-  `SiteNav`; in the cropped chrome capture the shared route links dominate, and
-  the intentional difference is the session CTA plus request badge.
-- `chrome-nav-enabled` / `chrome-nav-no-identity`: both mount the production
-  `SiteNav`; in the cropped chrome capture the shared route links dominate, and
-  the intentional difference is the session CTA plus request badge.
+Seven matrix cells remain legitimate hard waivers:
 
-A future waiver must name both scene ids, explain why the two production states
-are intentionally visually identical, and be mirrored in
-`scripts/ux-vrt-integrity.mjs`.
+- Shared chrome `/e2e` chrome: `SiteNav` returns `null` on `/e2e`.
+- Shared chrome session unknown: `SessionBanner` intentionally renders nothing.
+- Contact detail payment methods list: `ContactDetail` has no payment UI.
+- Contact detail payment error: same missing product surface.
+- Contact detail no public methods: same missing product surface.
+- Ring callback invalid missing `ch`: covered by `e2e/ring-callback.spec.ts`.
+- Contacts follows-on note: follows-import preference is service-backed and not
+  presenter-injectable in the catalog.
 
 ## Coverage
 
-The current registry has 56 scenes. It covers 53 of the 111 matrix cells plus
-three embedded close-ups (`composer-menu`, `attachment-failed`,
-`attachment-unavailable`). The remaining 58 cells are explicitly waived for this
-round because they require a broader presenter extraction or production state
-that does not exist yet; they remain final-pass work.
+The current registry has 86 scenes. It covers roughly 83 of the 111 matrix cells
+plus three embedded close-ups (`composer-menu`, `attachment-failed`,
+`attachment-unavailable`). The seven hard waivers above are intentional; the
+remaining uncovered cells are post-release coverage work, not duplicate-gate
+waivers.
 
 | Section | Cells | Scenes | Waivers |
 | --- | ---: | ---: | ---: |
-| Shared chrome | 8 | 5 | 3 |
-| `/` Welcome | 6 | 5 | 1 |
-| `/enable` | 7 | 4 | 3 |
-| `/chats` list | 11 | 4 | 7 |
-| `/chats/:id` thread | 9 | 5 | 4 |
-| `/channels` | 7 | 2 | 5 |
-| `/channels/:id` | 10 | 3 | 7 |
-| `/discover` | 6 | 2 | 4 |
-| `/discover/:tag` | 8 | 2 | 6 |
-| `/contacts` | 10 | 4 | 6 |
-| `/contacts/:pubky` | 6 | 2 | 4 |
-| `/requests` | 5 | 4 | 1 |
-| `/profile` | 4 | 3 | 1 |
-| `/settings` | 7 | 4 | 3 |
-| `/ring-callback` | 7 | 4 | 3 |
-| **Total** | **111** | **53** | **58** |
-
-Waived cells: shared chrome session unknown, both banners stacked, `/e2e` chrome;
-Welcome authenticated strip; Enable expired, error, sign out visible; Chats empty
-control hint, empty candidate hint, start-chat error, starting disabled, inbox
-error, pending requests badge, 1280 empty detail; Thread invalid id, loading,
-delivery labels, sending; Channels eligible checkboxes/cap, error, busy create,
-enable CTA, 1280 select placeholder; Channel loading, not found, failed retry,
-members non-admin, composer disabled, editing placeholder, error; Discover
-loading topics, error retry, empty tags, 1280 empty tag pane; Tag loading posts,
-error wrapped, invalid tag, unavailable rows, disabled composer card, 390
-detail-only; Contacts empty signed out, empty follows-off, follows on note,
-search username mode, suggestions, errors; Contact detail loading, payment
-methods, payment error, no public methods; Requests error; Profile sign-out
-busy; Settings recovery checkbox off, recovery ready, copied; Ring callback
-invalid missing params, relay forwarded, invalid missing `ch` covered in
-`e2e/ring-callback.spec.ts`.
+| Shared chrome | 8 | 5 | 2 |
+| `/` Welcome | 6 | 6 | 0 |
+| `/enable` | 7 | 7 | 0 |
+| `/chats` list | 11 | 7 | 0 |
+| `/chats/:id` thread + payments | 9 | 12 | 0 |
+| `/channels` | 7 | 7 | 0 |
+| `/channels/:id` | 10 | 8 | 0 |
+| `/discover/:tag` | 8 | 5 | 0 |
+| `/contacts` | 10 | 4 | 1 |
+| `/contacts/:pubky` | 6 | 2 | 3 |
+| `/requests` | 5 | 5 | 0 |
+| `/profile` | 4 | 4 | 0 |
+| `/settings` | 7 | 5 | 0 |
+| `/ring-callback` | 7 | 6 | 1 |
+| **Total** | **111** | **83** | **7** |

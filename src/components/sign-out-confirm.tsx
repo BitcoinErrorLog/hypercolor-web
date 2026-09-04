@@ -12,11 +12,13 @@ export function SignOutConfirm({
   busy,
   onSignOut,
   initialOpen = false,
+  now,
 }: {
   triggerTestId: string;
   busy: boolean;
   onSignOut: () => boolean | void;
   initialOpen?: boolean;
+  now?: number;
 }) {
   const [open, setOpen] = useState(initialOpen);
   const [lastBackup, setLastBackup] = useState<number | null>(null);
@@ -67,7 +69,7 @@ export function SignOutConfirm({
           </p>
           <p>
             {lastBackup
-              ? `Your last backup was ${formatRelativeTime(lastBackup)}.`
+              ? `Your last backup was ${formatRelativeTime(lastBackup, now)}.`
               : "If you have not made an encrypted backup, this history is not recoverable."}
           </p>
           <p>{CUSTODY_LINE}</p>
@@ -95,7 +97,7 @@ export function SignOutConfirm({
               }
             }}
           >
-            Sign out
+            {busy ? "Signing out…" : "Sign out"}
           </Button>
         </div>
       </ModalSheet>
