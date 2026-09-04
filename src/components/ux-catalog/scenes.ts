@@ -39,7 +39,7 @@ export const UX_CATALOG_SCENES: readonly UxCatalogScene[] = [
   { id: "thread-delivery-labels", journey: "chats", surface: "thread", state: "delivery-labels", expectedSurface: "thread-view" },
   { id: "thread-failed-retry", journey: "chats", surface: "thread", state: "failed-retry", expectedSurface: "thread-view" },
   { id: "thread-payment-notice", journey: "payments", surface: "thread", state: "payment-requested", expectedSurface: "thread-view" },
-  { id: "thread-payment-paid", journey: "payments", surface: "thread", state: "payment-paid", expectedSurface: "thread-view" },
+  { id: "thread-payment-proof", journey: "payments", surface: "thread", state: "payment-paid", expectedSurface: "thread-view" },
   { id: "thread-payment-expired", journey: "payments", surface: "thread", state: "payment-expired", expectedSurface: "thread-view" },
   { id: "thread-payment-failed", journey: "payments", surface: "thread", state: "payment-failed", expectedSurface: "thread-view" },
   { id: "thread-payment-unverified", journey: "payments", surface: "thread", state: "payment-unverified", expectedSurface: "thread-view" },

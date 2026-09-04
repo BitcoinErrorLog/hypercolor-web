@@ -55,7 +55,7 @@ export const IDENTITY_ALLOWLIST = new Map([
     "Both capture the same production payment request bubble; the reviewed difference is requested versus expired status copy.",
   ],
   [
-    "thread-payment-failed::thread-payment-paid",
+    "thread-payment-failed::thread-payment-proof",
     "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus failed status copy.",
   ],
   [
@@ -63,7 +63,7 @@ export const IDENTITY_ALLOWLIST = new Map([
     "Both capture the same production read-only payment bubble; the reviewed difference is failed versus unverified status copy.",
   ],
   [
-    "thread-payment-paid::thread-payment-unverified",
+    "thread-payment-proof::thread-payment-unverified",
     "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus unverified status copy.",
   ],
 ]);

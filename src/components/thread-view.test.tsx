@@ -238,7 +238,7 @@ describe("ThreadView payment status text", () => {
     ["pending", paymentRequestMessage(NOW + 60_000), "Requested by peer"],
     ["expired", paymentRequestMessage(NOW - 60_000), "Expired before acceptance"],
     ["accepted", paymentAcceptanceMessage(), "Accepted"],
-    ["proof_received", paymentProofMessage(), "Payment proof received — not yet verified"],
+    ["proof_received", paymentProofMessage(), "Payment proof could not be verified yet"],
     ["rejected", paymentRejectionMessage(), "Failed before wallet handoff"],
     ["cancelled", paymentCancellationMessage(), "Failed before wallet handoff"],
     ["private_payment_list", privatePaymentListMessage(), "Unverified payment methods"],
@@ -267,15 +267,29 @@ describe("ThreadView payment status text", () => {
     expect(host.textContent).toContain("Paid");
   });
 
+  it("renders own pending payment request as Requested", async () => {
+    const message = { ...paymentRequestMessage(NOW + 60_000), senderPubky: OWNER, direction: "sent" as const };
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      messages: [message],
+      status: { kind: "enabled", pubky: OWNER },
+      now: NOW,
+    });
+
+    expect(host.textContent).toContain("Requested");
+    expect(host.textContent).not.toContain("Requested by peer");
+  });
+
   it.each([
     ["accepted", "Accepted"],
-    ["claimed", "Payment proof received — not yet verified"],
+    ["claimed", "Payment proof could not be verified yet"],
     ["verified", "Paid"],
     ["expired", "Expired before acceptance"],
     ["rejected", "Failed before wallet handoff"],
     ["cancelled", "Failed before wallet handoff"],
     ["pending", "Requested by peer"],
-    ["proof_received", "Payment proof received — not yet verified"],
+    ["proof_received", "Payment proof could not be verified yet"],
     ["sending", "Sending"],
   ] as const)("maps %s display status to receipt copy", (status, expected) => {
     expect(paymentDisplayStatusText(status)).toBe(expected);

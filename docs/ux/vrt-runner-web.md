@@ -55,14 +55,26 @@ labels remain deterministic without freezing browser timers.
 
 ## Integrity Waivers
 
-The near-identity allowlist is mirrored in `scripts/ux-vrt-integrity.mjs` and
-printed by the Playwright gate. Every entry must name both scene ids and state
-the real production difference that remains visible in the baseline:
-channel editing/populated composer variants, private-channel busy create,
-public-topic loading/error/unavailable status rows, public-topic
-directory error, nav enabled/needs-enable badge count, thread empty/loading,
-and payment requested/expired/proof/failed/unverified status rows. A future
-waiver must meet the same standard and be mirrored in the script.
+`IDENTITY_ALLOWLIST` keys from `scripts/ux-vrt-integrity.mjs` (exact pair keys,
+one per line). A future waiver must be added here and in the script together:
+
+```
+channel-editing::channel-populated
+channels-private-busy::channels-private-empty
+channels-public-error::channels-public-initial
+channels-public-error::channels-public-populated
+chrome-nav-enabled::chrome-nav-needs-enable
+public-topic-empty::public-topic-loading
+public-topic-empty::public-topic-unavailable
+public-topic-error::public-topic-loading
+public-topic-error::public-topic-unavailable
+public-topic-loading::public-topic-unavailable
+thread-empty::thread-loading
+thread-payment-expired::thread-payment-notice
+thread-payment-failed::thread-payment-proof
+thread-payment-failed::thread-payment-unverified
+thread-payment-proof::thread-payment-unverified
+```
 
 Seven matrix cells remain legitimate hard waivers:
 

@@ -22,7 +22,7 @@ const REACTIONS = [
   { emoji: "👎", name: "thumbs down" },
 ] as const;
 
-export function deliveryLabel(state: LinkMessage["deliveryState"]): string {
+function deliveryLabel(state: LinkMessage["deliveryState"]): string {
   return formatDeliveryStatus(state);
 }
 

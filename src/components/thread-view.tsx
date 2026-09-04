@@ -40,7 +40,7 @@ export function paymentDisplayStatusText(status: PaymentDisplayStatus): string {
     case "accepted":
       return "Accepted";
     case "claimed":
-      return "Payment proof received — not yet verified";
+      return "Payment proof could not be verified yet";
     case "verified":
       return "Paid";
     case "expired":
@@ -51,7 +51,7 @@ export function paymentDisplayStatusText(status: PaymentDisplayStatus): string {
     case "pending":
       return "Requested by peer";
     case "proof_received":
-      return "Payment proof received — not yet verified";
+      return "Payment proof could not be verified yet";
     case "sending":
       return "Sending";
     default:
@@ -59,7 +59,7 @@ export function paymentDisplayStatusText(status: PaymentDisplayStatus): string {
   }
 }
 
-export function paymentNoticeStatus(message: LinkMessage, now?: number): string {
+export function paymentNoticeStatus(message: LinkMessage, mine: boolean, now?: number): string {
   const decoded =
     (message.rawJson ? decodePaymentEnvelope(message.rawJson) : null) ??
     (message.body ? decodePaymentEnvelope(message.body) : null);
@@ -68,7 +68,9 @@ export function paymentNoticeStatus(message: LinkMessage, now?: number): string 
     const expiresAt = decoded.request.proposal_expires_at
       ? Date.parse(decoded.request.proposal_expires_at)
       : null;
-    return paymentDisplayStatusText(displayPaymentStatus("pending", expiresAt, now ?? Date.now()));
+    const status = displayPaymentStatus("pending", expiresAt, now ?? Date.now());
+    if (mine && status === "pending") return "Requested";
+    return paymentDisplayStatusText(status);
   }
 
   switch (message.kind) {
@@ -221,7 +223,7 @@ export function ThreadView({
                 <PaymentNotice
                   key={`${message.senderPubky}:${message.kind}:${message.eventId}`}
                   notice={describePaymentNotice(message)}
-                  status={paymentNoticeStatus(message, now)}
+                  status={paymentNoticeStatus(message, message.senderPubky === localPubky, now)}
                   mine={message.senderPubky === localPubky}
                 />
               );
