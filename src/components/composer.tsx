@@ -96,6 +96,7 @@ export function Composer({
             type="file"
             accept={accept}
             className="sr-only"
+            tabIndex={-1}
             aria-label="Choose attachment"
             data-testid={`${testIdPrefix}AttachInput`}
             onChange={(event) => {

@@ -95,6 +95,35 @@ plus three embedded close-ups (`composer-menu`, `attachment-failed`,
 remaining uncovered cells are post-release coverage work, not duplicate-gate
 waivers.
 
+## Phase 5 gates
+
+These run as part of the single static command (after the harness export into
+`out-e2e/`):
+
+```bash
+rm -rf out-e2e
+npm run test:e2e:static
+```
+
+That command covers:
+
+| Gate | How |
+| --- | --- |
+| Axe WCAG 2.1 A/AA | `e2e/ux-axe.spec.ts` — every catalog scene, `serious`/`critical` fail. Chromium. |
+| Keyboard navigation | `e2e/keyboard-nav.spec.ts` — primary catalog routes (chats, thread, contacts, settings, enable, connect). Chromium. |
+| WebKit smoke | Playwright project `webkit-smoke` — same functional specs as `chromium` except `sw-upgrade.spec.ts` (that proof rewrites `out-e2e/sw.js` on disk and stays Chromium-only). |
+| Firefox smoke | Playwright project `firefox-smoke` — same functional set as `webkit-smoke`. |
+| Pixel VRT | `chromium-mobile-pixel` and `chromium-desktop-pixel` on `e2e/ux-catalog.spec.ts`. |
+
+Run one gate against an existing `out-e2e/` tree:
+
+```bash
+PLAYWRIGHT_STATIC=1 npx playwright test e2e/ux-axe.spec.ts --project=chromium
+PLAYWRIGHT_STATIC=1 npx playwright test e2e/keyboard-nav.spec.ts --project=chromium
+PLAYWRIGHT_STATIC=1 npx playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts e2e/production-hooks.spec.ts --project=webkit-smoke
+PLAYWRIGHT_STATIC=1 npx playwright test e2e/thread-origin.spec.ts e2e/recovery-gate.spec.ts e2e/production-hooks.spec.ts --project=firefox-smoke
+```
+
 | Section | Cells | Scenes | Waivers |
 | --- | ---: | ---: | ---: |
 | Shared chrome | 8 | 5 | 2 |

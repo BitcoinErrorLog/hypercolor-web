@@ -24,6 +24,7 @@ function inertBackground(overlay: HTMLElement): () => void {
   for (const child of Array.from(document.body.children)) {
     if (child === overlay) continue;
     if (!(child instanceof HTMLElement)) continue;
+    if (child.contains(overlay)) continue;
     if (child.inert) continue;
     child.inert = true;
     blocked.push(child);

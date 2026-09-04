@@ -50,6 +50,14 @@ for (const scene of UX_CATALOG_SCENES) {
       expect(text).not.toMatch(/^\p{Cf}$/u);
       await expect(avatarInitial).toHaveText(/[^\p{Cf}\s]/u);
     }
+    if (scene.id === "settings-recovery-gate") {
+      const stay = page.getByTestId("backupLeaveStay");
+      if (await stay.count()) {
+        await stay.evaluate((el) => {
+          if (el instanceof HTMLElement) el.blur();
+        });
+      }
+    }
     await expect(surface).toHaveScreenshot(`${scene.id}.png`, {
       animations: "disabled",
       mask: [

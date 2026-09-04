@@ -48,6 +48,28 @@ export default defineConfig({
       testIgnore: [/ux-catalog\.spec\.ts/, /\._/],
     },
     {
+      name: "webkit-smoke",
+      testIgnore: [
+        /ux-catalog\.spec\.ts/,
+        /ux-axe\.spec\.ts/,
+        /keyboard-nav\.spec\.ts/,
+        /sw-upgrade\.spec\.ts/,
+        /\._/,
+      ],
+      use: { browserName: "webkit" },
+    },
+    {
+      name: "firefox-smoke",
+      testIgnore: [
+        /ux-catalog\.spec\.ts/,
+        /ux-axe\.spec\.ts/,
+        /keyboard-nav\.spec\.ts/,
+        /sw-upgrade\.spec\.ts/,
+        /\._/,
+      ],
+      use: { browserName: "firefox" },
+    },
+    {
       name: "chromium-mobile-pixel",
       testMatch: /ux-catalog\.spec\.ts/,
       testIgnore: /\._/,
