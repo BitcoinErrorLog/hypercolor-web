@@ -43,6 +43,13 @@ for (const scene of UX_CATALOG_SCENES) {
     if (scene.id === "enable-waiting-qr") {
       await expect(page.getByTestId("enableMessagingQr")).toBeVisible();
     }
+    if (scene.id === "profile-enabled") {
+      const avatarInitial = surface.getByTestId("profileAvatarInitial");
+      const text = (await avatarInitial.textContent()) ?? "";
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/^\p{Cf}$/u);
+      await expect(avatarInitial).toHaveText(/[^\p{Cf}\s]/u);
+    }
     await expect(surface).toHaveScreenshot(`${scene.id}.png`, {
       animations: "disabled",
       mask: [
@@ -50,7 +57,7 @@ for (const scene of UX_CATALOG_SCENES) {
         page.getByTestId("enableMessagingQr"),
         page.getByTestId("recoveryCode"),
       ],
-      maxDiffPixelRatio: 0.001,
+      maxDiffPixels: 24,
     });
   });
 }

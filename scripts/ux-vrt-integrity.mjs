@@ -7,14 +7,6 @@ export const IDENTITY_THRESHOLD = 0.99;
 
 export const IDENTITY_ALLOWLIST = new Map([
   [
-    "channel-composer-disabled::channel-editing",
-    "Both capture the same production channel thread; the reviewed difference is the composer disabled card versus the edit draft at the bottom.",
-  ],
-  [
-    "channel-composer-disabled::channel-populated",
-    "Both capture the same production channel thread; the reviewed difference is the enable-messaging composer block.",
-  ],
-  [
     "channel-editing::channel-populated",
     "Both capture the same production channel thread; the reviewed difference is the edit-mode composer draft.",
   ],
@@ -64,7 +56,7 @@ export const IDENTITY_ALLOWLIST = new Map([
   ],
   [
     "thread-payment-failed::thread-payment-paid",
-    "Both capture the same production read-only payment bubble; the reviewed difference is paid versus failed status copy.",
+    "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus failed status copy.",
   ],
   [
     "thread-payment-failed::thread-payment-unverified",
@@ -72,7 +64,7 @@ export const IDENTITY_ALLOWLIST = new Map([
   ],
   [
     "thread-payment-paid::thread-payment-unverified",
-    "Both capture the same production read-only payment bubble; the reviewed difference is paid versus unverified status copy.",
+    "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus unverified status copy.",
   ],
 ]);
 

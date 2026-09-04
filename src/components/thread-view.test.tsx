@@ -3,12 +3,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { ThreadView } from "@/components/thread-view";
+import { PaymentNotice } from "@/components/payment-notice";
+import { paymentDisplayStatusText, ThreadView } from "@/components/thread-view";
 import {
   peekThreadOrigin,
   rememberThreadOrigin,
   takeThreadOrigin,
 } from "@/lib/list-detail-focus";
+import type { LinkMessage } from "@/types/link";
+import {
+  buildPaymentAcceptanceEnvelope,
+  buildPaymentCancellationEnvelope,
+  buildPaymentProofEnvelope,
+  buildPaymentRejectionEnvelope,
+  buildPaymentRequestEnvelope,
+  buildPrivatePaymentListEnvelope,
+} from "@/types/payment";
 
 vi.mock("next/navigation", () => ({
   usePathname: () => "/chats",
@@ -30,6 +40,9 @@ vi.mock("next/link", () => ({
 }));
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+const PEER = "p1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+const PAYMENT_REQUEST_ID = "22222222-2222-4222-8222-222222222222";
+const NOW = Date.UTC(2026, 8, 3, 12, 0, 0);
 
 let host: HTMLDivElement;
 let root: Root;
@@ -78,6 +91,85 @@ async function renderThread(props?: Partial<Parameters<typeof ThreadView>[0]>) {
   });
 }
 
+async function render(ui: ReactNode) {
+  await act(async () => {
+    root.render(ui);
+  });
+}
+
+function paymentMessage(input: {
+  kind: string;
+  rawJson: string;
+  body?: string;
+}): LinkMessage {
+  return {
+    ownerPubky: OWNER,
+    eventId: "55555555-5555-4555-8555-555555555555",
+    conversationId: `dm:${PEER}`,
+    peerPubky: PEER,
+    senderPubky: PEER,
+    direction: "received",
+    kind: input.kind,
+    rawJson: input.rawJson,
+    body: input.body ?? "Payment",
+    sentAt: NOW,
+    receivedAt: NOW,
+    deliveryState: "delivered",
+  };
+}
+
+function paymentRequestMessage(expiresAtMs: number | null) {
+  const { envelope, json } = buildPaymentRequestEnvelope({
+    eventId: "55555555-5555-4555-8555-555555555555",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+    amountValue: "0.001",
+    paymentReference: "coffee",
+    endpointIds: ["btc-lightning-bolt11"],
+    expiresAtMs,
+  });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Payment request" });
+}
+
+function paymentAcceptanceMessage() {
+  const { envelope, json } = buildPaymentAcceptanceEnvelope({
+    eventId: "66666666-6666-4666-8666-666666666666",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+  });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Payment accepted" });
+}
+
+function paymentProofMessage() {
+  const { envelope, json } = buildPaymentProofEnvelope({
+    eventId: "77777777-7777-4777-8777-777777777777",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+    paymentReference: "coffee",
+    paymentEndpointIdentifier: "btc-lightning-bolt11",
+    proofData: "fixture-preimage",
+  });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Payment proof" });
+}
+
+function paymentRejectionMessage() {
+  const { envelope, json } = buildPaymentRejectionEnvelope({
+    eventId: "88888888-8888-4888-8888-888888888888",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+  });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Payment rejected" });
+}
+
+function paymentCancellationMessage() {
+  const { envelope, json } = buildPaymentCancellationEnvelope({
+    eventId: "99999999-9999-4999-8999-999999999999",
+    paymentRequestId: PAYMENT_REQUEST_ID,
+  });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Payment cancelled" });
+}
+
+function privatePaymentListMessage() {
+  const { envelope, json } = buildPrivatePaymentListEnvelope({ paymentEndpoints: {} });
+  return paymentMessage({ kind: envelope.kind, rawJson: json, body: "Tip list" });
+}
+
 describe("ThreadView origin snapshot", () => {
   beforeEach(() => {
     host = document.createElement("div");
@@ -120,5 +212,72 @@ describe("ThreadView origin snapshot", () => {
     expect(host.querySelector("[data-testid=detailBack]")?.getAttribute("aria-label")).toBe(
       "Back to Contact",
     );
+  });
+});
+
+describe("ThreadView payment status text", () => {
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    stubMatchMedia(false);
+    sessionStorage.clear();
+    takeThreadOrigin();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    host.remove();
+    sessionStorage.clear();
+    takeThreadOrigin();
+  });
+
+  it.each([
+    ["pending", paymentRequestMessage(NOW + 60_000), "Requested by peer"],
+    ["expired", paymentRequestMessage(NOW - 60_000), "Expired before acceptance"],
+    ["accepted", paymentAcceptanceMessage(), "Accepted"],
+    ["proof_received", paymentProofMessage(), "Payment proof received — not yet verified"],
+    ["rejected", paymentRejectionMessage(), "Failed before wallet handoff"],
+    ["cancelled", paymentCancellationMessage(), "Failed before wallet handoff"],
+    ["private_payment_list", privatePaymentListMessage(), "Unverified payment methods"],
+  ])("renders %s payment status as visible text", async (_status, message, expected) => {
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      messages: [message],
+      status: { kind: "enabled", pubky: OWNER },
+      now: NOW,
+    });
+
+    expect(host.textContent).toContain(expected);
+    expect(host.textContent).not.toContain("Paid on mobile wallet");
+  });
+
+  it("renders verified payment status as Paid", async () => {
+    await render(
+      <PaymentNotice
+        notice={{ title: "Payment proof", amount: null, reference: null }}
+        mine={false}
+        status={paymentDisplayStatusText("verified")}
+      />,
+    );
+
+    expect(host.textContent).toContain("Paid");
+  });
+
+  it.each([
+    ["accepted", "Accepted"],
+    ["claimed", "Payment proof received — not yet verified"],
+    ["verified", "Paid"],
+    ["expired", "Expired before acceptance"],
+    ["rejected", "Failed before wallet handoff"],
+    ["cancelled", "Failed before wallet handoff"],
+    ["pending", "Requested by peer"],
+    ["proof_received", "Payment proof received — not yet verified"],
+    ["sending", "Sending"],
+  ] as const)("maps %s display status to receipt copy", (status, expected) => {
+    expect(paymentDisplayStatusText(status)).toBe(expected);
   });
 });

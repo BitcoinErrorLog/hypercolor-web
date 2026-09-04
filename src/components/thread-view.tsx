@@ -24,7 +24,8 @@ import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment"
 import type { LinkMessage } from "@/types/link";
 import {
   decodePaymentEnvelope,
-  isProposalExpired,
+  displayPaymentStatus,
+  type PaymentDisplayStatus,
   PAYKIT_PAYMENT_ACCEPTANCE_KIND,
   PAYKIT_PAYMENT_CANCELLATION_KIND,
   PAYKIT_PAYMENT_PROOF_KIND,
@@ -34,7 +35,31 @@ import {
 } from "@/types/payment";
 import type { SessionUiStatus } from "@/stores/sessionStatusStore";
 
-function paymentNoticeStatus(message: LinkMessage, now?: number): string {
+export function paymentDisplayStatusText(status: PaymentDisplayStatus): string {
+  switch (status) {
+    case "accepted":
+      return "Accepted";
+    case "claimed":
+      return "Payment proof received — not yet verified";
+    case "verified":
+      return "Paid";
+    case "expired":
+      return "Expired before acceptance";
+    case "rejected":
+    case "cancelled":
+      return "Failed before wallet handoff";
+    case "pending":
+      return "Requested by peer";
+    case "proof_received":
+      return "Payment proof received — not yet verified";
+    case "sending":
+      return "Sending";
+    default:
+      return "Payment";
+  }
+}
+
+export function paymentNoticeStatus(message: LinkMessage, now?: number): string {
   const decoded =
     (message.rawJson ? decodePaymentEnvelope(message.rawJson) : null) ??
     (message.body ? decodePaymentEnvelope(message.body) : null);
@@ -43,16 +68,20 @@ function paymentNoticeStatus(message: LinkMessage, now?: number): string {
     const expiresAt = decoded.request.proposal_expires_at
       ? Date.parse(decoded.request.proposal_expires_at)
       : null;
-    return isProposalExpired(expiresAt, now ?? Date.now()) ? "Expired before acceptance" : "Requested by peer";
+    return paymentDisplayStatusText(displayPaymentStatus("pending", expiresAt, now ?? Date.now()));
   }
 
   switch (message.kind) {
     case PAYKIT_PAYMENT_ACCEPTANCE_KIND:
+      return paymentDisplayStatusText(displayPaymentStatus("accepted", null, now ?? Date.now()));
     case PAYKIT_PAYMENT_PROOF_KIND:
-      return "Paid on mobile wallet";
+      return paymentDisplayStatusText(
+        displayPaymentStatus("proof_received", null, now ?? Date.now(), { proofVerified: null }),
+      );
     case PAYKIT_PAYMENT_REJECTION_KIND:
+      return paymentDisplayStatusText(displayPaymentStatus("rejected", null, now ?? Date.now()));
     case PAYKIT_PAYMENT_CANCELLATION_KIND:
-      return "Failed before wallet handoff";
+      return paymentDisplayStatusText(displayPaymentStatus("cancelled", null, now ?? Date.now()));
     case PAYKIT_PRIVATE_PAYMENT_LIST_KIND:
       return "Unverified payment methods";
     default:

@@ -21,7 +21,7 @@ export function ProfilePage() {
     <article className="space-y-6" data-testid="profileScreen" data-surface="profile-page">
       <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
       <div className="flex flex-col items-center gap-3 py-8">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl hc-brand-text">
+        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl hc-brand-text" data-testid="profileAvatarInitial">
           {avatarInitial(profile?.displayName
             ? sanitizeDisplayName(profile.displayName)
             : pubky ?? "?")}

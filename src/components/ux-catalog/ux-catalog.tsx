@@ -473,7 +473,12 @@ function settingsFixture(state: string): SettingsPageFixture {
 
 function sessionStatusForScene(scene: UxCatalogScene): SessionUiStatus {
   if (scene.state === "no-identity" || scene.state === "not-connected") return { kind: "no-identity" };
-  if (scene.state === "needs-enable" || scene.state === "disabled-composer" || scene.state === "empty-enable") return { kind: "needs-enable" };
+  if (
+    scene.state === "needs-enable" ||
+    scene.state === "disabled-composer" ||
+    scene.state === "empty-enable" ||
+    scene.state === "composer-disabled"
+  ) return { kind: "needs-enable" };
   if (scene.state === "offline") return { kind: "session-offline", pubky: OWNER };
   return { kind: "enabled", pubky: OWNER };
 }

@@ -24,7 +24,9 @@ npm run vrt:report
 ```
 
 The normal gate must run without `--update-snapshots`; it compares against the
-committed baselines with `maxDiffPixelRatio: 0.001`.
+committed baselines with `maxDiffPixels: 24`. The budget is absolute rather
+than ratio-based so a single missing avatar initial, badge digit, or short icon
+cannot be swallowed by a larger desktop viewport.
 
 The command builds the static harness export, serves `out-e2e`, runs the existing
 static e2e proofs, then runs `e2e/ux-catalog.spec.ts` in:
@@ -56,10 +58,10 @@ labels remain deterministic without freezing browser timers.
 The near-identity allowlist is mirrored in `scripts/ux-vrt-integrity.mjs` and
 printed by the Playwright gate. Every entry must name both scene ids and state
 the real production difference that remains visible in the baseline:
-channel composer disabled/editing/populated variants, private-channel busy
-create, public-topic loading/error/unavailable status rows, public-topic
+channel editing/populated composer variants, private-channel busy create,
+public-topic loading/error/unavailable status rows, public-topic
 directory error, nav enabled/needs-enable badge count, thread empty/loading,
-and payment requested/expired/paid/failed/unverified status rows. A future
+and payment requested/expired/proof/failed/unverified status rows. A future
 waiver must meet the same standard and be mirrored in the script.
 
 Seven matrix cells remain legitimate hard waivers:
