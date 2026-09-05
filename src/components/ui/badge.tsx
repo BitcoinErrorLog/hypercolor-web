@@ -14,7 +14,7 @@ const badgeVariants = cva(
         secondary: "bg-secondary text-secondary-foreground",
         destructive: "bg-destructive/60 text-destructive-foreground",
         outline: "text-foreground bg-background border-border",
-        teal: "bg-brand-2 text-on-teal",
+        teal: "hc-brand-2-fill text-on-teal",
       },
     },
     defaultVariants: {
@@ -33,4 +33,4 @@ const Badge = React.forwardRef<
   );
 });
 
-export { Badge, badgeVariants };
+export { Badge };

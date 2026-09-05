@@ -161,7 +161,7 @@ describe("web design tokens", () => {
     const files = [...walk(join(root, "app")), ...walk(join(root, "src/components"))]
       .filter((file) => /\.(?:ts|tsx|css)$/.test(file))
       .filter((file) => file !== globalsPath);
-    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|style=\{\{|(?:^|[\s"`])(?:text-red-|text-amber-|text-white|bg-white|bg-red-|bg-green-|bg-yellow-)/;
+    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|style=\{\{|(?:^|[\s"`])(?:text-red|text-amber|text-white|bg-white|bg-brand|text-brand|bg-red|bg-green|bg-yellow|border-white|bg-\[|text-\[|h-8|h-9|w-9|min-h-\[|min-w-\[|max-h-\[|max-w-\[|p[xy]?-\[|m[xy]?-\[|gap-\[|rounded-\[)/;
     const failures = files.flatMap((file) =>
       readFileSync(file, "utf8")
         .split("\n")

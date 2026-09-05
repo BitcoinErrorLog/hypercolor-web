@@ -8,6 +8,17 @@ const source = readFileSync(
   "utf8",
 );
 
+describe("composer keyboard send", () => {
+  it("sends on Enter, inserts newline on Shift+Enter, and ignores IME composition", () => {
+    expect(source).toContain("onKeyDown");
+    expect(source).toContain('event.key !== "Enter"');
+    expect(source).toContain("event.shiftKey");
+    expect(source).toContain("event.nativeEvent.isComposing");
+    expect(source).toContain("event.keyCode === 229");
+    expect(source).toContain("requestSubmit");
+  });
+});
+
 describe("composer action menu", () => {
   it("uses the shared sheet with named attach actions", () => {
     expect(source).toContain("ModalSheet");

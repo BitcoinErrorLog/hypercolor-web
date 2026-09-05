@@ -61,7 +61,7 @@ export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
   return (
     <div
       role="status"
-      className="border-b border-border bg-brand/8 px-6 py-3 text-sm text-card-foreground"
+      className="border-b border-border hc-brand-banner px-6 py-3 text-sm text-card-foreground"
       data-surface="tab-lock-banner"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">

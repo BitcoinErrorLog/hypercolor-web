@@ -4,8 +4,6 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { SiteNav } from "@/components/site-nav";
 
-export type ShellNavId = "chats" | "contacts" | "channels" | "requests" | "settings" | "home" | "profile";
-
 export function AppShell({
   title,
   leftRail,
@@ -16,8 +14,6 @@ export function AppShell({
   centerColumn = false,
 }: {
   title: string;
-  active?: ShellNavId;
-  selfPubky?: string;
   leftRail?: ReactNode;
   rightRail?: ReactNode;
   children: ReactNode;
@@ -45,8 +41,8 @@ export function AppShell({
         className={cn(
           "mx-auto flex w-full min-w-0 max-w-(--container-max-width) px-4 lg:px-6 xl:px-0",
           hideChrome && "min-h-svh w-full flex-col justify-center py-8",
-          fillViewport && !hideChrome && "flex min-h-0 flex-1 items-stretch gap-6 overflow-hidden pb-28 lg:min-h-[calc(100svh-var(--header-height))] lg:pb-0",
-          !fillViewport && !hideChrome && "flex flex-1 gap-6 pb-28 lg:pb-10",
+          fillViewport && !hideChrome && "hc-mobile-nav-inset flex min-h-0 flex-1 items-stretch gap-6 overflow-hidden lg:min-h-[calc(100svh-var(--header-height))] lg:pb-0",
+          !fillViewport && !hideChrome && "hc-mobile-nav-inset flex flex-1 gap-6 lg:pb-10",
         )}
       >
         {leftRail ? (

@@ -83,5 +83,3 @@ export function Toaster({ children }: { children?: ReactNode } = {}) {
     </div>
   );
 }
-
-export { toastVariants };

@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { IconHash, IconMessageCircle, IconUsers } from "@/components/ui/icons";
+import { IconHash, IconMessageCircle, IconUser, IconUsers } from "@/components/ui/icons";
 import { unreadLabel } from "@/lib/format";
 import { hasIdentity, sessionCopy } from "@/lib/session-ui";
 import { emit } from "@/services/vibeware/collector";
@@ -21,7 +21,7 @@ const PRIMARY = [
   { href: "/chats", label: "Chats", prefix: "/chats", icon: IconMessageCircle },
   { href: "/channels", label: "Channels", prefix: "/channels", icon: IconHash },
   { href: "/contacts", label: "Contacts", prefix: "/contacts", icon: IconUsers },
-  { href: "/profile", label: "Profile", prefix: "/profile", icon: IconUsers },
+  { href: "/profile", label: "Profile", prefix: "/profile", icon: IconUser },
 ] as const;
 
 function isActive(pathname: string, href: string, prefix: string): boolean {
@@ -32,7 +32,7 @@ function NavBadge({ count, testId }: { count: number; testId: string }) {
   if (count <= 0) return null;
   return (
     <span
-      className="ml-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full hc-brand-fill px-1 hc-meta font-medium"
+      className="absolute -right-1 -top-1 inline-flex min-h-5 min-w-5 items-center justify-center rounded-full hc-brand-fill px-1 hc-meta font-medium"
       data-testid={testId}
     >
       {unreadLabel(count)}
@@ -121,14 +121,14 @@ export function SiteNav({
                       : link.label
                 }
               >
-                <Icon className="size-6" />
-                <span className="sr-only">
-                  {link.label}
+                <span className="relative inline-flex">
+                  <Icon className="size-6" />
                   {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
                   {link.label === "Channels" ? (
                     <NavBadge count={channelUnread} testId="channelsNavBadge" />
                   ) : null}
                 </span>
+                <span className="sr-only">{link.label}</span>
               </Link>
             </Button>
           );
@@ -153,7 +153,7 @@ export function SiteNav({
       </div>
 
       <nav
-        className="fixed inset-x-0 bottom-0 z-(--z-mobile-menu) bg-linear-to-t from-background via-background/95 to-transparent px-3 py-4 lg:hidden"
+        className="hc-site-nav-mobile fixed inset-x-0 bottom-0 z-(--z-mobile-menu) bg-linear-to-t from-background via-background/95 to-transparent px-3 pt-4 lg:hidden"
         data-surface="site-nav-mobile"
       >
         <ul className="mx-auto flex w-full hc-mobile-nav-max items-center justify-between rounded-full p-3">
@@ -175,22 +175,14 @@ export function SiteNav({
                           : link.label
                     }
                   >
-                    <span className="relative">
+                    <span className="relative inline-flex">
                       <Icon className="h-6 w-6" />
-                      {link.label === "Chats" && pendingRequests > 0 ? (
-                        <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
-                      ) : null}
-                      {link.label === "Channels" && channelUnread > 0 ? (
-                        <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
-                      ) : null}
-                    </span>
-                    <span className="sr-only">
-                      {link.label}
                       {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
                       {link.label === "Channels" ? (
                         <NavBadge count={channelUnread} testId="channelsNavBadge" />
                       ) : null}
                     </span>
+                    <span className="sr-only">{link.label}</span>
                   </Link>
                 </Button>
               </li>

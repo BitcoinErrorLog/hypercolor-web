@@ -56,5 +56,6 @@ describe("ux VRT integrity gate", () => {
       ))
     ).flat();
     expect(failures).toEqual([]);
+    // Pairwise identity over 86+86 catalog PNGs measured 366s on this machine (2026-09-05).
   }, 600_000);
 });

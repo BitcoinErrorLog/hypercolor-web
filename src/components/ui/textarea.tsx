@@ -24,4 +24,4 @@ function Textarea({
   return <textarea data-slot="textarea" {...props} className={cn(textareaVariants({ variant }), className)} />;
 }
 
-export { Textarea, textareaVariants };
+export { Textarea };

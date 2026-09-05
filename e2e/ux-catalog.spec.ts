@@ -63,7 +63,7 @@ for (const scene of UX_CATALOG_SCENES) {
     await expect(surface).toHaveScreenshot(`${scene.id}.png`, {
       animations: "disabled",
       caret: "hide",
-      maxDiffPixelRatio: 0.02,
+      maxDiffPixels: 24,
       mask: [
         page.getByTestId("welcomeQr"),
         page.getByTestId("enableMessagingQr"),

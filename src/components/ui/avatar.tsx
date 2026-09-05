@@ -48,9 +48,3 @@ export function Avatar({
   if (!ring) return inner;
   return <span className="hc-avatar-ring shrink-0">{inner}</span>;
 }
-
-export function AvatarFallback({ seed, size = 40 }: { seed: string; size?: number }) {
-  return <Identicon seed={seed} size={size} />;
-}
-
-export { avatarVariants };

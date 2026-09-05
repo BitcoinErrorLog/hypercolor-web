@@ -9,7 +9,7 @@ import { StandbyBanner } from "@/components/standby-banner";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { TabLockBanner } from "@/components/tab-lock-banner";
 import { AppShell } from "@/components/shell/app-shell";
-import { FilterHeader, FilterList, FilterRoot } from "@/components/ui/filter";
+import { FilterHeader, FilterRoot } from "@/components/ui/filter";
 import { Toaster } from "@/components/ui/toast";
 import { APP_NAME } from "@/lib/app-meta";
 
@@ -44,14 +44,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
     pathname.startsWith("/profile") ||
     pathname.startsWith("/discover");
 
-  const leftRail = pathname.startsWith("/chats") ? (
-    <FilterRoot>
-      <FilterHeader title="Inbox" subtitle="Direct" />
-      <FilterList>
-        <p className="py-1 text-base font-medium text-foreground">All</p>
-      </FilterList>
-    </FilterRoot>
-  ) : pathname.startsWith("/contacts") ? (
+  const leftRail = pathname.startsWith("/contacts") ? (
     <FilterRoot>
       <FilterHeader title="People" subtitle="On this device" />
     </FilterRoot>
@@ -59,12 +52,15 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <SessionBootstrap />
+      {e2e ? null : <SessionBootstrap />}
       <BackupLeaveGuard />
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
       {e2e ? (
+        // Catalog/VRT harness: skip SessionBootstrap, SessionBanner, StandbyBanner,
+        // TabLockBanner, and PwaRegister so scene captures are not contaminated by
+        // live session chrome (including "Checking session…" from the default store).
         <div id="main-content" tabIndex={-1} className="flex-1">
           {children}
         </div>

@@ -17,7 +17,7 @@ import {
 import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
 
 const bannerFrame =
-  "border-b border-border bg-brand/8 px-4 py-3 text-sm text-card-foreground lg:px-6 xl:px-0";
+  "border-b border-border hc-brand-banner px-4 py-3 text-sm text-card-foreground lg:px-6 xl:px-0";
 const bannerInner =
   "mx-auto flex w-full max-w-(--container-max-width) flex-wrap items-center justify-between gap-3";
 

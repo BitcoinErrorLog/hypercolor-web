@@ -194,6 +194,12 @@ export function Composer({
         data-testid={`${testIdPrefix}Draft`}
         className="min-h-12 min-w-0 flex-1 text-base"
         onChange={(event) => onChangeDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" || event.shiftKey) return;
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          event.preventDefault();
+          event.currentTarget.form?.requestSubmit();
+        }}
       />
       <div className="flex shrink-0 items-end gap-2" data-slot="composer-actions">
         {actions ?? sendButton}
