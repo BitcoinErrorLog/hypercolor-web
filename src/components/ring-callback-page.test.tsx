@@ -18,6 +18,7 @@ import { getLiveSession } from "@/services/link/session";
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     initKeyStore: vi.fn(),
+    readPendingRingIndex: vi.fn(async () => [] as string[]),
   },
 }));
 
@@ -92,6 +93,7 @@ describe("RingCallbackPage errors", () => {
     root = createRoot(host);
     window.history.replaceState({}, "", "/ring-callback?ch=test-channel");
     vi.mocked(KeyStore.initKeyStore).mockReset().mockResolvedValue(undefined);
+    vi.mocked(KeyStore.readPendingRingIndex).mockReset().mockResolvedValue([]);
     vi.mocked(validateHandoffPublicParams).mockReset().mockReturnValue({
       pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
       requestId: "req-1",
@@ -145,8 +147,9 @@ describe("RingCallbackPage errors", () => {
     expect(primaryErrorText()).not.toContain("nonce");
   });
 
-  it("renders canonical relay copy when notify fails", async () => {
+  it("renders canonical relay copy when notify fails after Continue", async () => {
     vi.mocked(pendingChannelMatches).mockResolvedValueOnce(false);
+    vi.mocked(KeyStore.readPendingRingIndex).mockResolvedValue(["test-channel"]);
     vi.mocked(publishHandoffParamsToRelay).mockRejectedValueOnce(
       new Error("httprelay 502 from edge"),
     );
@@ -155,10 +158,29 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    expect(publishHandoffParamsToRelay).not.toHaveBeenCalled();
+    await act(async () => {
+      (host.querySelector("[data-testid=ringCallbackConfirm] button") as HTMLButtonElement | null)?.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(primaryErrorText()).toBe("Could not notify the waiting computer.");
     expect(detailsText()).toContain("network error");
     expect(detailsText()).not.toContain("httprelay");
     expect(primaryErrorText()).not.toContain("httprelay");
+  });
+
+  it("does not forward an unknown ch and shows this-browser copy", async () => {
+    vi.mocked(pendingChannelMatches).mockResolvedValueOnce(false);
+    vi.mocked(KeyStore.readPendingRingIndex).mockResolvedValue([]);
+    await render(<RingCallbackPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(publishHandoffParamsToRelay).not.toHaveBeenCalled();
+    expect(host.querySelector("[data-testid=ringCallbackConfirm]")).toBeNull();
+    expect(host.textContent).toContain("This link isn't for this browser");
   });
 
   it("renders canonical handoff copy when adopt fails", async () => {

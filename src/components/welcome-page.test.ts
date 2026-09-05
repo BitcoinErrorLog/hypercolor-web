@@ -26,7 +26,8 @@ const base = {
 
 describe("welcome awaiting states", () => {
   it("hides Connect while a live or expired link is presenting", () => {
-    expect(source).toContain('data-testid="welcomeGenerate"');
+    expect(source).toContain("welcomeReloadPage");
+    expect(source).toContain("Reload page");
     expect(source).toContain('data-testid="welcomeCancel"');
     expect(source).toContain("onCancelWaiting");
     expect(resolveWelcomePhase({ ...base, linkLive: true })).toBe("waiting");

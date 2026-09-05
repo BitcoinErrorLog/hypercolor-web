@@ -32,6 +32,7 @@ export function WelcomePage({
   onCancelWaiting,
   onTryAgain,
   onShowQrAgain,
+  onReloadPage,
   onRetryPublish,
 }: {
   appName: string;
@@ -53,6 +54,7 @@ export function WelcomePage({
   onCancelWaiting: () => void;
   onTryAgain?: () => void;
   onShowQrAgain?: () => void;
+  onReloadPage?: () => void;
   onRetryPublish?: () => void;
 }) {
   const phase = resolveWelcomePhase({
@@ -106,9 +108,24 @@ export function WelcomePage({
           <p className="text-sm text-muted-foreground">
             This paykit-connect link expired. Generate a new one.
           </p>
-          <Button type="button" data-testid="welcomeGenerate" onClick={onGenerateLink}>
-            Generate new link
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {onShowQrAgain ? (
+              <Button type="button" data-testid="welcomeShowQrAgain" onClick={onShowQrAgain}>
+                Show QR again
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeReloadPage"
+              onClick={onReloadPage ?? (() => window.location.reload())}
+            >
+              Reload page
+            </Button>
+            <Button type="button" data-testid="welcomeGenerate" onClick={onGenerateLink}>
+              Generate new link
+            </Button>
+          </div>
         </div>
       ) : null}
 

@@ -85,11 +85,11 @@ export function WelcomePageHost() {
       if (result.kind === "timeout") {
         return;
       }
-      if (result.kind === "locator_timeout") {
+      if (result.kind === "auth_missing") {
         setError("Sign-in did not finish. Show the QR again.");
         return;
       }
-      if (result.kind === "auth_timeout") {
+      if (result.kind === "locator_missing") {
         try {
           await PaykitLinkWeb.signOutSession(result.session);
         } catch {
@@ -199,9 +199,8 @@ export function WelcomePageHost() {
       setFinishing(true);
       setError(null);
     },
-    onError: (err) => {
+    onError: (err, flowSession) => {
       setFinishing(false);
-      const flowSession = welcomeFlowErrorSignOutTarget();
       if (flowSession) {
         void PaykitLinkWeb.signOutSession(flowSession).catch(() => undefined);
       }
@@ -277,6 +276,7 @@ export function WelcomePageHost() {
       }}
       onTryAgain={mintNewLink}
       onShowQrAgain={showQrAgain}
+      onReloadPage={() => window.location.reload()}
       onConfirmAdoption={() => undefined}
       onCancelAdoption={() => undefined}
       onRetryPublish={

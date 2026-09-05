@@ -23,6 +23,7 @@ import {
   watchCombinedGrant,
   type CombinedWatchResult,
 } from "@/services/singleApproval";
+import type { SessionHandle } from "@/services/link/PaykitLinkWeb";
 
 export { resetPaykitConnectLive, resetPaykitConnectLiveForTests };
 
@@ -30,7 +31,7 @@ export type UsePaykitConnectOptions = {
   autoStart?: boolean;
   onResult?: (result: CombinedWatchResult) => Promise<void> | void;
   onProgress?: (stage: "locator" | "auth") => void;
-  onError?: (error: unknown) => void;
+  onError?: (error: unknown, flowSession?: SessionHandle | null) => void;
 };
 
 export type StartPaykitConnectOptions = {
@@ -95,10 +96,11 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
         }
       })
       .catch((error: unknown) => {
+        const flowSession = live.authFlow.session ?? null;
         settleLivePaykitConnect(live);
         if (live.abort.signal.aborted || live.authFlow.canceled) return;
         const handlers = getLivePaykitConnectHandlers();
-        (handlers.onError ?? onErrorRef.current)?.(error);
+        (handlers.onError ?? onErrorRef.current)?.(error, flowSession);
       });
   }, []);
 
@@ -180,22 +182,7 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
       : isUnexpired(started)
         ? started
         : null;
-    if (current && (await pendingChannelMatches(current.ch))) {
-      if (live && live.started.ch === current.ch) {
-        if (mountedRef.current) {
-          setStarted(current);
-          setIsExpired(false);
-          setIsLoading(false);
-        }
-        return;
-      }
-      const nextLive = {
-        started: current,
-        abort: new AbortController(),
-        authFlow: live?.authFlow ?? { handle: current.authFlow, canceled: false },
-      };
-      setLivePaykitConnect(nextLive);
-      bindWatch(nextLive);
+    if (live && current && live.started.ch === current.ch && (await pendingChannelMatches(current.ch))) {
       if (mountedRef.current) {
         setStarted(current);
         setIsExpired(false);
@@ -203,8 +190,13 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
       }
       return;
     }
+    if (live) {
+      live.authFlow.canceled = true;
+      live.abort.abort();
+      settleLivePaykitConnect(live);
+    }
     await start({ replace: true });
-  }, [bindWatch, start, started]);
+  }, [start, started]);
 
   const copyUrl = useCallback(async () => {
     if (!started) return;

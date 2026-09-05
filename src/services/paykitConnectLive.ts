@@ -1,4 +1,4 @@
-import type { AuthFlowHandle } from "@/services/link/PaykitLinkWeb";
+import type { AuthFlowHandle, SessionHandle } from "@/services/link/PaykitLinkWeb";
 import type { PaykitConnectStart } from "@/services/RingConnect";
 import type { CombinedWatchResult, TrackedAuthFlow } from "@/services/singleApproval";
 
@@ -11,7 +11,7 @@ export type LivePaykitConnect = {
 export type LivePaykitConnectHandlers = {
   onResult?: (result: CombinedWatchResult) => Promise<void> | void;
   onProgress?: (stage: "locator" | "auth") => void;
-  onError?: (error: unknown) => void;
+  onError?: (error: unknown, flowSession?: SessionHandle | null) => void;
 };
 
 let livePaykitConnect: LivePaykitConnect | null = null;

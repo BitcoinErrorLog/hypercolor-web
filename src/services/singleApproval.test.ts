@@ -186,7 +186,7 @@ describe("watchCombinedGrant split delivery", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
-  it("holds an auth-only handle until the deadline, then returns auth_timeout", async () => {
+  it("holds an auth-only handle until the deadline, then returns locator_missing", async () => {
     const session = fakeSession(OWNER);
     const flow: TrackedAuthFlow = {
       handle: {
@@ -208,13 +208,13 @@ describe("watchCombinedGrant split delivery", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(await KeyStore.getAppKeypair()).toBeNull();
     const result = await resultP;
-    expect(result.kind).toBe("auth_timeout");
-    if (result.kind === "auth_timeout") {
+    expect(result.kind).toBe("locator_missing");
+    if (result.kind === "locator_missing") {
       expect(result.session).toBe(session);
     }
   });
 
-  it("returns locator_timeout without persisting keys", async () => {
+  it("returns auth_missing without persisting keys", async () => {
     vi.spyOn(await import("./RingConnect"), "waitForHandoffParams").mockResolvedValue(params());
     vi.spyOn(await import("./RingConnect"), "decryptPendingHandoff").mockResolvedValue(payload());
     vi.spyOn(PaykitLinkWeb, "awaitAuthApproval").mockImplementation(
@@ -232,7 +232,7 @@ describe("watchCombinedGrant split delivery", () => {
       flow,
       signal: abort.signal,
     });
-    expect(result.kind).toBe("locator_timeout");
+    expect(result.kind).toBe("auth_missing");
     expect(await KeyStore.getAppKeypair()).toBeNull();
   });
 
@@ -289,6 +289,35 @@ describe("watchCombinedGrant split delivery", () => {
     ).rejects.toThrow("relay exploded");
     expect(signOut).toHaveBeenCalled();
   });
+
+  it("persists the locator before decrypt so a transient fetch failure can recover", async () => {
+    const next = params();
+    const remember = vi.spyOn(await import("./RingConnect"), "rememberPendingHandoffLocator");
+    vi.spyOn(await import("./RingConnect"), "waitForHandoffParams").mockResolvedValue(next);
+    vi.spyOn(await import("./RingConnect"), "decryptPendingHandoff").mockRejectedValueOnce(
+      new Error("homeserver 500"),
+    );
+    vi.spyOn(PaykitLinkWeb, "awaitAuthApproval").mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    const flow: TrackedAuthFlow = {
+      handle: { authorizationUrl: () => "" } as never,
+      canceled: false,
+    };
+    const abort = new AbortController();
+    await expect(
+      watchCombinedGrant({
+        ch: "ch-persist",
+        deadlineMs: Date.now() + 5_000,
+        flow,
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow("homeserver 500");
+    expect(remember).toHaveBeenCalledWith("ch-persist", next);
+    expect(remember.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked((await import("./RingConnect")).decryptPendingHandoff).mock.invocationCallOrder[0],
+    );
+  });
 });
 
 describe("finishLegacyChainedGrant (F7)", () => {
@@ -306,6 +335,22 @@ describe("finishLegacyChainedGrant (F7)", () => {
   it("checks pubky before adoptApprovedSession and signs out on mismatch", async () => {
     const signOut = vi.spyOn(PaykitLinkWeb, "signOutSession").mockResolvedValue(undefined);
     const session = fakeSession(OTHER);
+    await expect(
+      finishLegacyChainedGrant({
+        params: params("secure_handoff"),
+        payload: payload(),
+        session: session as never,
+        ch: "ch-legacy",
+      }),
+    ).rejects.toMatchObject({ name: "BindingMismatchError" });
+    expect(signOut).toHaveBeenCalled();
+    expect(adoptApprovedSession).not.toHaveBeenCalled();
+  });
+
+  it("signs out when the pending channel does not match", async () => {
+    const signOut = vi.spyOn(PaykitLinkWeb, "signOutSession").mockResolvedValue(undefined);
+    vi.spyOn(await import("./RingConnect"), "pendingChannelMatches").mockResolvedValue(false);
+    const session = fakeSession(OWNER);
     await expect(
       finishLegacyChainedGrant({
         params: params("secure_handoff"),

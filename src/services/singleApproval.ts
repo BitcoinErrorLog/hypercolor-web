@@ -35,8 +35,8 @@ export type CombinedWatchResult =
       payload: HandoffPayload;
       ch: string;
     }
-  | { kind: "auth_timeout"; session: SessionHandle }
-  | { kind: "locator_timeout"; params: HandoffPublicParams }
+  | { kind: "locator_missing"; session: SessionHandle }
+  | { kind: "auth_missing"; params: HandoffPublicParams }
   | { kind: "timeout" }
   | { kind: "aborted" };
 
@@ -125,11 +125,11 @@ export async function watchCombinedGrant(input: {
     const remaining = Math.max(0, deadlineMs - Date.now());
     timerHolder.id = setTimeout(() => {
       if (session && !params) {
-        finish({ kind: "auth_timeout", session });
+        finish({ kind: "locator_missing", session });
         return;
       }
       if (params && !session) {
-        finish({ kind: "locator_timeout", params });
+        finish({ kind: "auth_missing", params });
         return;
       }
       finish({ kind: "timeout" });
@@ -141,8 +141,8 @@ export async function watchCombinedGrant(input: {
         const mode = classifyHandoffMode(next.mode);
         if (!mode) return;
         onProgress?.("locator");
-        const decrypted = await decryptPendingHandoff(next, ch);
         rememberPendingHandoffLocator(ch, next);
+        const decrypted = await decryptPendingHandoff(next, ch);
         if (mode === HANDOFF_MODE_LEGACY) {
           flow.canceled = true;
           finish({
@@ -165,11 +165,11 @@ export async function watchCombinedGrant(input: {
             : "";
         if (name === "RelayPollExhaustedError" || Date.now() >= deadlineMs) {
           if (session && !params) {
-            finish({ kind: "auth_timeout", session });
+            finish({ kind: "locator_missing", session });
             return;
           }
           if (params && !session) {
-            finish({ kind: "locator_timeout", params });
+            finish({ kind: "auth_missing", params });
             return;
           }
           finish({ kind: "timeout" });
@@ -245,6 +245,12 @@ export async function finishLegacyChainedGrant(input: {
     await wipeSessionMetadata();
     useAuthStore.getState().clearSession();
     throw new BindingMismatchError("Handoff pubky does not match the approved session");
+  }
+  if (!(await pendingChannelMatches(ch))) {
+    await signOutQuietly(session);
+    await wipeSessionMetadata();
+    useAuthStore.getState().clearSession();
+    throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
   }
   const adopted = await adoptApprovedSession(session);
   await adoptHandoff(params, payload, ch);

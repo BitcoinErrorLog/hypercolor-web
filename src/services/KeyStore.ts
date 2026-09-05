@@ -484,7 +484,7 @@ export async function deleteLinkSession(): Promise<void> {
 
 // ─── Pending Ring handoff (wrapped ephemeral X25519 secret, keyed by ch) ──────
 
-async function readPendingRingIndex(): Promise<string[]> {
+export async function readPendingRingIndex(): Promise<string[]> {
   try {
     const raw = await getMetadata(KEY_PENDING_RING_INDEX);
     if (!raw) return [];
@@ -967,6 +967,7 @@ export const KeyStore = {
   setPendingRingHandoff,
   getPendingRingHandoff,
   getPendingRingHandoffPublicKey,
+  readPendingRingIndex,
   clearPendingRingHandoff,
   setReceiverNoiseSecret,
   getReceiverNoiseSecret,

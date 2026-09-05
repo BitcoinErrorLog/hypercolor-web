@@ -43,6 +43,11 @@ function Probe() {
         data-testid="replace"
         onClick={() => void connect.start({ replace: true })}
       />
+      <button
+        type="button"
+        data-testid="show-qr"
+        onClick={() => void connect.showQrAgain()}
+      />
     </div>
   );
 }
@@ -194,5 +199,32 @@ describe("usePaykitConnect remount", () => {
     });
     expect(KeyStore.clearPendingRingHandoff).toHaveBeenCalledWith("stable-ch-1");
     expect(mintCount).toBe(2);
+  });
+
+  it("does not re-await a settled wasm flow when showing the QR again", async () => {
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
+    });
+    await act(async () => {
+      pollReject?.(new Error("relay down"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const watchesBefore = vi.mocked(watchCombinedGrant).mock.calls.length;
+    await act(async () => {
+      host.querySelector("[data-testid=show-qr]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-2");
+    });
+    expect(mintCount).toBe(2);
+    expect(vi.mocked(watchCombinedGrant).mock.calls.length).toBeGreaterThan(watchesBefore);
   });
 });

@@ -47,6 +47,7 @@ describe("RingConnect URL and params", () => {
     expect(parsed.searchParams.get("secret")).toBe(secret);
     expect(parsed.searchParams.get("secret")?.length).toBe(43);
     expect(parsed.searchParams.get("relay")).toBe(relay);
+    expect(parsed.searchParams.get("v")).toBe("2");
   });
 
   it("accepts combined and legacy modes and rejects junk", () => {

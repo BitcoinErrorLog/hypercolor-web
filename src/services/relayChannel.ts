@@ -66,6 +66,10 @@ export async function pollLink(
       : timeout;
     try {
       const response = await relayFetch(url, { method: "GET", signal });
+      if (response.status === 408 || response.status === 504) {
+        consecutiveFailures = 0;
+        continue;
+      }
       if (!response.ok) {
         throw new Error(`httprelay GET ${response.status}`);
       }

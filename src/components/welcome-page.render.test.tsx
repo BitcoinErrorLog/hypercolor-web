@@ -90,4 +90,11 @@ describe("WelcomePage QR visibility", () => {
     expect(getByTestId("welcomeShowQrAgain")).toBeTruthy();
     expect(host.textContent).toContain("Try again");
   });
+
+  it("offers Show QR again and Reload page when the link is expired", async () => {
+    await render(<WelcomePage {...pageProps({ isExpired: true, linkLive: false, authPanel: null })} />);
+    expect(getByTestId("welcomeShowQrAgain")).toBeTruthy();
+    expect(getByTestId("welcomeReloadPage").textContent).toContain("Reload page");
+    expect(getByTestId("welcomeGenerate")).toBeTruthy();
+  });
 });

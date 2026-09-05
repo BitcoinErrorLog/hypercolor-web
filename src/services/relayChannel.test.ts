@@ -59,6 +59,34 @@ describe("relay channel keying", () => {
     expect(failing).toHaveBeenCalledTimes(RELAY_MAX_CONSECUTIVE_FAILURES);
   });
 
+  it("treats HTTP 408 and 504 as benign long-poll slices and still resolves", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({ ok: false, status: 408 })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        arrayBuffer: async () => new TextEncoder().encode("ok").buffer,
+      });
+    setRelayFetchForTests(fetchMock as unknown as typeof fetch);
+    const body = await pollLink("abc", { deadlineMs: Date.now() + 5_000 });
+    expect(new TextDecoder().decode(body)).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it("still counts other non-2xx as consecutive failures", async () => {
+    const failing = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    setRelayFetchForTests(failing as unknown as typeof fetch);
+    await expect(pollLink("abc", { deadlineMs: Date.now() + 5_000 })).rejects.toThrow(
+      "httprelay GET 500",
+    );
+    expect(failing).toHaveBeenCalledTimes(RELAY_MAX_CONSECUTIVE_FAILURES);
+  });
+
   it("POSTs JSON public params to the hc- channel", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     setRelayFetchForTests(fetchMock as unknown as typeof fetch);

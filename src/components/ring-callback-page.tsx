@@ -23,6 +23,7 @@ import { finishLegacyChainedGrant, finishSingleApproval } from "@/services/singl
 const RING_CALLBACK_KEYSTORE_ERROR = "Could not open the key store.";
 const RING_CALLBACK_HANDOFF_ERROR = "Could not complete this Ring handoff.";
 const RING_CALLBACK_RELAY_ERROR = "Could not notify the waiting computer.";
+const RING_CALLBACK_NOT_THIS_BROWSER = "This link isn't for this browser";
 
 export type RingCallbackPhase =
   | { kind: "reading" }
@@ -32,7 +33,8 @@ export type RingCallbackPhase =
       kind: "confirm";
       pubky: string;
       params: HandoffPublicParams;
-      payload: HandoffPayload;
+      payload?: HandoffPayload;
+      forwardToRelay?: boolean;
     }
   | { kind: "done"; pubky: string }
   | { kind: "error"; fallback: string; details: string | null };
@@ -149,17 +151,22 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
         return;
       }
 
-      try {
-        await publishHandoffParamsToRelay(ch, params);
-        if (!cancelled) setPhase({ kind: "relay-forwarded" });
-      } catch (error) {
+      const originatedHere = (await KeyStore.readPendingRingIndex()).includes(ch);
+      if (cancelled) return;
+      if (!originatedHere) {
         if (!cancelled) {
-          setPhase({
-            kind: "error",
-            fallback: RING_CALLBACK_RELAY_ERROR,
-            details: sanitizeHandoffError(error),
-          });
+          setPhase({ kind: "invalid", reason: RING_CALLBACK_NOT_THIS_BROWSER });
         }
+        return;
+      }
+
+      if (!cancelled) {
+        setPhase({
+          kind: "confirm",
+          pubky: params.pubky,
+          params,
+          forwardToRelay: true,
+        });
       }
     })();
     return () => {
@@ -171,6 +178,30 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
     if (phase.kind !== "confirm") return;
     try {
       const { ch } = readParamsFromLocation();
+      if (!ch) {
+        throw new Error("Missing channel id (ch).");
+      }
+      if (phase.forwardToRelay) {
+        const originatedHere = (await KeyStore.readPendingRingIndex()).includes(ch);
+        if (!originatedHere) {
+          setPhase({ kind: "invalid", reason: RING_CALLBACK_NOT_THIS_BROWSER });
+          return;
+        }
+        try {
+          await publishHandoffParamsToRelay(ch, phase.params);
+          setPhase({ kind: "relay-forwarded" });
+        } catch (error) {
+          setPhase({
+            kind: "error",
+            fallback: RING_CALLBACK_RELAY_ERROR,
+            details: sanitizeHandoffError(error),
+          });
+        }
+        return;
+      }
+      if (!phase.payload) {
+        throw new Error("Missing handoff payload.");
+      }
       const session = liveTrackedSession();
       const mode = classifyHandoffMode(phase.params.mode);
       if (mode !== HANDOFF_MODE_COMBINED && mode !== HANDOFF_MODE_LEGACY) {
@@ -190,7 +221,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
       if (getTabLock().mode !== "writer") {
         await requestTakeoverAndWait();
       }
-      const result = await completeSameDeviceAdopt(phase.params, phase.payload, ch ?? undefined);
+      const result = await completeSameDeviceAdopt(phase.params, phase.payload, ch);
       if (result) {
         setPhase({ kind: "done", pubky: result.pubky });
       }

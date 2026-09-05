@@ -619,7 +619,8 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
         onConfirmAdoption={noop}
         onCancelAdoption={noop}
         onCancelWaiting={noop}
-        onShowQrAgain={scene.state === "error" ? noop : undefined}
+        onShowQrAgain={scene.state === "error" || scene.state === "expired" ? noop : undefined}
+        onReloadPage={scene.state === "expired" ? noop : undefined}
       />
     );
   }

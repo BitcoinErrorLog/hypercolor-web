@@ -191,7 +191,8 @@ export function buildPaykitConnectUrl(input: {
     `&ephemeralPk=${encodeURIComponent(input.ephemeralPkHex)}` +
     `&caps=${encodeURIComponent(RING_GRANT_CAPABILITIES)}` +
     `&secret=${encodeURIComponent(input.secret)}` +
-    `&relay=${encodeURIComponent(input.relay)}`
+    `&relay=${encodeURIComponent(input.relay)}` +
+    `&v=2`
   );
 }
 
@@ -492,7 +493,17 @@ export async function tryAdoptPendingHandoffForSession(pubky: string): Promise<b
   if (!stored) return false;
   if (!(await pendingChannelMatches(stored.ch))) return false;
   if (stored.params.pubky !== pubky) return false;
-  const payload = await decryptPendingHandoff(stored.params, stored.ch);
+  let payload: HandoffPayload;
+  try {
+    payload = await decryptPendingHandoff(stored.params, stored.ch);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (/expired|expires_at/i.test(message)) {
+      clearPendingHandoffLocator();
+      return false;
+    }
+    throw error;
+  }
   if (payload.pubky !== pubky) {
     throw new Error("Handoff payload pubky does not match session");
   }
