@@ -85,6 +85,8 @@ vi.mock("@/services/RingConnect", () => ({
   decryptPendingHandoff: vi.fn(() => Promise.resolve({})),
   pendingChannelMatches: vi.fn(() => Promise.resolve(false)),
   publishHandoffParamsToRelay: vi.fn(() => Promise.resolve()),
+  sanitizeHandoffError: (err: unknown) =>
+    err instanceof Error ? err.message : "protocol error",
   validateHandoffPublicParams: vi.fn(() => null),
 }));
 

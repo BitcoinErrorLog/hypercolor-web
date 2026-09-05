@@ -31,12 +31,18 @@ vi.mock("@/services/KeyStore", () => ({
   },
 }));
 
+const resetPaykitConnectLive = vi.fn();
+vi.mock("@/services/paykitConnectLive", () => ({
+  resetPaykitConnectLive: () => resetPaykitConnectLive(),
+}));
+
 import {
   classifyResumeError,
   persistSessionMetadata,
   readSessionMetadata,
   resetSessionStateForTests,
   restoreSessionOnLoad,
+  signOut,
   wipeSessionMetadata,
 } from "./session";
 
@@ -69,6 +75,7 @@ describe("session restore classification", () => {
     restoreExport.mockRejectedValue(namedError("Error", "export restore unused"));
     signOutSession.mockReset();
     removeReceiverMarker.mockReset();
+    resetPaykitConnectLive.mockReset();
     await persistSessionMetadata({
       pubky: OWNER,
       exported: exportWithCaps("/pub/paykit/:rw"),
@@ -225,5 +232,10 @@ describe("session restore classification", () => {
     await expect(first).resolves.toMatchObject({ status: "live", pubky: OWNER });
     await expect(second).resolves.toMatchObject({ status: "live", pubky: OWNER });
     expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets the live paykit-connect channel on sign-out", async () => {
+    await signOut();
+    expect(resetPaykitConnectLive).toHaveBeenCalledTimes(1);
   });
 });

@@ -7,6 +7,7 @@ import { ErrorDetails } from "@/components/error-details";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { CUSTODY_LINE } from "@/lib/session-ui";
 import { resolveWelcomePhase, type WelcomePhase } from "@/components/welcome-phase";
+import { formatRingVerificationCode } from "@/services/ringChannelId";
 
 export type { WelcomePhase };
 export { resolveWelcomePhase };
@@ -24,11 +25,13 @@ export function WelcomePage({
   linkLive,
   finishing = false,
   phase: phaseProp,
+  ch = "",
   onGenerateLink,
   onConfirmAdoption,
   onCancelAdoption,
   onCancelWaiting,
   onTryAgain,
+  onShowQrAgain,
 }: {
   appName: string;
   isAuthenticated: boolean;
@@ -42,11 +45,13 @@ export function WelcomePage({
   linkLive: boolean;
   finishing?: boolean;
   phase?: WelcomePhase;
+  ch?: string;
   onGenerateLink: () => void;
   onConfirmAdoption: () => void;
   onCancelAdoption: () => void;
   onCancelWaiting: () => void;
   onTryAgain?: () => void;
+  onShowQrAgain?: () => void;
 }) {
   const phase = resolveWelcomePhase({
     isExpired,
@@ -58,6 +63,7 @@ export function WelcomePage({
   });
   const showQr = phase === "waiting";
   const retry = onTryAgain ?? onGenerateLink;
+  const verificationCode = ch ? formatRingVerificationCode(ch) : "";
 
   return (
     <article className="space-y-6" data-surface="welcome-page">
@@ -103,6 +109,23 @@ export function WelcomePage({
 
       {showQr ? authPanel : null}
 
+      {showQr && verificationCode ? (
+        <div className="space-y-1" data-testid="welcomeVerification">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Verification code
+          </p>
+          <p
+            className="font-mono text-sm tracking-wide text-foreground"
+            data-testid="welcomeVerificationCode"
+          >
+            {verificationCode}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Pubky Ring shows the same code before you approve.
+          </p>
+        </div>
+      ) : null}
+
       {phase === "waiting" ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -132,6 +155,26 @@ export function WelcomePage({
               aria-hidden="true"
             />
             <p className="text-sm text-muted-foreground">Finishing sign-in…</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onShowQrAgain ? (
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="welcomeShowQrAgain"
+                onClick={onShowQrAgain}
+              >
+                Show QR again
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeCancel"
+              onClick={onCancelWaiting}
+            >
+              Cancel
+            </Button>
           </div>
         </div>
       ) : null}
@@ -168,6 +211,16 @@ export function WelcomePage({
             onRetry={retry}
             retryLabel="Try again"
           />
+          {onShowQrAgain ? (
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeShowQrAgain"
+              onClick={onShowQrAgain}
+            >
+              Show QR again
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </article>

@@ -3,13 +3,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { resetPaykitConnectLiveForTests, usePaykitConnect } from "./usePaykitConnect";
-import { startPaykitConnect, waitForHandoffParams } from "@/services/RingConnect";
+import {
+  resetPaykitConnectLive,
+  resetPaykitConnectLiveForTests,
+  usePaykitConnect,
+} from "./usePaykitConnect";
+import { pendingChannelMatches, startPaykitConnect, waitForHandoffParams } from "@/services/RingConnect";
+import { KeyStore } from "@/services/KeyStore";
 
 vi.mock("@/services/RingConnect", () => ({
   HANDOFF_TTL_MS: 5 * 60 * 1000,
   startPaykitConnect: vi.fn(),
   waitForHandoffParams: vi.fn(),
+  pendingChannelMatches: vi.fn(),
 }));
 
 vi.mock("@/services/KeyStore", () => ({
@@ -21,15 +27,33 @@ vi.mock("@/services/KeyStore", () => ({
 let host: HTMLDivElement;
 let root: Root;
 let mintCount = 0;
+let pollReject: ((reason: unknown) => void) | undefined;
 
 function Probe() {
   const connect = usePaykitConnect({ autoStart: true });
-  return <p data-testid="ch">{connect.ch}</p>;
+  return (
+    <div>
+      <p data-testid="ch">{connect.ch}</p>
+      <button
+        type="button"
+        data-testid="replace"
+        onClick={() => void connect.start({ replace: true })}
+      />
+    </div>
+  );
 }
 
 async function render(ui: ReactElement) {
   await act(async () => {
     root.render(ui);
+  });
+}
+
+async function flushStart() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
   });
 }
 
@@ -40,6 +64,7 @@ describe("usePaykitConnect remount", () => {
     document.body.append(host);
     root = createRoot(host);
     mintCount = 0;
+    pollReject = undefined;
     resetPaykitConnectLiveForTests();
     vi.mocked(startPaykitConnect).mockReset().mockImplementation(async () => {
       mintCount += 1;
@@ -52,8 +77,13 @@ describe("usePaykitConnect remount", () => {
       };
     });
     vi.mocked(waitForHandoffParams).mockReset().mockImplementation(
-      () => new Promise(() => undefined),
+      () =>
+        new Promise((_, reject) => {
+          pollReject = reject;
+        }),
     );
+    vi.mocked(pendingChannelMatches).mockReset().mockResolvedValue(true);
+    vi.mocked(KeyStore.clearPendingRingHandoff).mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -64,12 +94,9 @@ describe("usePaykitConnect remount", () => {
     resetPaykitConnectLiveForTests();
   });
 
-  it("does not mint a new channel when the hook remounts", async () => {
+  it("does not mint a new channel when the hook remounts while the poll is live", async () => {
     await render(<Probe />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await flushStart();
     await vi.waitFor(() => {
       expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
     });
@@ -80,14 +107,82 @@ describe("usePaykitConnect remount", () => {
     });
     root = createRoot(host);
     await render(<Probe />);
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await flushStart();
     await vi.waitFor(() => {
       expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
     });
     expect(mintCount).toBe(1);
     expect(startPaykitConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("remints after a dead poll then remount", async () => {
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
+    });
+    expect(mintCount).toBe(1);
+
+    await act(async () => {
+      pollReject?.(new Error("relay down"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(host);
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-2");
+    });
+    expect(mintCount).toBe(2);
+  });
+
+  it("remints after sign-out then remount", async () => {
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
+    });
+    expect(mintCount).toBe(1);
+
+    resetPaykitConnectLive();
+    vi.mocked(pendingChannelMatches).mockResolvedValue(false);
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(host);
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-2");
+    });
+    expect(mintCount).toBe(2);
+  });
+
+  it("clears the previous pending secret when replace is true", async () => {
+    await render(<Probe />);
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-1");
+    });
+
+    await act(async () => {
+      host.querySelector("[data-testid=replace]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushStart();
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=ch]")?.textContent).toBe("stable-ch-2");
+    });
+    expect(KeyStore.clearPendingRingHandoff).toHaveBeenCalledWith("stable-ch-1");
+    expect(mintCount).toBe(2);
   });
 });

@@ -19,13 +19,17 @@ vi.mock("@/services/KeyStore", () => ({
   },
 }));
 
-vi.mock("@/services/RingConnect", () => ({
-  adoptHandoff: vi.fn(),
-  decryptPendingHandoff: vi.fn(),
-  pendingChannelMatches: vi.fn(),
-  publishHandoffParamsToRelay: vi.fn(),
-  validateHandoffPublicParams: vi.fn(),
-}));
+vi.mock("@/services/RingConnect", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/RingConnect")>();
+  return {
+    ...actual,
+    adoptHandoff: vi.fn(),
+    decryptPendingHandoff: vi.fn(),
+    pendingChannelMatches: vi.fn(),
+    publishHandoffParamsToRelay: vi.fn(),
+    validateHandoffPublicParams: vi.fn(),
+  };
+});
 
 let host: HTMLDivElement;
 let root: Root;
@@ -80,7 +84,8 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
     });
     expect(primaryErrorText()).toBe("Could not open the key store.");
-    expect(detailsText()).toContain("IndexedDB version error 17");
+    expect(detailsText()).toContain("protocol error");
+    expect(detailsText()).not.toContain("IndexedDB");
     expect(primaryErrorText()).not.toContain("IndexedDB");
   });
 
@@ -95,7 +100,8 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
     });
     expect(primaryErrorText()).toBe("Could not complete this Ring handoff.");
-    expect(detailsText()).toContain("box open failed: nonce");
+    expect(detailsText()).toContain("protocol error");
+    expect(detailsText()).not.toContain("nonce");
     expect(primaryErrorText()).not.toContain("nonce");
   });
 
@@ -110,7 +116,8 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
     });
     expect(primaryErrorText()).toBe("Could not notify the waiting computer.");
-    expect(detailsText()).toContain("httprelay 502 from edge");
+    expect(detailsText()).toContain("network error");
+    expect(detailsText()).not.toContain("httprelay");
     expect(primaryErrorText()).not.toContain("httprelay");
   });
 
@@ -133,7 +140,8 @@ describe("RingCallbackPage errors", () => {
       host.querySelector("button")?.click();
     });
     expect(primaryErrorText()).toBe("Could not complete this Ring handoff.");
-    expect(detailsText()).toContain("session adopt exploded");
+    expect(detailsText()).toContain("protocol error");
+    expect(detailsText()).not.toContain("exploded");
     expect(primaryErrorText()).not.toContain("exploded");
   });
 });

@@ -609,10 +609,16 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
         adopting={false}
         authPanel={scene.state === "qr-populated" ? authPanel("welcomeQr") : null}
         linkLive={scene.state === "qr-populated"}
+        ch={
+          scene.state === "qr-populated"
+            ? "8eOwP5zDIW4PwXitMsHu3RdUDCF60o3DTwI-firPVT8"
+            : ""
+        }
         onGenerateLink={noop}
         onConfirmAdoption={noop}
         onCancelAdoption={noop}
         onCancelWaiting={noop}
+        onShowQrAgain={scene.state === "error" ? noop : undefined}
       />
     );
   }

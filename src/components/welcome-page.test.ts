@@ -46,8 +46,10 @@ describe("welcome awaiting states", () => {
     expect(source).toContain("Finishing sign-in…");
     expect(source).toContain('data-testid="welcomeFinishing"');
     expect(source).toContain("showQr = phase === \"waiting\"");
+    expect(source).toContain("Show QR again");
     expect(actions).toContain("setFinishing(true)");
     expect(actions).toContain('phase === "waiting" ? buildAuthPanel');
+    expect(actions).toContain("connect.showQrAgain()");
   });
 
   it("surfaces a full-width failed state with Try again", () => {

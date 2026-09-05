@@ -3,6 +3,7 @@ import {
   extractCapabilitySpecsFromExport,
 } from "@/lib/capabilities";
 import { zeroizeBytes } from "@/lib/hex";
+import { resetPaykitConnectLive } from "@/services/paykitConnectLive";
 import { KeyStore } from "@/services/KeyStore";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
@@ -472,6 +473,7 @@ export async function signOut(): Promise<void> {
       // Best-effort local wipe.
     }
   }
+  resetPaykitConnectLive();
   try {
     await KeyStore.clear();
   } catch {

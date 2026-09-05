@@ -134,6 +134,13 @@ export function WelcomePageHost() {
     void connect.start({ replace: true });
   }
 
+  function showQrAgain() {
+    setError(null);
+    setPending(null);
+    setFinishing(false);
+    void connect.showQrAgain();
+  }
+
   return (
     <WelcomePage
       appName={APP_NAME}
@@ -148,11 +155,13 @@ export function WelcomePageHost() {
       phase={phase}
       authPanel={phase === "waiting" ? buildAuthPanel(connect.url) : null}
       linkLive={phase === "waiting"}
+      ch={connect.ch}
       onGenerateLink={() => {
         if (phase === "waiting") return;
         mintNewLink();
       }}
       onTryAgain={mintNewLink}
+      onShowQrAgain={showQrAgain}
       onConfirmAdoption={() => void confirmAdoption(true)}
       onCancelAdoption={() => void confirmAdoption(false)}
       onCancelWaiting={() => {

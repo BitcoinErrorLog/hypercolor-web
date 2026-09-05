@@ -6,6 +6,7 @@ import {
   decryptPendingHandoff,
   pendingChannelMatches,
   publishHandoffParamsToRelay,
+  sanitizeHandoffError,
   validateHandoffPublicParams,
   type HandoffPayload,
   type HandoffPublicParams,
@@ -70,7 +71,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
           setPhase({
             kind: "error",
             fallback: RING_CALLBACK_KEYSTORE_ERROR,
-            details: error instanceof Error ? error.message : "KeyStore failed to open",
+            details: sanitizeHandoffError(error),
           });
         }
         return;
@@ -103,7 +104,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
             setPhase({
               kind: "error",
               fallback: RING_CALLBACK_HANDOFF_ERROR,
-              details: error instanceof Error ? error.message : "Handoff failed",
+              details: sanitizeHandoffError(error),
             });
           }
         }
@@ -118,10 +119,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
           setPhase({
             kind: "error",
             fallback: RING_CALLBACK_RELAY_ERROR,
-            details:
-              error instanceof Error
-                ? error.message
-                : "Failed to notify the waiting computer.",
+            details: sanitizeHandoffError(error),
           });
         }
       }
@@ -143,7 +141,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
       setPhase({
         kind: "error",
         fallback: RING_CALLBACK_HANDOFF_ERROR,
-        details: error instanceof Error ? error.message : "Handoff failed",
+        details: sanitizeHandoffError(error),
       });
     }
   }

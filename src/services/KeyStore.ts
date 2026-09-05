@@ -500,7 +500,26 @@ async function writePendingRingIndex(channels: readonly string[]): Promise<void>
   await setMetadata(KEY_PENDING_RING_INDEX, JSON.stringify([...new Set(channels)]));
 }
 
+async function sweepExpiredPendingRingHandoffs(keepCh?: string): Promise<void> {
+  const channels = await readPendingRingIndex();
+  const keep: string[] = [];
+  let changed = false;
+  for (const id of channels) {
+    if (id === keepCh || (await pendingRingHandoffIsLive(id))) {
+      keep.push(id);
+      continue;
+    }
+    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, id);
+    await deleteMetadata(pendingRingMetaKey(id));
+    changed = true;
+  }
+  if (changed) {
+    await writePendingRingIndex(keep);
+  }
+}
+
 async function rememberPendingRingChannel(ch: string): Promise<void> {
+  await sweepExpiredPendingRingHandoffs(ch);
   const current = await readPendingRingIndex();
   if (current.includes(ch)) return;
   await writePendingRingIndex([...current, ch]);
@@ -553,6 +572,7 @@ export async function setPendingRingHandoff(
   }
   await setMetadata(pendingRingMetaKey(ch), JSON.stringify(meta));
   await rememberPendingRingChannel(ch);
+  await sweepExpiredPendingRingHandoffs(ch);
 }
 
 export async function getPendingRingHandoff(ch: string): Promise<string | null> {

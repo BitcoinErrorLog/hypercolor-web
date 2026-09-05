@@ -169,6 +169,27 @@ describe("KeyStore", () => {
     expect(await KeyStore.getPendingRingHandoffPublicKey("ch-stale")).toBeNull();
   });
 
+  it("returns null when unwrapping ch-b ciphertext under ch-a AAD", async () => {
+    const deadline = Date.now() + 60_000;
+    await KeyStore.setPendingRingHandoff("secret-a", "aa".repeat(32), "ch-a", deadline);
+    await KeyStore.setPendingRingHandoff("secret-b", "bb".repeat(32), "ch-b", deadline);
+    const db = await openKeyStoreDb();
+    const recordB = await readSecretRecord(db, "pending-ring-handoff:ch-b");
+    expect(recordB).toBeDefined();
+    await writeSecretRecord(db, "pending-ring-handoff:ch-a", recordB!);
+    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBeNull();
+    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
+  });
+
+  it("sweeps expired pending entries when a new handoff is stored", async () => {
+    await KeyStore.setPendingRingHandoff("old", "aa".repeat(32), "ch-old", Date.now() - 1);
+    const db = await openKeyStoreDb();
+    expect(await readSecretRecord(db, "pending-ring-handoff:ch-old")).toBeDefined();
+    await KeyStore.setPendingRingHandoff("new", "bb".repeat(32), "ch-new", Date.now() + 60_000);
+    expect(await readSecretRecord(db, "pending-ring-handoff:ch-old")).toBeUndefined();
+    expect(await KeyStore.getPendingRingHandoff("ch-new")).toBe("new");
+  });
+
   it("wraps Encrypted Link snapshots under purpose link-snapshot", async () => {
     await KeyStore.setPubky(owner);
     const bytes = new Uint8Array([9, 8, 7, 6, 5]);
