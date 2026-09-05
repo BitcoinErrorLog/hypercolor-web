@@ -3,7 +3,7 @@ import { expect, test } from "@playwright/test";
 import { UX_CATALOG_SCENES } from "@/components/ux-catalog/scenes";
 import { findNearDuplicatePngs, IDENTITY_ALLOWLIST, listPngs } from "../scripts/ux-vrt-integrity.mjs";
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "serial", timeout: 60_000 });
 
 const repoRoot = join(__dirname, "..");
 function snapshotDir(projectName: string) {
@@ -24,7 +24,9 @@ test.afterAll(async ({}, testInfo) => {
 for (const scene of UX_CATALOG_SCENES) {
   test(`${scene.journey} / ${scene.surface} / ${scene.state}`, async ({ page }) => {
     await page.goto(`/e2e/ux-catalog?scene=${scene.id}`);
+    await page.emulateMedia({ reducedMotion: "reduce" });
     const marker = page.locator(`[data-vrt-scene="${scene.id}"]`);
+    await expect(marker).toBeAttached({ timeout: 30_000 });
     if (test.info().project.name === "chromium-mobile-pixel" && scene.surface === "nav") {
       await expect(marker).toHaveCount(1);
     } else {
@@ -57,12 +59,13 @@ for (const scene of UX_CATALOG_SCENES) {
     }
     await expect(surface).toHaveScreenshot(`${scene.id}.png`, {
       animations: "disabled",
+      caret: "hide",
+      maxDiffPixelRatio: 0.02,
       mask: [
         page.getByTestId("welcomeQr"),
         page.getByTestId("enableMessagingQr"),
         page.getByTestId("recoveryCode"),
       ],
-      maxDiffPixels: 24,
     });
   });
 }

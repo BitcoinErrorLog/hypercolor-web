@@ -6,66 +6,31 @@ import sharp from "sharp";
 export const IDENTITY_THRESHOLD = 0.99;
 
 export const IDENTITY_ALLOWLIST = new Map([
-  [
-    "channel-editing::channel-populated",
-    "Both capture the same production channel thread; the reviewed difference is the edit-mode composer draft.",
-  ],
-  [
-    "channels-private-busy::channels-private-empty",
-    "Both capture the same production create-group form; the reviewed difference is the busy create state with selected members.",
-  ],
-  [
-    "channels-public-error::channels-public-initial",
-    "Both capture the same production public-topics panel; the reviewed difference is the retry/error copy.",
-  ],
-  [
-    "channels-public-error::channels-public-populated",
-    "Both capture the same production public-topics panel; the reviewed difference is the error copy replacing topic rows.",
-  ],
-  [
-    "chrome-nav-enabled::chrome-nav-needs-enable",
-    "Both capture the real production navigation; the reviewed difference is the session-enabled request badge count.",
-  ],
-  [
-    "public-topic-empty::public-topic-loading",
-    "Both capture the same production public-topic reader; the reviewed difference is the loading status line.",
-  ],
-  [
-    "public-topic-empty::public-topic-unavailable",
-    "Both capture the same production public-topic reader; the reviewed difference is the unavailable-row status line.",
-  ],
-  [
-    "public-topic-error::public-topic-loading",
-    "Both capture the same production public-topic reader; the reviewed difference is error versus loading status copy.",
-  ],
-  [
-    "public-topic-error::public-topic-unavailable",
-    "Both capture the same production public-topic reader; the reviewed difference is error versus unavailable-row status copy.",
-  ],
-  [
-    "public-topic-loading::public-topic-unavailable",
-    "Both capture the same production public-topic reader; the reviewed difference is loading versus unavailable-row status copy.",
-  ],
-  [
-    "thread-empty::thread-loading",
-    "Both capture the same empty production thread shell; the reviewed difference is empty-state copy versus loading copy.",
-  ],
-  [
-    "thread-payment-expired::thread-payment-notice",
-    "Both capture the same production payment request bubble; the reviewed difference is requested versus expired status copy.",
-  ],
-  [
-    "thread-payment-failed::thread-payment-proof",
-    "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus failed status copy.",
-  ],
-  [
-    "thread-payment-failed::thread-payment-unverified",
-    "Both capture the same production read-only payment bubble; the reviewed difference is failed versus unverified status copy.",
-  ],
-  [
-    "thread-payment-proof::thread-payment-unverified",
-    "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus unverified status copy.",
-  ],
+  ["enable-denied::enable-expired", "Both capture the production enable grant card; the reviewed difference is declined versus expired status copy."],
+  ["channel-editing::channel-populated", "Both capture the same production channel thread; the reviewed difference is the edit-mode composer draft."],
+  ["channels-private-busy::channels-private-empty", "Both capture the same production create-group form; the reviewed difference is the busy create state with selected members."],
+  ["channels-public-error::channels-public-initial", "Both capture the same production public-topics panel; the reviewed difference is the retry/error copy."],
+  ["channels-public-error::channels-public-populated", "Both capture the same production public-topics panel; the reviewed difference is the error copy replacing topic rows."],
+  ["chrome-nav-enabled::chrome-nav-no-identity", "Mobile icon-circle nav; reviewed difference is Connect versus signed-in avatar and badges."],
+  ["chrome-nav-needs-enable::chrome-nav-no-identity", "Mobile icon-circle nav; reviewed difference is Connect versus Enable session link."],
+  ["chrome-nav-enabled::chrome-nav-needs-enable", "Both capture the real production navigation; the reviewed difference is the session-enabled request badge count."],
+  ["requests-busy::requests-populated", "Both capture the production request row; the reviewed difference is Accept versus Accepting…."],
+  ["ring-callback-confirm::ring-callback-reading", "Both capture the production Ring callback card; the reviewed difference is confirm copy versus reading status."],
+  ["ring-callback-confirm::ring-callback-relay-forwarded", "Both capture the production Ring callback card; the reviewed difference is confirm copy versus relay-done copy."],
+  ["ring-callback-done::ring-callback-reading", "Both capture the production Ring callback card; the reviewed difference is stored-identity copy versus reading status."],
+  ["ring-callback-done::ring-callback-relay-forwarded", "Both capture the production Ring callback card; the reviewed difference is stored-identity copy versus relay-done copy."],
+  ["ring-callback-reading::ring-callback-relay-forwarded", "Both capture the production Ring callback card; the reviewed difference is reading status versus relay-done copy."],
+  ["public-topic-empty::public-topic-error", "Both capture the same production public-topic reader; the reviewed difference is empty versus error status copy."],
+  ["public-topic-empty::public-topic-loading", "Both capture the same production public-topic reader; the reviewed difference is the loading status line."],
+  ["public-topic-empty::public-topic-unavailable", "Both capture the same production public-topic reader; the reviewed difference is the unavailable-row status line."],
+  ["public-topic-error::public-topic-loading", "Both capture the same production public-topic reader; the reviewed difference is error versus loading status copy."],
+  ["public-topic-error::public-topic-unavailable", "Both capture the same production public-topic reader; the reviewed difference is error versus unavailable-row status copy."],
+  ["public-topic-loading::public-topic-unavailable", "Both capture the same production public-topic reader; the reviewed difference is loading versus unavailable-row status copy."],
+  ["thread-empty::thread-loading", "Both capture the same empty production thread shell; the reviewed difference is empty-state copy versus loading copy."],
+  ["thread-payment-expired::thread-payment-notice", "Both capture the same production payment request bubble; the reviewed difference is requested versus expired status copy."],
+  ["thread-payment-failed::thread-payment-proof", "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus failed status copy."],
+  ["thread-payment-failed::thread-payment-unverified", "Both capture the same production read-only payment bubble; the reviewed difference is failed versus unverified status copy."],
+  ["thread-payment-proof::thread-payment-unverified", "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus unverified status copy."],
 ]);
 
 export function listPngs(dir) {

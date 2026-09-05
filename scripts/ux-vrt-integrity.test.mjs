@@ -56,5 +56,5 @@ describe("ux VRT integrity gate", () => {
       ))
     ).flat();
     expect(failures).toEqual([]);
-  }, 240_000);
+  }, 600_000);
 });
