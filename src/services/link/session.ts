@@ -1,5 +1,5 @@
 import {
-  capabilitiesCoverHypercolorRw,
+  capabilitiesCoverRingGrant,
   extractCapabilitySpecsFromExport,
 } from "@/lib/capabilities";
 import { zeroizeBytes } from "@/lib/hex";
@@ -275,7 +275,7 @@ export function classifyResumeError(error: unknown): "auth-revoked" | "session-o
 }
 
 export function sessionExportCoversHypercolor(exported: string): boolean {
-  return capabilitiesCoverHypercolorRw(extractCapabilitySpecsFromExport(exported));
+  return capabilitiesCoverRingGrant(extractCapabilitySpecsFromExport(exported));
 }
 
 export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveSession> {
@@ -287,9 +287,12 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
     } catch {
       closeHandleQuietly(handle);
     }
-    throw Object.assign(new Error("session grant does not cover /pub/hypercolor.app/v1/ rw"), {
-      name: "SessionResumeScopeMissing",
-    });
+    throw Object.assign(
+      new Error("session grant does not cover the Ring grant /pub/paykit/:rw and /pub/hypercolor.app/v1/:rw"),
+      {
+        name: "SessionResumeScopeMissing",
+      },
+    );
   }
   if (live && live.handle !== handle) {
     closeHandleQuietly(live.handle);

@@ -8,14 +8,18 @@ import {
   resetPaykitConnectLiveForTests,
   usePaykitConnect,
 } from "./usePaykitConnect";
-import { pendingChannelMatches, startPaykitConnect, waitForHandoffParams } from "@/services/RingConnect";
+import { pendingChannelMatches, startPaykitConnect } from "@/services/RingConnect";
+import { watchCombinedGrant } from "@/services/singleApproval";
 import { KeyStore } from "@/services/KeyStore";
 
 vi.mock("@/services/RingConnect", () => ({
   HANDOFF_TTL_MS: 5 * 60 * 1000,
   startPaykitConnect: vi.fn(),
-  waitForHandoffParams: vi.fn(),
   pendingChannelMatches: vi.fn(),
+}));
+
+vi.mock("@/services/singleApproval", () => ({
+  watchCombinedGrant: vi.fn(),
 }));
 
 vi.mock("@/services/KeyStore", () => ({
@@ -74,9 +78,15 @@ describe("usePaykitConnect remount", () => {
         deviceId: "hypercolor-web-test",
         deadlineMs: Date.now() + 60_000,
         ephemeralPkHex: "aa".repeat(32),
+        authFlow: {
+          authorizationUrl: () => "",
+          awaitApproval: () => new Promise(() => undefined),
+          free: () => undefined,
+          [Symbol.dispose]: () => undefined,
+        },
       };
     });
-    vi.mocked(waitForHandoffParams).mockReset().mockImplementation(
+    vi.mocked(watchCombinedGrant).mockReset().mockImplementation(
       () =>
         new Promise((_, reject) => {
           pollReject = reject;

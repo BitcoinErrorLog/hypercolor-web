@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { DEFAULT_APP_ORIGIN } from "@/lib/app-origin";
 import { setRelayFetchForTests } from "./relayChannel";
@@ -8,6 +11,7 @@ import {
   buildPaykitConnectUrl,
   fetchHandoffBytes,
   parseHandoffPlaintext,
+  parsePubkyauthAuthorizationUrl,
   parseRelayHandoffBody,
   sanitizeHandoffError,
   setHandoffFetchForTests,
@@ -25,10 +29,14 @@ describe("RingConnect URL and params", () => {
 
   it("builds paykit-connect with encoded https callback carrying ch", () => {
     const callbackUrl = `${DEFAULT_APP_ORIGIN}/ring-callback?ch=abc`;
+    const secret = "A".repeat(43);
+    const relay = "https://httprelay.pubky.app/link/";
     const url = buildPaykitConnectUrl({
       deviceId: "hypercolor-web-1",
       ephemeralPkHex: "aa".repeat(32),
       callbackUrl,
+      secret,
+      relay,
     });
     expect(url.startsWith("pubkyring://paykit-connect?")).toBe(true);
     const parsed = new URL(url.replace("pubkyring://", "https://ring/"));
@@ -36,9 +44,12 @@ describe("RingConnect URL and params", () => {
     expect(parsed.searchParams.get("ephemeralPk")).toBe("aa".repeat(32));
     expect(parsed.searchParams.get("caps")).toBe(RING_GRANT_CAPABILITIES);
     expect(parsed.searchParams.get("callback")).toBe(callbackUrl);
+    expect(parsed.searchParams.get("secret")).toBe(secret);
+    expect(parsed.searchParams.get("secret")?.length).toBe(43);
+    expect(parsed.searchParams.get("relay")).toBe(relay);
   });
 
-  it("accepts the public param set Ring emits and rejects junk", () => {
+  it("accepts combined and legacy modes and rejects junk", () => {
     const valid = {
       pubky: OWNER,
       request_id: "ab".repeat(32),
@@ -49,6 +60,14 @@ describe("RingConnect URL and params", () => {
       pubky: OWNER,
       requestId: "ab".repeat(32),
       mode: "secure_handoff",
+      homeserver: HOMESERVER,
+    });
+    expect(
+      validateHandoffPublicParams({ ...valid, mode: "secure_handoff+pubkyauth" }),
+    ).toEqual({
+      pubky: OWNER,
+      requestId: "ab".repeat(32),
+      mode: "secure_handoff+pubkyauth",
       homeserver: HOMESERVER,
     });
     expect(validateHandoffPublicParams({ ...valid, mode: "plain" })).toBeNull();
@@ -227,3 +246,24 @@ describe("parseHandoffPlaintext", () => {
     );
   });
 });
+
+describe("parsePubkyauthAuthorizationUrl", () => {
+  const PINNED =
+    "pubkyauth:///?caps=/pub/paykit/:rw,/pub/hypercolor.app/v1/:rw&secret=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&relay=https://httprelay.pubky.app/link/";
+
+  it("parses the empty-authority pubkyauth URL without new URL", () => {
+    expect(PINNED.startsWith("pubkyauth:///?")).toBe(true);
+    const parsed = parsePubkyauthAuthorizationUrl(PINNED);
+    expect(parsed.caps).toBe("/pub/paykit/:rw,/pub/hypercolor.app/v1/:rw");
+    expect(parsed.secret).toBe("A".repeat(43));
+    expect(parsed.secret.length).toBe(43);
+    expect(parsed.relay).toBe("https://httprelay.pubky.app/link/");
+    expect(
+      readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "RingConnect.ts"),
+        "utf8",
+      ),
+    ).not.toMatch(/new URL\([^)]*authorizationUrl/);
+  });
+});
+

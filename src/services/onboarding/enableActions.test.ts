@@ -13,6 +13,6 @@ describe("enable offline retry", () => {
     expect(source).toContain("retrySessionRestore");
     expect(source).toContain("retryBusy");
     expect(source).toContain("offline");
-    expect(source).not.toMatch(/onRetry[\s\S]*router\.(push|replace)\(["']\/enable/);
+    expect(source).toContain("tryAdoptPendingHandoffForSession");
   });
 });

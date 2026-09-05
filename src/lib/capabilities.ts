@@ -33,16 +33,28 @@ export function scopeCovers(scope: string, target: string): boolean {
   return scope === target || (scope.endsWith("/") && target.startsWith(scope));
 }
 
-export function capabilitiesCoverHypercolorRw(specs: readonly string[]): boolean {
+export const PAYKIT_WRITE_SCOPE = "/pub/paykit/";
+
+export function capabilityCoversRequired(
+  specs: readonly string[],
+  requiredScope: string,
+): boolean {
   return specs.some((spec) => {
     const cap = parseCapabilitySpec(spec);
-    return (
-      cap !== null &&
-      scopeCovers(cap.scope, HYPERCOLOR_WRITE_SCOPE) &&
-      cap.read &&
-      cap.write
-    );
+    return cap !== null && scopeCovers(cap.scope, requiredScope) && cap.read && cap.write;
   });
+}
+
+export function capabilitiesCoverHypercolorRw(specs: readonly string[]): boolean {
+  return capabilityCoversRequired(specs, HYPERCOLOR_WRITE_SCOPE);
+}
+
+/** Order-insensitive full Ring grant (Paykit rw + Hypercolor rw). */
+export function capabilitiesCoverRingGrant(specs: readonly string[]): boolean {
+  return (
+    capabilityCoversRequired(specs, PAYKIT_WRITE_SCOPE) &&
+    capabilityCoversRequired(specs, HYPERCOLOR_WRITE_SCOPE)
+  );
 }
 
 /**

@@ -10,6 +10,7 @@ import { retrySessionRestore } from "@/lib/session-retry";
 import { KeyStore } from "@/services/KeyStore";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import { getEnableStatus } from "@/services/link/session";
+import { tryAdoptPendingHandoffForSession } from "@/services/RingConnect";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
@@ -46,6 +47,7 @@ export function EnablePageHost() {
   const onApproved = useCallback(
     async (session: SessionHandle) => {
       try {
+        await tryAdoptPendingHandoffForSession(session.pubky());
         const result = await provisionReceiver(session, session.pubky());
         setError(null);
         setProvisionedPath(result.receiverPath);

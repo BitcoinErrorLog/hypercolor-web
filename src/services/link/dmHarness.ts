@@ -53,7 +53,7 @@ export async function runDmSignup(signupToken: string): Promise<DmSignupResult> 
     zeroizeBytes(secret);
   }
   await LinkService.adoptHarnessSession(session);
-  const provisioned = await LinkService.provisionHarnessReceiver();
+  const provisioned = await LinkService.provisionReceiverForActiveSession();
   return {
     pubky: provisioned.pubky,
     receiverPath: provisioned.receiverPath || LINK_RECEIVER_PATH,

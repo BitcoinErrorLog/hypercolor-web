@@ -48,7 +48,10 @@ describe("welcome awaiting states", () => {
     expect(source).toContain("showQr = phase === \"waiting\"");
     expect(source).toContain("Show QR again");
     expect(actions).toContain("setFinishing(true)");
-    expect(actions).toContain('phase === "waiting" ? buildAuthPanel');
+    expect(actions).toContain("finishSingleApproval");
+    expect(actions).not.toContain("setNeedsEnable");
+    expect(actions).not.toContain('router.push("/enable")');
+    expect(actions).toContain('router.push("/chats")');
     expect(actions).toContain("connect.showQrAgain()");
   });
 
@@ -58,6 +61,11 @@ describe("welcome awaiting states", () => {
     expect(source).toContain('retryLabel="Try again"');
     expect(actions).toContain("sanitizeHandoffError");
     expect(actions).toContain("start({ replace: true })");
+  });
+
+  it("surfaces legacy recovery copy", () => {
+    expect(resolveWelcomePhase({ ...base, legacyRecovery: true })).toBe("legacy");
+    expect(source).toContain("Update Pubky Ring, or approve once more");
   });
 
   it("reaches ready after a successful decrypt", () => {

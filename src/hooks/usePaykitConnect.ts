@@ -5,8 +5,6 @@ import {
   HANDOFF_TTL_MS,
   pendingChannelMatches,
   startPaykitConnect,
-  waitForHandoffParams,
-  type HandoffPublicParams,
   type PaykitConnectStart,
 } from "@/services/RingConnect";
 import { KeyStore } from "@/services/KeyStore";
@@ -21,12 +19,17 @@ import {
   setPaykitConnectStartLock,
   settleLivePaykitConnect,
 } from "@/services/paykitConnectLive";
+import {
+  watchCombinedGrant,
+  type CombinedWatchResult,
+} from "@/services/singleApproval";
 
 export { resetPaykitConnectLive, resetPaykitConnectLiveForTests };
 
 export type UsePaykitConnectOptions = {
   autoStart?: boolean;
-  onParams?: (params: HandoffPublicParams, ch: string) => Promise<void> | void;
+  onResult?: (result: CombinedWatchResult) => Promise<void> | void;
+  onProgress?: (stage: "locator" | "auth") => void;
   onError?: (error: unknown) => void;
 };
 
@@ -52,7 +55,8 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
   const [isExpired, setIsExpired] = useState(false);
   const mountedRef = useRef(true);
   const startedRef = useRef(started);
-  const onParamsRef = useRef(options.onParams);
+  const onResultRef = useRef(options.onResult);
+  const onProgressRef = useRef(options.onProgress);
   const onErrorRef = useRef(options.onError);
 
   useEffect(() => {
@@ -60,33 +64,39 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
   }, [started]);
 
   useEffect(() => {
-    onParamsRef.current = options.onParams;
+    onResultRef.current = options.onResult;
+    onProgressRef.current = options.onProgress;
     onErrorRef.current = options.onError;
     setLivePaykitConnectHandlers({
-      onParams: options.onParams,
+      onResult: options.onResult,
+      onProgress: options.onProgress,
       onError: options.onError,
     });
-  }, [options.onParams, options.onError]);
+  }, [options.onResult, options.onProgress, options.onError]);
 
-  const bindPoll = useCallback((live: NonNullable<ReturnType<typeof getLivePaykitConnect>>) => {
-    void waitForHandoffParams(live.started.ch, live.started.deadlineMs, live.abort.signal)
-      .then(async (params) => {
-        settleLivePaykitConnect(live);
-        if (live.abort.signal.aborted) return;
+  const bindWatch = useCallback((live: NonNullable<ReturnType<typeof getLivePaykitConnect>>) => {
+    void watchCombinedGrant({
+      ch: live.started.ch,
+      deadlineMs: live.started.deadlineMs,
+      flow: live.authFlow,
+      signal: live.abort.signal,
+      onProgress: (stage) => {
         const handlers = getLivePaykitConnectHandlers();
-        await (handlers.onParams ?? onParamsRef.current)?.(params, live.started.ch);
+        (handlers.onProgress ?? onProgressRef.current)?.(stage);
+      },
+    })
+      .then(async (result) => {
+        settleLivePaykitConnect(live);
+        if (live.abort.signal.aborted && result.kind !== "aborted") return;
+        const handlers = getLivePaykitConnectHandlers();
+        await (handlers.onResult ?? onResultRef.current)?.(result);
+        if (result.kind === "timeout" && mountedRef.current) {
+          setIsExpired(true);
+        }
       })
       .catch((error: unknown) => {
         settleLivePaykitConnect(live);
-        if (live.abort.signal.aborted) return;
-        const name =
-          typeof error === "object" && error !== null && "name" in error
-            ? String((error as { name?: unknown }).name)
-            : "";
-        if (name === "RelayPollExhaustedError" || Date.now() >= live.started.deadlineMs) {
-          if (mountedRef.current) setIsExpired(true);
-          return;
-        }
+        if (live.abort.signal.aborted || live.authFlow.canceled) return;
         const handlers = getLivePaykitConnectHandlers();
         (handlers.onError ?? onErrorRef.current)?.(error);
       });
@@ -127,7 +137,10 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
       );
       const currentLive = getLivePaykitConnect();
       const previousCh = currentLive?.started.ch ?? (replace ? startedRef.current?.ch : undefined);
-      currentLive?.abort.abort();
+      if (currentLive) {
+        currentLive.authFlow.canceled = true;
+        currentLive.abort.abort();
+      }
       if (replace && previousCh) {
         await KeyStore.clearPendingRingHandoff(previousCh);
       }
@@ -139,9 +152,13 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
       }
       try {
         const next = await startPaykitConnect();
-        const nextLive = { started: next, abort };
+        const nextLive = {
+          started: next,
+          abort,
+          authFlow: { handle: next.authFlow, canceled: false },
+        };
         setLivePaykitConnect(nextLive);
-        bindPoll(nextLive);
+        bindWatch(nextLive);
         if (mountedRef.current) {
           setStarted(next);
         }
@@ -153,7 +170,7 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
         setPaykitConnectStartLock(null);
       }
     },
-    [bindPoll],
+    [bindWatch],
   );
 
   const showQrAgain = useCallback(async () => {
@@ -172,9 +189,13 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
         }
         return;
       }
-      const nextLive = { started: current, abort: new AbortController() };
+      const nextLive = {
+        started: current,
+        abort: new AbortController(),
+        authFlow: live?.authFlow ?? { handle: current.authFlow, canceled: false },
+      };
       setLivePaykitConnect(nextLive);
-      bindPoll(nextLive);
+      bindWatch(nextLive);
       if (mountedRef.current) {
         setStarted(current);
         setIsExpired(false);
@@ -183,7 +204,7 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
       return;
     }
     await start({ replace: true });
-  }, [bindPoll, start, started]);
+  }, [bindWatch, start, started]);
 
   const copyUrl = useCallback(async () => {
     if (!started) return;
@@ -193,7 +214,10 @@ export function usePaykitConnect(options: UsePaykitConnectOptions = {}) {
   const cancel = useCallback(() => {
     const live = getLivePaykitConnect();
     const ch = live?.started.ch ?? started?.ch;
-    live?.abort.abort();
+    if (live) {
+      live.authFlow.canceled = true;
+      live.abort.abort();
+    }
     setLivePaykitConnect(null);
     if (ch) {
       void KeyStore.clearPendingRingHandoff(ch);

@@ -194,7 +194,7 @@ export const LinkService = {
     session = adopted;
   },
 
-  async provisionHarnessReceiver(): Promise<{
+  async provisionReceiverForActiveSession(): Promise<{
     pubky: string;
     receiverPath: string;
     noisePublicKey: string;

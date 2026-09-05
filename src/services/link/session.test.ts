@@ -139,8 +139,8 @@ describe("session restore classification", () => {
     expect(await readSessionMetadata()).toBeNull();
   });
 
-  it("treats a paykit-only grant as needs-enable", async () => {
-    const handle = fakeHandle(OWNER, exportWithCaps("/pub/paykit/:rw"));
+  it("treats a hypercolor-only grant as needs-enable", async () => {
+    const handle = fakeHandle(OWNER, exportWithCaps("/pub/hypercolor.app/v1/:rw"));
     resume.mockResolvedValue(handle);
     signOutSession.mockResolvedValue(undefined);
     const result = await restoreSessionOnLoad();

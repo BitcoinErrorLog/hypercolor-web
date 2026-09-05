@@ -23,6 +23,6 @@ export async function repairLocalData(): Promise<void> {
 
   const { LinkService } = await import("@/services/link/LinkService");
   if (!LinkService.hasSession()) return;
-  await LinkService.provisionHarnessReceiver();
+  await LinkService.provisionReceiverForActiveSession();
   await LinkService.syncInbox();
 }

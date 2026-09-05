@@ -7,26 +7,31 @@ import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { WelcomePage } from "@/components/welcome-page";
 import { resolveWelcomePhase } from "@/components/welcome-phase";
 import { usePaykitConnect } from "@/hooks/usePaykitConnect";
+import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { APP_NAME } from "@/lib/app-meta";
+import { sanitizeHandoffError } from "@/services/RingConnect";
+import { PaykitLinkWeb, type SessionHandle } from "@/services/link/PaykitLinkWeb";
+import { adoptApprovedSession } from "@/services/link/session";
+import { provisionReceiver } from "@/services/link/provisionReceiver";
 import {
-  adoptHandoff,
-  decryptPendingHandoff,
-  sanitizeHandoffError,
-  type HandoffPayload,
-  type HandoffPublicParams,
-} from "@/services/RingConnect";
+  BindingMismatchError,
+  ProvisionReceiverFailedError,
+  finishSingleApproval,
+  type CombinedWatchResult,
+} from "@/services/singleApproval";
+import { adoptHandoff, type HandoffPayload, type HandoffPublicParams } from "@/services/RingConnect";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-function buildAuthPanel(url: string): ReactNode {
+function buildAuthPanel(url: string, title: string): ReactNode {
   return (
     <AuthUrlPanel
       url={url}
-      title="Paykit-connect link"
-        hint="Approve the request in Pubky Ring, or scan the code on another device."
+      title={title}
+      hint="Approve the request in Pubky Ring, or scan the code on another device."
       testIdPrefix="welcome"
       actions={
         <AuthUrlActions
@@ -45,35 +50,144 @@ export function WelcomePageHost() {
   const pubky = useAuthStore((s) => s.pubky);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const status = useSessionStatusStore((s) => s.status);
-  const setNeedsEnable = useSessionStatusStore((s) => s.setNeedsEnable);
+  const setEnabled = useSessionStatusStore((s) => s.setEnabled);
   const adopted = useRef(false);
   const cancelled = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
-  const [pending, setPending] = useState<{
+  const [legacy, setLegacy] = useState<{
     params: HandoffPublicParams;
     payload: HandoffPayload;
     ch: string;
+    authUrl: string;
   } | null>(null);
-  const [adopting, setAdopting] = useState(false);
+  const [retryPublish, setRetryPublish] = useState<string | null>(null);
+  const legacyCanceled = useRef(false);
 
-  const onParams = useCallback(async (params: HandoffPublicParams, ch: string) => {
-    setFinishing(true);
-    setError(null);
-    try {
-      const payload = await decryptPendingHandoff(params, ch);
-      setPending({ params, payload, ch });
+  const goToChats = useCallback(
+    (nextPubky: string) => {
+      adopted.current = true;
+      setEnabled(nextPubky);
+      router.push("/chats");
+    },
+    [router, setEnabled],
+  );
+
+  const onResult = useCallback(
+    async (result: CombinedWatchResult) => {
       setFinishing(false);
-    } catch (err) {
-      setFinishing(false);
-      setError(sanitizeHandoffError(err));
-      emitCoarseError("welcome", err);
-    }
-  }, []);
+      if (result.kind === "aborted") return;
+      if (result.kind === "timeout") {
+        return;
+      }
+      if (result.kind === "locator_timeout") {
+        setError("Sign-in did not finish. Show the QR again.");
+        return;
+      }
+      if (result.kind === "auth_timeout") {
+        try {
+          await PaykitLinkWeb.signOutSession(result.session);
+        } catch {
+          try {
+            result.session.free();
+          } catch {
+            // already consumed
+          }
+        }
+        setError("Sign-in did not finish. Show the QR again.");
+        return;
+      }
+      if (result.kind === "legacy") {
+        setFinishing(false);
+        try {
+          const flow = await PaykitLinkWeb.startAuthFlow(RING_GRANT_CAPABILITIES);
+          const tracked = { handle: flow, canceled: false };
+          legacyCanceled.current = false;
+          setLegacy({
+            params: result.params,
+            payload: result.payload,
+            ch: result.ch,
+            authUrl: flow.authorizationUrl(),
+          });
+          void PaykitLinkWeb.awaitAuthApproval(flow)
+            .then(async (session: SessionHandle) => {
+              if (tracked.canceled || legacyCanceled.current) {
+                try {
+                  await PaykitLinkWeb.signOutSession(session);
+                } catch {
+                  try {
+                    session.free();
+                  } catch {
+                    // consumed
+                  }
+                }
+                return;
+              }
+              const live = await adoptApprovedSession(session);
+              if (result.params.pubky !== live.handle.pubky()) {
+                await PaykitLinkWeb.signOutSession(live.handle);
+                setError("Sign-in did not finish. Show the QR again.");
+                setLegacy(null);
+                return;
+              }
+              await adoptHandoff(result.params, result.payload, result.ch);
+              try {
+                await provisionReceiver(live.handle, live.pubky);
+              } catch {
+                setRetryPublish(live.pubky);
+                setLegacy(null);
+                setError("Could not publish the receiver. Retry publish.");
+                return;
+              }
+              goToChats(live.pubky);
+            })
+            .catch((err: unknown) => {
+              if (tracked.canceled || legacyCanceled.current) return;
+              setError(sanitizeHandoffError(err));
+              emitCoarseError("welcome", err);
+            });
+        } catch (err) {
+          setError(sanitizeHandoffError(err));
+          emitCoarseError("welcome", err);
+        }
+        return;
+      }
+
+      setFinishing(true);
+      try {
+        const done = await finishSingleApproval({
+          params: result.params,
+          payload: result.payload,
+          session: result.session,
+          ch: result.ch,
+        });
+        goToChats(done.pubky);
+      } catch (err) {
+        setFinishing(false);
+        if (err instanceof ProvisionReceiverFailedError) {
+          setRetryPublish(result.params.pubky);
+          setError("Could not publish the receiver. Retry publish.");
+          return;
+        }
+        if (err instanceof BindingMismatchError) {
+          setError("Sign-in did not finish. Show the QR again.");
+          emitCoarseError("welcome", err);
+          return;
+        }
+        setError(sanitizeHandoffError(err));
+        emitCoarseError("welcome", err);
+      }
+    },
+    [goToChats],
+  );
 
   const connect = usePaykitConnect({
     autoStart: !isAuthenticated,
-    onParams,
+    onResult,
+    onProgress: () => {
+      setFinishing(true);
+      setError(null);
+    },
     onError: (err) => {
       setFinishing(false);
       setError(sanitizeHandoffError(err));
@@ -82,11 +196,13 @@ export function WelcomePageHost() {
   });
 
   const phase = resolveWelcomePhase({
-    isExpired: connect.isExpired,
+    isExpired: connect.isExpired && !error && !retryPublish && !legacy,
     error,
-    pendingPubky: pending?.params.pubky ?? null,
-    linkLive: Boolean(connect.url) && !connect.isExpired && !finishing && !pending && !error,
-    finishing,
+    pendingPubky: null,
+    linkLive: Boolean(connect.url) && !connect.isExpired && !finishing && !error && !legacy && !retryPublish,
+    finishing: finishing && !legacy && !retryPublish,
+    legacyRecovery: Boolean(legacy),
+    retryPublish: Boolean(retryPublish),
   });
 
   useEffect(() => {
@@ -103,41 +219,19 @@ export function WelcomePageHost() {
     },
   );
 
-  async function confirmAdoption(accepted: boolean) {
-    if (!pending) return;
-    if (!accepted) {
-      cancelled.current = true;
-      setPending(null);
-      void emit("app.onboarding.abandoned", { step: "welcome" });
-      return;
-    }
-    setAdopting(true);
-    try {
-      const result = await adoptHandoff(pending.params, pending.payload, pending.ch);
-      if (result) {
-        adopted.current = true;
-        setNeedsEnable();
-        router.push("/enable");
-      }
-    } catch (err) {
-      setError(sanitizeHandoffError(err));
-      emitCoarseError("welcome", err);
-    } finally {
-      setAdopting(false);
-    }
-  }
-
   function mintNewLink() {
     setError(null);
-    setPending(null);
     setFinishing(false);
+    setLegacy(null);
+    setRetryPublish(null);
     void connect.start({ replace: true });
   }
 
   function showQrAgain() {
     setError(null);
-    setPending(null);
     setFinishing(false);
+    setLegacy(null);
+    setRetryPublish(null);
     void connect.showQrAgain();
   }
 
@@ -147,13 +241,19 @@ export function WelcomePageHost() {
       isAuthenticated={isAuthenticated}
       pubky={pubky}
       isLoading={connect.isLoading}
-      isExpired={connect.isExpired}
+      isExpired={connect.isExpired && !error && !retryPublish}
       error={error}
-      pendingPubky={pending?.params.pubky ?? null}
-      adopting={adopting}
+      pendingPubky={null}
+      adopting={false}
       finishing={finishing}
       phase={phase}
-      authPanel={phase === "waiting" ? buildAuthPanel(connect.url) : null}
+      authPanel={
+        phase === "waiting"
+          ? buildAuthPanel(connect.url, "Paykit-connect link")
+          : phase === "legacy"
+            ? buildAuthPanel(legacy?.authUrl ?? "", "Authorization URL")
+            : null
+      }
       linkLive={phase === "waiting"}
       ch={connect.ch}
       onGenerateLink={() => {
@@ -162,14 +262,36 @@ export function WelcomePageHost() {
       }}
       onTryAgain={mintNewLink}
       onShowQrAgain={showQrAgain}
-      onConfirmAdoption={() => void confirmAdoption(true)}
-      onCancelAdoption={() => void confirmAdoption(false)}
+      onConfirmAdoption={() => undefined}
+      onCancelAdoption={() => undefined}
+      onRetryPublish={
+        retryPublish
+          ? () => {
+              void (async () => {
+                const { getLiveSession } = await import("@/services/link/session");
+                const session = getLiveSession();
+                if (!session) {
+                  setError("Sign-in did not finish. Show the QR again.");
+                  return;
+                }
+                try {
+                  await provisionReceiver(session.handle, session.pubky);
+                  goToChats(session.pubky);
+                } catch (err) {
+                  setError(sanitizeHandoffError(err));
+                }
+              })();
+            }
+          : undefined
+      }
       onCancelWaiting={() => {
         cancelled.current = true;
+        legacyCanceled.current = true;
         connect.cancel();
         setError(null);
-        setPending(null);
+        setLegacy(null);
         setFinishing(false);
+        setRetryPublish(null);
       }}
     />
   );

@@ -3,12 +3,19 @@ import { hexToBytes, isEvenHex, zeroizeBytes } from "@/lib/hex";
 import { isValidPubky } from "@/utils/pubkyId";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { KeyStore, type AppCert } from "@/services/KeyStore";
-import { PaykitLinkWeb, toLinkNativeError } from "@/services/link/PaykitLinkWeb";
+import {
+  PaykitLinkWeb,
+  toLinkNativeError,
+  type AuthFlowHandle,
+} from "@/services/link/PaykitLinkWeb";
 import { pollLink, postLink, RelayPollExhaustedError } from "@/services/relayChannel";
 import { deriveRingCallbackChannelId } from "@/services/ringChannelId";
 import { useAuthStore } from "@/stores/authStore";
 
 export const HANDOFF_TTL_MS = 5 * 60 * 1000;
+export const HANDOFF_MODE_COMBINED = "secure_handoff+pubkyauth";
+export const HANDOFF_MODE_LEGACY = "secure_handoff";
+const PENDING_HANDOFF_LOCATOR_KEY = "hc.pendingHandoffLocator";
 export const HANDOFF_PATH_PREFIX = "/pub/paykit.app/v0/handoff/";
 export const HANDOFF_FETCH_TIMEOUT_MS = 15_000;
 export const HANDOFF_FETCH_MAX_ATTEMPTS = 3;
@@ -42,7 +49,99 @@ export type PaykitConnectStart = {
   deviceId: string;
   deadlineMs: number;
   ephemeralPkHex: string;
+  authFlow: AuthFlowHandle;
 };
+
+export type PubkyauthAuthorizationParts = {
+  caps: string;
+  secret: string;
+  relay: string;
+};
+
+/**
+ * Parse `pubkyauth:///?caps=&secret=&relay=` by hand. The URL has an empty
+ * authority; `new URL` is not used (RN/web parsers disagree).
+ */
+export function parsePubkyauthAuthorizationUrl(raw: string): PubkyauthAuthorizationParts {
+  if (typeof raw !== "string" || !raw.startsWith("pubkyauth:")) {
+    throw new Error("pubkyauth URL is missing");
+  }
+  const qIndex = raw.indexOf("?");
+  if (qIndex < 0) {
+    throw new Error("pubkyauth URL is missing a query");
+  }
+  const query = raw.slice(qIndex + 1);
+  const hash = query.indexOf("#");
+  const q = hash >= 0 ? query.slice(0, hash) : query;
+  const params = new Map<string, string>();
+  for (const part of q.split("&")) {
+    if (!part) continue;
+    const eq = part.indexOf("=");
+    const key =
+      eq < 0 ? decodeURIComponent(part) : decodeURIComponent(part.slice(0, eq));
+    const value =
+      eq < 0 ? "" : decodeURIComponent(part.slice(eq + 1).replace(/\+/g, " "));
+    params.set(key, value);
+  }
+  const caps = params.get("caps") ?? "";
+  const secret = params.get("secret") ?? "";
+  const relay = params.get("relay") ?? "";
+  if (!caps || !secret || !relay) {
+    throw new Error("pubkyauth URL is missing caps, secret, or relay");
+  }
+  return { caps, secret, relay };
+}
+
+export function classifyHandoffMode(
+  mode: string,
+): typeof HANDOFF_MODE_COMBINED | typeof HANDOFF_MODE_LEGACY | null {
+  if (mode === HANDOFF_MODE_COMBINED) return HANDOFF_MODE_COMBINED;
+  if (mode === HANDOFF_MODE_LEGACY) return HANDOFF_MODE_LEGACY;
+  return null;
+}
+
+type PendingHandoffLocator = {
+  ch: string;
+  params: HandoffPublicParams;
+};
+
+function locatorStorage(): Storage | null {
+  try {
+    if (typeof sessionStorage === "undefined") return null;
+    return sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function rememberPendingHandoffLocator(
+  ch: string,
+  params: HandoffPublicParams,
+): void {
+  const store = locatorStorage();
+  if (!store) return;
+  const record: PendingHandoffLocator = { ch, params };
+  store.setItem(PENDING_HANDOFF_LOCATOR_KEY, JSON.stringify(record));
+}
+
+export function readPendingHandoffLocator(): PendingHandoffLocator | null {
+  const store = locatorStorage();
+  if (!store) return null;
+  const raw = store.getItem(PENDING_HANDOFF_LOCATOR_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as PendingHandoffLocator;
+    if (!parsed || typeof parsed.ch !== "string" || !parsed.params) return null;
+    if (!classifyHandoffMode(parsed.params.mode)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearPendingHandoffLocator(): void {
+  locatorStorage()?.removeItem(PENDING_HANDOFF_LOCATOR_KEY);
+}
 
 export type HandoffPublicParams = {
   pubky: string;
@@ -81,6 +180,8 @@ export function buildPaykitConnectUrl(input: {
   deviceId: string;
   ephemeralPkHex: string;
   callbackUrl: string;
+  secret: string;
+  relay: string;
 }): string {
   const callback = encodeURIComponent(input.callbackUrl);
   return (
@@ -88,7 +189,9 @@ export function buildPaykitConnectUrl(input: {
     `?deviceId=${encodeURIComponent(input.deviceId)}` +
     `&callback=${callback}` +
     `&ephemeralPk=${encodeURIComponent(input.ephemeralPkHex)}` +
-    `&caps=${encodeURIComponent(RING_GRANT_CAPABILITIES)}`
+    `&caps=${encodeURIComponent(RING_GRANT_CAPABILITIES)}` +
+    `&secret=${encodeURIComponent(input.secret)}` +
+    `&relay=${encodeURIComponent(input.relay)}`
   );
 }
 
@@ -107,7 +210,7 @@ export function validateHandoffPublicParams(
   const mode = typeof record.mode === "string" ? record.mode : "";
   const homeserver =
     typeof record.homeserver === "string" ? record.homeserver : "";
-  if (mode !== "secure_handoff") return null;
+  if (!classifyHandoffMode(mode)) return null;
   if (!isValidPubky(pubky)) return null;
   if (!isEvenHex(requestId) || requestId.length < 8) return null;
   if (!isValidPubky(homeserver)) return null;
@@ -125,6 +228,8 @@ export function parseRelayHandoffBody(bytes: Uint8Array): HandoffPublicParams | 
 
 export async function startPaykitConnect(): Promise<PaykitConnectStart> {
   await KeyStore.initKeyStore();
+  const authFlow = await PaykitLinkWeb.startAuthFlow(RING_GRANT_CAPABILITIES);
+  const parsed = parsePubkyauthAuthorizationUrl(authFlow.authorizationUrl());
   const pair = await PaykitLinkWeb.x25519GenerateKeypair();
   const pkBytes = hexToBytes(pair.publicKey);
   const ch = await deriveRingCallbackChannelId(pkBytes);
@@ -136,6 +241,8 @@ export async function startPaykitConnect(): Promise<PaykitConnectStart> {
     deviceId,
     ephemeralPkHex: pair.publicKey,
     callbackUrl,
+    secret: parsed.secret,
+    relay: parsed.relay,
   });
   return {
     url,
@@ -143,6 +250,7 @@ export async function startPaykitConnect(): Promise<PaykitConnectStart> {
     deviceId,
     deadlineMs,
     ephemeralPkHex: pair.publicKey,
+    authFlow,
   };
 }
 
@@ -376,6 +484,23 @@ export async function decryptPendingHandoff(
 }
 
 /**
+ * After a cookie exists, adopt a still-decryptable pending handoff for `pubky`
+ * (reload between cookie and keys, or old-Ring chained grant).
+ */
+export async function tryAdoptPendingHandoffForSession(pubky: string): Promise<boolean> {
+  const stored = readPendingHandoffLocator();
+  if (!stored) return false;
+  if (!(await pendingChannelMatches(stored.ch))) return false;
+  if (stored.params.pubky !== pubky) return false;
+  const payload = await decryptPendingHandoff(stored.params, stored.ch);
+  if (payload.pubky !== pubky) {
+    throw new Error("Handoff payload pubky does not match session");
+  }
+  await adoptHandoff(stored.params, payload, stored.ch);
+  return true;
+}
+
+/**
  * Persist UKD/app keys. `session_secret` is discarded — the write credential
  * on web is the pubkyauth cookie, not this bearer.
  */
@@ -411,6 +536,7 @@ export async function adoptHandoff(
     await KeyStore.setNoiseSeed(payload.noise_seed);
   }
   await KeyStore.clearPendingRingHandoff(ch);
+  clearPendingHandoffLocator();
   useAuthStore.getState().setAuthenticated(pubky, homeserver);
   return { pubky, homeserver };
 }

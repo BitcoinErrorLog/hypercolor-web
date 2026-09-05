@@ -32,6 +32,7 @@ export function WelcomePage({
   onCancelWaiting,
   onTryAgain,
   onShowQrAgain,
+  onRetryPublish,
 }: {
   appName: string;
   isAuthenticated: boolean;
@@ -52,6 +53,7 @@ export function WelcomePage({
   onCancelWaiting: () => void;
   onTryAgain?: () => void;
   onShowQrAgain?: () => void;
+  onRetryPublish?: () => void;
 }) {
   const phase = resolveWelcomePhase({
     isExpired,
@@ -70,8 +72,7 @@ export function WelcomePage({
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
       <p className="text-muted-foreground leading-7">{CUSTODY_LINE}</p>
       <p className="text-muted-foreground leading-7">
-        Connect adopts an identity on this device. Enabling encrypted messaging is a second
-        approval in Pubky Ring.
+        Approve once in Pubky Ring to sign this device in and set up messaging keys.
       </p>
 
       {isAuthenticated && pubky ? (
@@ -200,6 +201,36 @@ export function WelcomePage({
               Cancel
             </Button>
           </div>
+        </div>
+      ) : null}
+
+      {phase === "legacy" ? (
+        <div className="space-y-3" data-testid="welcomeLegacy">
+          <p className="text-sm text-muted-foreground">
+            Update Pubky Ring, or approve once more
+          </p>
+          {authPanel}
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="welcomeCancel"
+            onClick={onCancelWaiting}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : null}
+
+      {phase === "retry-publish" ? (
+        <div className="w-full space-y-3" data-testid="welcomeRetryPublish">
+          <p className="text-sm text-muted-foreground">
+            Sign-in finished, but publishing the receiver failed.
+          </p>
+          {onRetryPublish ? (
+            <Button type="button" data-testid="welcomeRetryPublish" onClick={onRetryPublish}>
+              Retry publish
+            </Button>
+          ) : null}
         </div>
       ) : null}
 

@@ -12,6 +12,9 @@ export const BACKUP_CUSTODY_LINE =
 export const SCOPE_SENTENCE =
   "Approve the Paykit and Hypercolor write scopes in Pubky Ring.";
 
+export const LEGACY_RING_LINE =
+  "Update Pubky Ring, or approve once more";
+
 export const RING_GRANT_DETAIL = RING_GRANT_CAPABILITIES;
 
 export const PUBLIC_GRAPH_WARNING =

@@ -1,18 +1,23 @@
-import type { HandoffPublicParams, PaykitConnectStart } from "@/services/RingConnect";
+import type { AuthFlowHandle } from "@/services/link/PaykitLinkWeb";
+import type { PaykitConnectStart } from "@/services/RingConnect";
+import type { CombinedWatchResult, TrackedAuthFlow } from "@/services/singleApproval";
 
 export type LivePaykitConnect = {
   started: PaykitConnectStart;
   abort: AbortController;
+  authFlow: TrackedAuthFlow;
 };
 
 export type LivePaykitConnectHandlers = {
-  onParams?: (params: HandoffPublicParams, ch: string) => Promise<void> | void;
+  onResult?: (result: CombinedWatchResult) => Promise<void> | void;
+  onProgress?: (stage: "locator" | "auth") => void;
   onError?: (error: unknown) => void;
 };
 
 let livePaykitConnect: LivePaykitConnect | null = null;
 let startLock: Promise<void> | null = null;
-let liveOnParams: LivePaykitConnectHandlers["onParams"];
+let liveOnResult: LivePaykitConnectHandlers["onResult"];
+let liveOnProgress: LivePaykitConnectHandlers["onProgress"];
 let liveOnError: LivePaykitConnectHandlers["onError"];
 
 export function getLivePaykitConnect(): LivePaykitConnect | null {
@@ -32,11 +37,12 @@ export function setPaykitConnectStartLock(lock: Promise<void> | null): void {
 }
 
 export function getLivePaykitConnectHandlers(): LivePaykitConnectHandlers {
-  return { onParams: liveOnParams, onError: liveOnError };
+  return { onResult: liveOnResult, onProgress: liveOnProgress, onError: liveOnError };
 }
 
 export function setLivePaykitConnectHandlers(next: LivePaykitConnectHandlers): void {
-  liveOnParams = next.onParams;
+  liveOnResult = next.onResult;
+  liveOnProgress = next.onProgress;
   liveOnError = next.onError;
 }
 
@@ -46,14 +52,27 @@ export function settleLivePaykitConnect(live: LivePaykitConnect): void {
   }
 }
 
+export function markLiveAuthFlowCanceled(): TrackedAuthFlow | null {
+  const live = livePaykitConnect;
+  if (!live) return null;
+  live.authFlow.canceled = true;
+  return live.authFlow;
+}
+
 export function resetPaykitConnectLive(): void {
-  livePaykitConnect?.abort.abort();
+  if (livePaykitConnect) {
+    livePaykitConnect.authFlow.canceled = true;
+    livePaykitConnect.abort.abort();
+  }
   livePaykitConnect = null;
   startLock = null;
-  liveOnParams = undefined;
+  liveOnResult = undefined;
+  liveOnProgress = undefined;
   liveOnError = undefined;
 }
 
 export function resetPaykitConnectLiveForTests(): void {
   resetPaykitConnectLive();
 }
+
+export type { AuthFlowHandle };
