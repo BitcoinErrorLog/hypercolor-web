@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  --color-canvas: #0a0a0a;
+  --color-canvas: #05050A;
   --color-surface: #111111;
   --color-surfaceRaised: #1a1a1a;
   --color-surfaceBrand: #1f1b2e;
@@ -15,6 +15,12 @@
   --color-brandSoft: #a78bfa;
   --color-brandText: #9a67f2;
   --color-brandHighlight: #e9d5ff;
+  --brand-2: #2dd4bf;
+  --brand-2-300: #5eead4;
+  --brand-2-400: #2dd4bf;
+  --brand-2-500: #14b8a6;
+  --on-teal: #05050A;
+  --brand-iridescent: linear-gradient(165deg, #7c3aed 0%, #4c1d95 52%, #14b8a6 100%);
   --color-textPrimary: #f9fafb;
   --color-textSecondary: #9ca3af;
   --color-textMuted: #808692;
@@ -99,16 +105,28 @@
   --card-foreground: var(--color-textPrimary);
   --primary: var(--color-brand);
   --primary-foreground: var(--color-textOnBrand);
-  --secondary: var(--color-surfaceRaised);
-  --secondary-foreground: var(--color-textPrimary);
+  --secondary: #303034;
+  --secondary-foreground: #d4d4db;
   --muted: var(--color-surfaceRaised);
   --muted-foreground: var(--color-textSecondary);
+  --destructive: var(--color-dangerStrong);
+  --destructive-foreground: var(--color-textPrimary);
+  --brand: var(--color-brand);
+  --header-offset-main: 144px;
+  --filter-bar-width: 180px;
+  --container-max-width: 1200px;
+  --z-sticky-header: 20;
+  --z-mobile-menu: 30;
+  --header-height: 146px;
+  --header-height-mobile: 80px;
+  --header-height-settings: 72px;
+  --mobile-tab-bar-height: 48px;
+  --popover-width: 280px;
   --accent: var(--color-surfaceRaised);
   --accent-foreground: var(--color-textPrimary);
   --border: var(--color-hairline);
   --input: var(--color-hairlineStrong);
   --ring: var(--color-brandMuted);
-  --brand: var(--color-brand);
 }
 
 @theme inline {
@@ -127,8 +145,13 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-warning: #f59e0b;
   --color-brand: #7c3aed;
-  --color-canvas: #0a0a0a;
+  --color-brand-2: var(--brand-2);
+  --color-on-teal: var(--on-teal);
+  --color-canvas: #05050A;
   --color-surface: #111111;
   --color-surfaceRaised: #1a1a1a;
   --color-surfaceBrand: #1f1b2e;
@@ -206,6 +229,42 @@
   --z-index-40: 40;
   --z-index-50: 50;
   --z-index-60: 60;
+  --z-sticky-header: 20;
+  --z-mobile-menu: 30;
+}
+
+.hc-brand-cta {
+  background-color: var(--color-brand);
+  background-image: radial-gradient(
+    ellipse 90% 140% at 100% 40%,
+    color-mix(in srgb, var(--brand-2) 42%, transparent) 0%,
+    transparent 58%
+  );
+  color: var(--color-textOnBrand);
+}
+
+.hc-header-iridescent {
+  background-image:
+    linear-gradient(to bottom, var(--background) 50%, transparent),
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--color-brand) 28%, transparent),
+      color-mix(in srgb, var(--brand-2) 22%, transparent)
+    );
+}
+
+.hc-hero-iridescent {
+  background-image: var(--brand-iridescent);
+}
+
+.hc-avatar-ring {
+  padding: 2px;
+  background-image: linear-gradient(135deg, var(--color-brand), var(--brand-2));
+  border-radius: 9999px;
+}
+
+.hc-boot-iridescent {
+  background-image: var(--brand-iridescent);
 }
 
 body {

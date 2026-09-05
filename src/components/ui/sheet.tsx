@@ -145,7 +145,7 @@ export function ModalSheet({
     <div
       ref={overlayRef}
       className={cn(
-        "fixed inset-0 flex items-end justify-center bg-black/60 p-0 md:items-center md:px-6",
+        "fixed inset-0 flex items-end justify-center bg-black/50 p-0 md:items-center md:px-6",
         layer === "gate" ? "z-60" : "z-50",
       )}
       data-sheet-layer={layer}
@@ -162,7 +162,7 @@ export function ModalSheet({
         aria-labelledby={labelledBy ?? titleId ?? (role === "menu" ? labelId : undefined)}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="sheet-enter hc-sheet-panel space-y-4 rounded-t-md border border-border bg-card p-5 shadow md:rounded-md"
+        className="sheet-enter hc-sheet-panel space-y-4 rounded-t-lg border border-border bg-card p-5 shadow sm:rounded-xl sm:p-8 md:rounded-xl"
         data-surface={surface}
         onKeyDown={onKeyDown}
       >
