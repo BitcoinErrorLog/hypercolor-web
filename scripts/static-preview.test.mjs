@@ -36,6 +36,21 @@ afterEach(() => {
   }
 });
 
+describe("vercel.json shape", () => {
+  it("sets Referrer-Policy no-referrer on the Ring callback landing", () => {
+    const raw = JSON.parse(readFileSync(path.join(REPO_ROOT, "vercel.json"), "utf8"));
+    const sources = ["/ring-callback", "/ring-callback/(.*)"];
+    expect(Array.isArray(raw.headers)).toBe(true);
+    for (const source of sources) {
+      const rule = raw.headers.find((entry) => entry.source === source);
+      expect(rule, `missing headers rule for ${source}`).toBeTruthy();
+      expect(rule.headers).toEqual(
+        expect.arrayContaining([{ key: "Referrer-Policy", value: "no-referrer" }]),
+      );
+    }
+  });
+});
+
 describe("static preview rewrites", () => {
   it("loads the repository vercel.json nested-route rules", () => {
     const rewrites = loadVercelRewrites(REPO_ROOT);
