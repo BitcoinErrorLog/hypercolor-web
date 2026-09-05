@@ -16,6 +16,11 @@ import {
 } from "@/services/link/provisionReceiver";
 import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
 
+const bannerFrame =
+  "border-b border-border bg-brand/8 px-4 py-3 text-sm text-card-foreground lg:px-6 xl:px-0";
+const bannerInner =
+  "mx-auto flex w-full max-w-(--container-max-width) flex-wrap items-center justify-between gap-3";
+
 export function StandbyBanner() {
   const role = useReceiverRoleStore((s) => s.role);
   const toast = useReceiverRoleStore((s) => s.toast);
@@ -66,11 +71,11 @@ export function StandbyBanner() {
     return (
       <div
         role="status"
-        className="border-b border-border bg-card px-6 py-3 text-sm"
+        className={bannerFrame}
         data-testid="takeoverToast"
         data-surface="standby-banner"
       >
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
+        <div className={bannerInner}>
           <p>{toast}</p>
           <Button type="button" size="sm" variant="outline" onClick={() => clearToast()}>
             Dismiss
@@ -86,19 +91,20 @@ export function StandbyBanner() {
     <>
       <div
         role="status"
-        className="border-b border-border bg-card px-6 py-3 text-sm"
+        className={bannerFrame}
         data-testid={copy.testId}
         data-surface="standby-banner"
       >
-        <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
+        <div className={bannerInner}>
           <div className="space-y-1">
-            <p className="font-medium">{copy.title}</p>
+            <p className="font-semibold text-foreground">{copy.title}</p>
             <p className="text-muted-foreground">{copy.body}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
+              variant="brand"
               data-testid={copy.primaryTestId}
               onClick={() => setConfirmOpen(true)}
             >
@@ -126,7 +132,7 @@ export function StandbyBanner() {
         testId="standbyTakeoverDialog"
         surface="standby-takeover-confirm"
       >
-        <h2 id="standby-takeover-title" className="text-lg font-semibold">
+        <h2 id="standby-takeover-title" className="text-lg font-semibold text-foreground">
           {copy.title}
         </h2>
         <p id="standby-takeover-body" className="text-sm text-muted-foreground">
@@ -145,6 +151,7 @@ export function StandbyBanner() {
           </Button>
           <Button
             type="button"
+            variant="brand"
             data-testid="standbyTakeoverConfirm"
             disabled={busy}
             onClick={() => {

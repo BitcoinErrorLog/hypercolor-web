@@ -51,7 +51,11 @@ export function ErrorDetails({
       ) : null}
       {repairHref ? (
         <p>
-          <a href={repairHref} className="underline underline-offset-4" data-testid="repairLocalDataLink">
+          <a
+            href={repairHref}
+            className="hc-brand-text underline underline-offset-4 hover:underline"
+            data-testid="repairLocalDataLink"
+          >
             Repair local data
           </a>
         </p>

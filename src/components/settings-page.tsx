@@ -258,7 +258,7 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
           finished saving in another tab will be lost.
         </p>
         {repairConfirm ? (
-          <div className="space-y-2 rounded-md border border-border p-3">
+          <div className="space-y-3 rounded-xl bg-card p-6 text-card-foreground shadow-sm">
             <p className="text-sm">
               Repair now? This cannot be undone. Unsent messages that were not
               saved yet will be gone.
@@ -267,6 +267,7 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
               <Button
                 type="button"
                 size="sm"
+                variant="destructive"
                 disabled={repairBusy}
                 data-testid="settingsRepairConfirm"
                 onClick={() => {

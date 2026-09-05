@@ -198,7 +198,7 @@ export function ThreadView({
           {messages.some(
             (message) => message.direction === "sent" && message.deliveryState === "sending",
           ) ? (
-            <p className="text-sm text-muted-foreground" data-testid="queuedHandshakeSubtitle">
+            <p className="text-sm font-light hc-brand-muted" data-testid="queuedHandshakeSubtitle">
               {QUEUED_HANDSHAKE_SUBTITLE}
             </p>
           ) : null}
