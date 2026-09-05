@@ -17,6 +17,7 @@ describe("live regions", () => {
     expect(source).toContain('live = "alert"');
     expect(source).toContain('live?: "alert" | "status"');
     expect(source).toContain('live === "status" ? "status" : "alert"');
+    expect(source).not.toContain("<details>");
     expect(banner).toContain('role="status"');
     expect(banner).not.toContain("aria-live");
   });

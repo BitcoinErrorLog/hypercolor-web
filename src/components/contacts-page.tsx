@@ -127,7 +127,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
       await reload();
       router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
     } catch (err) {
-      setError(CONTACTS_FORM_ERROR);
+      setError(err instanceof Error ? err.message : CONTACTS_FORM_ERROR);
       emitCoarseError("contacts", err);
     } finally {
       setBusy(false);
@@ -182,7 +182,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
                 }
               })
               .catch((err) => {
-                setError(CONTACTS_FORM_ERROR);
+                setError(err instanceof Error ? err.message : CONTACTS_FORM_ERROR);
                 emitCoarseError("contacts", err);
               })
               .finally(() => setSearchBusy(false));
@@ -233,7 +233,16 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
               </>
             )}
           </div>
-          {error ? <ErrorDetails fallback={CONTACTS_FORM_ERROR} details={error} /> : null}
+          {error ? (
+            <ErrorDetails
+              fallback={CONTACTS_FORM_ERROR}
+              details={error}
+              onTakeOver={() => {
+                void import("@/services/tabLock").then((m) => m.requestTakeover());
+              }}
+              repairHref="/settings#repair-local-data"
+            />
+          ) : null}
         </form>
 
         {hits && hits.length > 0 ? (

@@ -148,12 +148,13 @@ describe("web SqlExecutor", () => {
     vi.mocked(openWebSqlite).mockResolvedValueOnce(second);
 
     const exec = await getDb();
-    expect(exec).toBe(first);
+    expect(exec).not.toBe(first);
+    exec.executeSync("SELECT 1 AS n");
     closeDb();
     expect(close).toHaveBeenCalledTimes(1);
 
     const again = await getDb();
-    expect(again).toBe(second);
+    expect(again).not.toBe(exec);
     expect(openWebSqlite).toHaveBeenCalledTimes(2);
 
     closeDb();

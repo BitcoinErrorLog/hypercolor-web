@@ -9,6 +9,7 @@ import { TruncatedPubky } from "@/components/truncated-pubky";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { useSignOut } from "@/hooks/useSignOut";
+import { repairLocalData } from "@/db/repair";
 import {
   canDismissRecoveryCode,
   chunkRecoveryCode,
@@ -50,6 +51,10 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
   const [backupError, setBackupError] = useState<string | null>(fixture?.backupError ?? null);
   const [restoreError, setRestoreError] = useState<string | null>(fixture?.restoreError ?? null);
   const [restoreNote, setRestoreNote] = useState<string | null>(fixture?.restoreNote ?? null);
+  const [repairConfirm, setRepairConfirm] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const [repairNote, setRepairNote] = useState<string | null>(null);
 
   useLeaveOnce(
     "settings-backup",
@@ -229,6 +234,74 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
           <ErrorDetails fallback="That recovery code did not work." details={restoreError} />
         ) : null}
         {restoreNote ? <p className="text-sm text-muted-foreground">{restoreNote}</p> : null}
+      </section>
+
+      <section id="repair-local-data" className="space-y-3">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Repair local data
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Deletes the saved chat database on this device and rebuilds it from your
+          homeserver. Your identity and Ring session stay. Messages that have not
+          finished saving in another tab will be lost.
+        </p>
+        {repairConfirm ? (
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <p className="text-sm">
+              Repair now? This cannot be undone. Unsent messages that were not
+              saved yet will be gone.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={repairBusy}
+                data-testid="settingsRepairConfirm"
+                onClick={() => {
+                  setRepairBusy(true);
+                  setRepairError(null);
+                  void repairLocalData()
+                    .then(() => {
+                      setRepairNote("Local database rebuilt. Chats will refill from the homeserver.");
+                      setRepairConfirm(false);
+                    })
+                    .catch((err) => {
+                      setRepairError(err instanceof Error ? err.message : "Repair failed");
+                    })
+                    .finally(() => setRepairBusy(false));
+                }}
+              >
+                {repairBusy ? "Repairing…" : "Yes, repair"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={repairBusy}
+                onClick={() => setRepairConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="settingsRepair"
+            onClick={() => {
+              setRepairConfirm(true);
+              setRepairError(null);
+              setRepairNote(null);
+            }}
+          >
+            Repair local data
+          </Button>
+        )}
+        {repairError ? (
+          <ErrorDetails fallback="Could not repair local data." details={repairError} />
+        ) : null}
+        {repairNote ? <p className="text-sm text-muted-foreground">{repairNote}</p> : null}
       </section>
 
       <section>

@@ -25,6 +25,6 @@ describe("contacts username search copy", () => {
     expect(source).not.toContain("export const CONTACTS_FORM_ERROR");
     expect(source).toContain("Could not add or find this contact.");
     expect(source).not.toContain("Could not load contacts.");
-    expect(source).not.toContain("err.message");
+    expect(source).toContain("err instanceof Error ? err.message");
   });
 });

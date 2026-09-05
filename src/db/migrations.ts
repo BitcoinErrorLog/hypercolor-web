@@ -24,9 +24,13 @@ import type { SqlExecutor } from './sql';
  * transaction. Versions are stored in the SQLite user_version pragma.
  *
  * Rules:
- * - Never modify an existing migration. Add a new one instead.
- * - Every statement must be idempotent (use IF NOT EXISTS / IF EXISTS).
+ * - Never modify an existing migration's meaning. Add a new one instead.
+ * - Statements are applied with idempotent guards (pragma table_info for
+ *   ADD COLUMN, skip RENAME when the destination already exists).
  * - After adding a migration, bump CURRENT_VERSION.
+ *
+ * Bundled @sqlite.org/sqlite-wasm is 3.53.x. SQLite still has no
+ * `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, so we guard via table_info.
  */
 
 const CURRENT_VERSION = 13;
@@ -52,13 +56,61 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 13, statements: SCHEMA_V13_STATEMENTS },
 ];
 
-export async function runMigrations(db: SqlExecutor): Promise<void> {
-  // Read current schema version
+export function tableExists(db: SqlExecutor, table: string): boolean {
+  const result = db.executeSync(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    [table],
+  );
+  return (result.rows?.length ?? 0) > 0;
+}
+
+export function columnExists(db: SqlExecutor, table: string, column: string): boolean {
+  if (!tableExists(db, table)) return false;
+  const result = db.executeSync(`PRAGMA table_info(${table})`);
+  return (result.rows ?? []).some((row) => String(row.name) === column);
+}
+
+const ADD_COLUMN = /^ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)\b/i;
+const RENAME_TABLE = /^ALTER TABLE\s+(\w+)\s+RENAME TO\s+(\w+)\s*$/i;
+const INSERT_FROM = /^INSERT(?:\s+OR\s+IGNORE)?\s+INTO\s+\w+[\s\S]*\bFROM\s+(\w+)/i;
+
+/**
+ * Apply one frozen SQL string, skipping work that would fail on a desynced
+ * user_version (column already present, rename already done, source gone).
+ */
+export function applyMigrationStatement(db: SqlExecutor, statement: string, allowUnguardedAlter = false): void {
+  const add = statement.match(ADD_COLUMN);
+  if (add && !allowUnguardedAlter) {
+    const table = add[1];
+    const column = add[2];
+    if (table && column && columnExists(db, table, column)) return;
+  }
+
+  const rename = statement.match(RENAME_TABLE);
+  if (rename) {
+    const from = rename[1];
+    const to = rename[2];
+    if (from && to) {
+      if (!tableExists(db, from)) return;
+      if (tableExists(db, to)) return;
+    }
+  }
+
+  const insertFrom = statement.match(INSERT_FROM);
+  if (insertFrom?.[1] && !tableExists(db, insertFrom[1])) return;
+
+  db.executeSync(statement);
+}
+
+export async function runMigrations(
+  db: SqlExecutor,
+  options?: { allowUnguardedAlter?: boolean },
+): Promise<void> {
   const versionResult = db.executeSync('PRAGMA user_version');
   const currentVersion: number = (versionResult.rows?.[0]?.user_version as number) ?? 0;
 
   if (currentVersion >= CURRENT_VERSION) {
-    return; // Already up to date
+    return;
   }
 
   const pending = MIGRATIONS.filter(m => m.version > currentVersion);
@@ -67,9 +119,8 @@ export async function runMigrations(db: SqlExecutor): Promise<void> {
     db.executeSync('BEGIN');
     try {
       for (const statement of migration.statements) {
-        db.executeSync(statement);
+        applyMigrationStatement(db, statement, options?.allowUnguardedAlter === true);
       }
-      // Commit and advance the schema version
       db.executeSync(`PRAGMA user_version = ${migration.version}`);
       db.executeSync('COMMIT');
     } catch (err) {
@@ -78,3 +129,5 @@ export async function runMigrations(db: SqlExecutor): Promise<void> {
     }
   }
 }
+
+export { CURRENT_VERSION };

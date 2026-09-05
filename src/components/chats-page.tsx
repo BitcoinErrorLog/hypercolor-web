@@ -121,7 +121,15 @@ export function ChatsPage({
           >
             {starting ? "Starting…" : "New chat"}
           </Button>
-          {startError ? <ErrorDetails fallback="Could not start this chat." details={startError} /> : null}
+          {startError ? (
+            <ErrorDetails
+              fallback="Could not start this chat."
+              details={startError}
+              onTakeOver={() => {
+                void import("@/services/tabLock").then((m) => m.requestTakeover());
+              }}
+            />
+          ) : null}
         </form>
 
         {inboxLoading && rows.length === 0 ? (
@@ -190,6 +198,10 @@ export function ChatsPage({
               details={inboxError}
               onRetry={onRetryInbox}
               live="status"
+              onTakeOver={() => {
+                void import("@/services/tabLock").then((m) => m.requestTakeover());
+              }}
+              repairHref="/settings#repair-local-data"
             />
           </div>
         ) : null}

@@ -1,29 +1,79 @@
 import { runMigrations } from "./migrations";
-import { clearOpenedVfs, openWebSqlite } from "./openWebSqlite";
+import { isMutatingSql } from "./mutatingSql";
+import { ReadOnlyTabError } from "./errors";
+import {
+  clearOpenedVfs,
+  openWebSqlite,
+  type PersistableSqlExecutor,
+} from "./openWebSqlite";
 import type { SqlExecutor } from "./sql";
-import { initTabLock, subscribeTabLock } from "@/services/tabLock";
+import {
+  getTabLock,
+  initTabLock,
+  subscribeTabLock,
+} from "@/services/tabLock";
 
 export type { SqlExecutor, SqlExecuteResult, SqlParams, SqlValue } from "./sql";
-export { getOpenedVfs } from "./openWebSqlite";
+export { getOpenedVfs, deleteSqliteSnapshot } from "./openWebSqlite";
 export type { WebSqliteVfs } from "./openWebSqlite";
+export { ReadOnlyTabError, SqlitePersistError, isReadOnlyTabError, isSqlitePersistError } from "./errors";
 
-let _db: SqlExecutor | null = null;
+let _db: PersistableSqlExecutor | SqlExecutor | null = null;
 let _injected: SqlExecutor | null = null;
 let _opening: Promise<SqlExecutor> | null = null;
+let _refreshing = false;
 
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => {
     closeDb();
   });
+  // Read-only tabs keep an in-memory copy of the last IDB snapshot. There is
+  // no BroadcastChannel in this codebase for sqlite; visibility/focus is the
+  // existing document lifecycle the rest of the app already uses, so we
+  // re-hydrate from IDB there instead of adding a second bus.
+  const refreshIfReadonly = () => {
+    if (getTabLock().mode !== "readonly") return;
+    void refreshReadonlySnapshot();
+  };
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") refreshIfReadonly();
+  });
+  window.addEventListener("focus", refreshIfReadonly);
 }
 
 subscribeTabLock((lock) => {
-  if (lock.mode !== "readonly" || !_db) return;
-  const db = _db as { close?: () => void };
-  db.close?.();
-  _db = null;
-  clearOpenedVfs();
+  if (!_db || _injected) return;
+  if (lock.mode === "writer") {
+    // Takeover: reload the snapshot the previous writer persisted so this
+    // tab does not flush a stale readonly copy over newer rows.
+    void refreshReadonlySnapshot();
+  }
+  // Do not close() on lock loss — reads continue on the in-memory DB.
 });
+
+function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSqlExecutor {
+  const persistable = db as PersistableSqlExecutor;
+  return {
+    executeSync(query, params) {
+      if (getTabLock().mode === "readonly" && isMutatingSql(query)) {
+        const err = new ReadOnlyTabError();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("hypercolor-readonly-write", { detail: err.message }),
+          );
+        }
+        throw err;
+      }
+      return db.executeSync(query, params);
+    },
+    close() {
+      persistable.close?.();
+    },
+    flushPersist: async () => {
+      await persistable.flushPersist?.();
+    },
+  };
+}
 
 /**
  * Production inject: set the executor before the first `getDb()`.
@@ -49,29 +99,28 @@ export function applyConnectionPreamble(db: SqlExecutor): void {
 
 /**
  * Returns the singleton SQLite executor.
- * Injected executor wins. Otherwise opens official sqlite3 wasm, applies
- * WAL + foreign_keys, runs schema migrations, and clears `mesh_peers`.
+ * Writer and read-only tabs both open the snapshot. Mutations in a
+ * non-writer tab throw ReadOnlyTabError.
  */
 export async function getDb(): Promise<SqlExecutor> {
+  // Injected executors are test/production seams that already own locking.
   if (_injected) return _injected;
   if (_db) return _db;
   if (_opening) return _opening;
 
   _opening = (async () => {
     try {
-      const lock = await initTabLock();
-      if (lock.mode === "readonly") {
-        throw new Error(
-          "Hypercolor database is read-only in this tab. Take over writing from the banner to open the database.",
-        );
-      }
-
+      await initTabLock();
       const db = await openWebSqlite();
       applyConnectionPreamble(db);
+      const writer = getTabLock().mode === "writer";
       await runMigrations(db);
-      db.executeSync("DELETE FROM mesh_peers");
-      _db = db;
-      return db;
+      if (writer) {
+        db.executeSync("DELETE FROM mesh_peers");
+        await db.flushPersist?.();
+      }
+      _db = guardMutations(db);
+      return _db;
     } finally {
       _opening = null;
     }
@@ -79,7 +128,21 @@ export async function getDb(): Promise<SqlExecutor> {
   return _opening;
 }
 
-/** Closes the database. Primarily used in tests and when a tab loses the writer lock. */
+export async function refreshReadonlySnapshot(): Promise<void> {
+  if (_injected || _refreshing) return;
+  _refreshing = true;
+  try {
+    const current = _db as PersistableSqlExecutor | null;
+    current?.close?.();
+    _db = null;
+    clearOpenedVfs();
+    await getDb();
+  } finally {
+    _refreshing = false;
+  }
+}
+
+/** Closes the database. Used on pagehide and after Repair wipes the snapshot. */
 export function closeDb(): void {
   if (_injected) {
     _injected = null;
@@ -89,4 +152,22 @@ export function closeDb(): void {
   db?.close?.();
   _db = null;
   clearOpenedVfs();
+}
+
+if (typeof window !== "undefined" && __HYPERCOLOR_E2E_HARNESS__) {
+  const host = window as Window & {
+    __hypercolorTryDbWrite?: () => Promise<{ ok: boolean; message: string }>;
+  };
+  host.__hypercolorTryDbWrite = async () => {
+    const db = await getDb();
+    try {
+      db.executeSync("DELETE FROM mesh_peers");
+      return { ok: true, message: "ok" };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof Error ? err.message : String(err),
+      };
+    }
+  };
 }

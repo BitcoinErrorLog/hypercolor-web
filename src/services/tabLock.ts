@@ -142,6 +142,19 @@ export function requestTakeover(): void {
   void tryAcquire({ steal: true });
 }
 
+/** Steal the writer lock and resolve once this tab is the writer. */
+export function requestTakeoverAndWait(): Promise<TabLock> {
+  if (mode === "writer") return Promise.resolve(snapshot());
+  return new Promise((resolve) => {
+    const unsub = subscribeTabLock((lock) => {
+      if (lock.mode !== "writer") return;
+      unsub();
+      resolve(lock);
+    });
+    requestTakeover();
+  });
+}
+
 /** Test helper: drop lock state between vitest cases. Listeners stay. */
 export function resetTabLockForTests(): void {
   currentAbort?.abort();

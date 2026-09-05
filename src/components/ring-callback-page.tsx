@@ -133,6 +133,16 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
     if (phase.kind !== "confirm") return;
     try {
       const { ch } = readParamsFromLocation();
+      const { getTabLock, initTabLock, requestTakeoverAndWait } = await import(
+        "@/services/tabLock"
+      );
+      // Ring completion persists identity + later sqlite writes. If this
+      // document is not the writer, steal before adoptHandoff. Relay-forwarded
+      // callbacks already finish on the waiting writer tab instead.
+      await initTabLock();
+      if (getTabLock().mode !== "writer") {
+        await requestTakeoverAndWait();
+      }
       const result = await adoptHandoff(phase.params, phase.payload, ch ?? undefined);
       if (result) {
         setPhase({ kind: "done", pubky: result.pubky });
