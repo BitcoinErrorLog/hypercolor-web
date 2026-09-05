@@ -24,7 +24,7 @@ export function IllustratedEmptyState({
         <Icon className="size-6 hc-brand-text" size={24} />
       </div>
       <div className="relative z-10 flex w-full min-w-0 flex-col items-center">
-        <Typography as="h3" className="text-center text-xl font-bold leading-7">
+        <Typography as="p" className="text-center text-xl font-bold leading-7">
           {title}
         </Typography>
         <Typography as="p" className="mt-1 text-center text-base font-medium text-secondary-foreground">

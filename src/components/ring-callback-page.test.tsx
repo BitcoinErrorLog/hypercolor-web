@@ -181,7 +181,7 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      host.querySelector("[data-testid=ringCallbackConfirm] button")?.click();
+      (host.querySelector("[data-testid=ringCallbackConfirm] button") as HTMLButtonElement | null)?.click();
     });
     await act(async () => {
       await Promise.resolve();

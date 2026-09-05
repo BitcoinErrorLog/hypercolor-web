@@ -11,7 +11,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "hc-brand-soft hc-brand-text hover:opacity-90 border-brand",
+        default: "bg-secondary text-secondary-foreground hover:bg-accent border-secondary",
         brand: "hc-brand-cta border-brand hover:opacity-95",
         secondary: "bg-secondary text-secondary-foreground hover:bg-accent border-secondary",
         ghost: "border-transparent hover:bg-accent hover:text-accent-foreground",

@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { IconHash, IconHome, IconInbox, IconMessageCircle, IconSettings, IconUsers } from "@/components/ui/icons";
+import { IconHash, IconMessageCircle, IconUsers } from "@/components/ui/icons";
 import { unreadLabel } from "@/lib/format";
 import { hasIdentity, sessionCopy } from "@/lib/session-ui";
 import { emit } from "@/services/vibeware/collector";
@@ -18,16 +18,13 @@ import { useSessionStatusStore, type SessionUiStatus } from "@/stores/sessionSta
 import { loadChannelRows, totalChannelUnread, useChannelsStore } from "@/stores/channelsStore";
 
 const PRIMARY = [
-  { href: "/", label: "Home", prefix: "/", icon: IconHome, exact: true },
   { href: "/chats", label: "Chats", prefix: "/chats", icon: IconMessageCircle },
-  { href: "/contacts", label: "Contacts", prefix: "/contacts", icon: IconUsers },
   { href: "/channels", label: "Channels", prefix: "/channels", icon: IconHash },
-  { href: "/requests", label: "Requests", prefix: "/requests", icon: IconInbox },
-  { href: "/settings", label: "Settings", prefix: "/settings", icon: IconSettings },
+  { href: "/contacts", label: "Contacts", prefix: "/contacts", icon: IconUsers },
+  { href: "/profile", label: "Profile", prefix: "/profile", icon: IconUsers },
 ] as const;
 
-function isActive(pathname: string, href: string, prefix: string, exact?: boolean): boolean {
-  if (exact) return pathname === href;
+function isActive(pathname: string, href: string, prefix: string): boolean {
   return pathname === href || pathname.startsWith(`${prefix}/`);
 }
 
@@ -116,7 +113,7 @@ export function SiteNav({
     <>
       <nav aria-label="Primary" className="hidden items-center gap-3 lg:flex" data-surface="site-nav">
         {PRIMARY.map((link) => {
-          const active = isActive(pathname, link.href, link.prefix, "exact" in link ? Boolean(link.exact) : false);
+          const active = isActive(pathname, link.href, link.prefix);
           const Icon = link.icon;
           return (
             <Button key={link.href} asChild variant="secondary" size="icon" className={cn("hc-nav-circle", active ? "" : "hc-nav-circle-idle")}>
@@ -165,12 +162,11 @@ export function SiteNav({
 
       <nav
         className="fixed inset-x-0 bottom-0 z-(--z-mobile-menu) bg-linear-to-t from-background via-background/95 to-transparent px-3 py-4 lg:hidden"
-        aria-label="Primary"
         data-surface="site-nav-mobile"
       >
         <ul className="mx-auto flex w-full hc-mobile-nav-max items-center justify-between rounded-full p-3">
           {PRIMARY.map((link) => {
-            const active = isActive(pathname, link.href, link.prefix, "exact" in link ? Boolean(link.exact) : false);
+            const active = isActive(pathname, link.href, link.prefix);
             const Icon = link.icon;
             return (
               <li key={link.href}>
