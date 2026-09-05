@@ -141,7 +141,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      className="flex h-full min-h-0 flex-1 flex-col"
       data-testid="contactsScreen"
       data-surface="contacts-page"
     >
@@ -150,7 +150,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
           ref={headingRef}
           tabIndex={-1}
           id="contactsHeading"
-          className="text-2xl font-bold tracking-tight"
+          className="text-2xl font-bold tracking-tight outline-none focus:outline-none focus-visible:outline-none hc-programmatic-focus"
         >
           Contacts
         </h1>
@@ -373,7 +373,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
         selected ? (
           <ContactDetail ownerPubky={ownerPubky} pubky={selected} />
         ) : (
-          <p className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a contact.</p>
+          <p className="flex h-full min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">Select a contact.</p>
         )
         }
       />

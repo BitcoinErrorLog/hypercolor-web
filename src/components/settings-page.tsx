@@ -119,7 +119,7 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
           Messaging
         </h2>
         <p className="text-sm">{sessionStatusLabel(status)}</p>
-        <EnableMessagingCta testId="settingsEnableMessaging" />
+        <EnableMessagingCta testId="settingsEnableMessaging" layout="panel" />
       </section>
 
       <section className="space-y-3">

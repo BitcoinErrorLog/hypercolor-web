@@ -45,7 +45,7 @@ export function AppShell({
         className={cn(
           "mx-auto flex w-full min-w-0 max-w-(--container-max-width) px-4 lg:px-6 xl:px-0",
           hideChrome && "min-h-svh w-full flex-col justify-center py-8",
-          fillViewport && !hideChrome && "flex min-h-0 flex-1 items-stretch gap-6 overflow-hidden pb-28 lg:pb-0",
+          fillViewport && !hideChrome && "flex min-h-0 flex-1 items-stretch gap-6 overflow-hidden pb-28 lg:min-h-[calc(100svh-var(--header-height))] lg:pb-0",
           !fillViewport && !hideChrome && "flex flex-1 gap-6 pb-28 lg:pb-10",
         )}
       >
@@ -58,10 +58,10 @@ export function AppShell({
           id="main-content"
           tabIndex={-1}
           className={cn(
-            "min-w-0",
+            "min-w-0 hc-programmatic-focus",
             hideChrome && "mx-auto w-full max-w-3xl flex-none",
             !hideChrome && !centerColumn && "flex-1",
-            fillViewport && !centerColumn && "flex h-full min-h-0 flex-col overflow-hidden",
+            fillViewport && !centerColumn && "hc-fill-viewport flex h-full min-h-0 flex-col overflow-hidden lg:min-h-[calc(100svh-var(--header-height))]",
             centerColumn && "mx-auto flex h-full w-full max-w-3xl flex-col py-8",
           )}
         >

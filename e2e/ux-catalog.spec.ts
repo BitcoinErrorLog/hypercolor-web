@@ -39,6 +39,9 @@ for (const scene of UX_CATALOG_SCENES) {
         ? page.locator('[data-surface="site-nav-mobile"]').first()
         : marker.locator(`[data-surface="${scene.expectedSurface}"]`).first();
     await expect(surface).toBeVisible();
+    if (!scene.id.includes("checking")) {
+      await expect(page.getByText("Checking session…")).toHaveCount(0);
+    }
     if (scene.id === "welcome-qr-populated") {
       await expect(page.getByTestId("welcomeQr")).toBeVisible();
     }

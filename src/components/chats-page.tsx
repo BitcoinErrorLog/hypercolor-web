@@ -80,9 +80,13 @@ export function ChatsPage({
   }, [conversationId]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col" data-testid="chatsScreen" data-surface="chats-page">
+    <div className="flex h-full min-h-0 flex-1 flex-col" data-testid="chatsScreen" data-surface="chats-page">
       <PageHeader className="shrink-0">
-        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold tracking-tight">
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-2xl font-bold tracking-tight outline-none focus:outline-none focus-visible:outline-none hc-programmatic-focus"
+        >
           Chats
         </h1>
         <PageSubtitle>Encrypted threads on this device.</PageSubtitle>
@@ -95,7 +99,7 @@ export function ChatsPage({
         <Link
           href="/requests"
           data-testid="chatsRequests"
-          className="mb-4 flex min-h-11 items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-sm"
+          className="flex min-h-11 items-center justify-between py-2 text-sm"
         >
           <span>Message requests</span>
           {pendingRequests > 0 ? (

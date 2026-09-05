@@ -19,7 +19,7 @@ export function MasterDetail({
       <div
         data-slot="master-list"
         className={cn(
-          "hc-master-list-scroll overflow-visible border-b border-border hc-wash lg:overflow-y-auto lg:border-r lg:border-b-0",
+          "hc-master-list-scroll overflow-visible border-b border-border lg:overflow-y-auto lg:border-b-0",
           listClassName,
         )}
       >

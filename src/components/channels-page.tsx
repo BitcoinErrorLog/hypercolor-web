@@ -157,12 +157,12 @@ export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; 
 
   return (
     <div
-      className="flex h-full min-h-0 flex-col"
+      className="flex h-full min-h-0 flex-1 flex-col"
       data-testid="channelsScreen"
       data-surface="channels-page"
     >
       <PageHeader className="shrink-0">
-        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold tracking-tight">
+        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold tracking-tight outline-none focus:outline-none focus-visible:outline-none hc-programmatic-focus">
           Channels
         </h1>
         <PageSubtitle>Public topics from the homeserver.</PageSubtitle>

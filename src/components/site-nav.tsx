@@ -88,25 +88,17 @@ export function SiteNav({
 
   const sessionLink =
     !hasIdentity(status) ? (
-      <Link
-        href="/"
-        prefetch={false}
-        className="inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline-offset-4 hover:underline"
-      >
-        Connect
-      </Link>
+      <Button asChild variant="brand" size="sm">
+        <Link href="/" prefetch={false}>
+          Connect
+        </Link>
+      </Button>
     ) : showEnable && copy.primaryHref ? (
-      <Link
-        href={copy.primaryHref}
-        prefetch={false}
-        className={
-          pathname === "/enable"
-            ? "inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline underline-offset-4"
-            : "inline-flex min-h-11 items-center text-sm font-medium hc-brand-text underline-offset-4 hover:underline"
-        }
-      >
-        Enable
-      </Link>
+      <Button asChild variant="brand" size="sm">
+        <Link href={copy.primaryHref} prefetch={false}>
+          Enable
+        </Link>
+      </Button>
     ) : null;
 
   return (

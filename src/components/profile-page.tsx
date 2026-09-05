@@ -40,7 +40,7 @@ export function ProfilePage() {
         <p className="text-sm text-muted-foreground">{sessionStatusLabel(status)}</p>
       </div>
 
-      <EnableMessagingCta testId="profileEnableMessaging" />
+      <EnableMessagingCta testId="profileEnableMessaging" layout="panel" />
 
       <nav className="space-y-1" aria-label="Account">
         <Link
