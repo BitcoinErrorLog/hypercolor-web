@@ -52,13 +52,6 @@ export function settleLivePaykitConnect(live: LivePaykitConnect): void {
   }
 }
 
-export function markLiveAuthFlowCanceled(): TrackedAuthFlow | null {
-  const live = livePaykitConnect;
-  if (!live) return null;
-  live.authFlow.canceled = true;
-  return live.authFlow;
-}
-
 export function resetPaykitConnectLive(): void {
   if (livePaykitConnect) {
     livePaykitConnect.authFlow.canceled = true;

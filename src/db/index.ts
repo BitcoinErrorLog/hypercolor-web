@@ -16,7 +16,7 @@ import {
 export type { SqlExecutor, SqlExecuteResult, SqlParams, SqlValue } from "./sql";
 export { getOpenedVfs, deleteSqliteSnapshot } from "./openWebSqlite";
 export type { WebSqliteVfs } from "./openWebSqlite";
-export { ReadOnlyTabError, SqlitePersistError, isReadOnlyTabError, isSqlitePersistError } from "./errors";
+export { ReadOnlyTabError, SqlitePersistError, SqliteSnapshotIntegrityError, SqliteDeleteBlockedError, SqliteRepairIncompleteError, isReadOnlyTabError, isSqlitePersistError, isSqliteSnapshotIntegrityError } from "./errors";
 
 let _db: PersistableSqlExecutor | SqlExecutor | null = null;
 let _injected: SqlExecutor | null = null;
@@ -51,11 +51,17 @@ subscribeTabLock((lock) => {
   // Do not close() on lock loss — reads continue on the in-memory DB.
 });
 
+function isReadonlyBlockedSql(query: string): boolean {
+  const trimmed = query.trim();
+  if (/^BEGIN\b/i.test(trimmed)) return true;
+  return isMutatingSql(query);
+}
+
 function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSqlExecutor {
   const persistable = db as PersistableSqlExecutor;
   return {
     executeSync(query, params) {
-      if (getTabLock().mode === "readonly" && isMutatingSql(query)) {
+      if (getTabLock().mode === "readonly" && isReadonlyBlockedSql(query)) {
         const err = new ReadOnlyTabError();
         if (typeof window !== "undefined") {
           window.dispatchEvent(
@@ -68,6 +74,10 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
     },
     close() {
       persistable.close?.();
+    },
+    discardClose() {
+      if (typeof persistable.discardClose === "function") persistable.discardClose();
+      else persistable.close?.();
     },
     flushPersist: async () => {
       await persistable.flushPersist?.();
@@ -133,7 +143,8 @@ export async function refreshReadonlySnapshot(): Promise<void> {
   _refreshing = true;
   try {
     const current = _db as PersistableSqlExecutor | null;
-    current?.close?.();
+    if (typeof current?.discardClose === "function") current.discardClose();
+    else current?.close?.();
     _db = null;
     clearOpenedVfs();
     await getDb();
@@ -142,7 +153,20 @@ export async function refreshReadonlySnapshot(): Promise<void> {
   }
 }
 
-/** Closes the database. Used on pagehide and after Repair wipes the snapshot. */
+/** Closes without persisting. Used on takeover refresh and Repair. */
+export function discardCloseDb(): void {
+  if (_injected) {
+    _injected = null;
+    return;
+  }
+  const db = _db as PersistableSqlExecutor | null;
+  if (typeof db?.discardClose === "function") db.discardClose();
+  else db?.close?.();
+  _db = null;
+  clearOpenedVfs();
+}
+
+/** Closes the database. Writer tabs persist on close; used on pagehide. */
 export function closeDb(): void {
   if (_injected) {
     _injected = null;

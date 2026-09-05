@@ -9,17 +9,17 @@ import { resolveWelcomePhase } from "@/components/welcome-phase";
 import { usePaykitConnect } from "@/hooks/usePaykitConnect";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { APP_NAME } from "@/lib/app-meta";
-import { sanitizeHandoffError } from "@/services/RingConnect";
+import { sanitizeHandoffError, type HandoffPayload, type HandoffPublicParams } from "@/services/RingConnect";
 import { PaykitLinkWeb, type SessionHandle } from "@/services/link/PaykitLinkWeb";
-import { adoptApprovedSession } from "@/services/link/session";
+import { getLiveSession } from "@/services/link/session";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import {
   BindingMismatchError,
   ProvisionReceiverFailedError,
+  finishLegacyChainedGrant,
   finishSingleApproval,
   type CombinedWatchResult,
 } from "@/services/singleApproval";
-import { adoptHandoff, type HandoffPayload, type HandoffPublicParams } from "@/services/RingConnect";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
@@ -123,23 +123,29 @@ export function WelcomePageHost() {
                 }
                 return;
               }
-              const live = await adoptApprovedSession(session);
-              if (result.params.pubky !== live.handle.pubky()) {
-                await PaykitLinkWeb.signOutSession(live.handle);
-                setError("Sign-in did not finish. Show the QR again.");
-                setLegacy(null);
-                return;
-              }
-              await adoptHandoff(result.params, result.payload, result.ch);
               try {
-                await provisionReceiver(live.handle, live.pubky);
-              } catch {
-                setRetryPublish(live.pubky);
-                setLegacy(null);
-                setError("Could not publish the receiver. Retry publish.");
-                return;
+                const done = await finishLegacyChainedGrant({
+                  params: result.params,
+                  payload: result.payload,
+                  session,
+                  ch: result.ch,
+                });
+                goToChats(done.pubky);
+              } catch (err) {
+                if (err instanceof ProvisionReceiverFailedError) {
+                  setRetryPublish(result.params.pubky);
+                  setLegacy(null);
+                  setError("Could not publish the receiver. Retry publish.");
+                  return;
+                }
+                if (err instanceof BindingMismatchError) {
+                  setError("Sign-in did not finish. Show the QR again.");
+                  setLegacy(null);
+                  emitCoarseError("welcome", err);
+                  return;
+                }
+                throw err;
               }
-              goToChats(live.pubky);
             })
             .catch((err: unknown) => {
               if (tracked.canceled || legacyCanceled.current) return;
@@ -190,6 +196,10 @@ export function WelcomePageHost() {
     },
     onError: (err) => {
       setFinishing(false);
+      const delivered = getLiveSession()?.handle;
+      if (delivered) {
+        void PaykitLinkWeb.signOutSession(delivered).catch(() => undefined);
+      }
       setError(sanitizeHandoffError(err));
       emitCoarseError("welcome", err);
     },

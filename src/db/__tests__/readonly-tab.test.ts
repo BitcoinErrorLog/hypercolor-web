@@ -47,5 +47,6 @@ describe("readonly tab getDb", () => {
     const exec = await getDb();
     expect(exec.executeSync("SELECT 1 AS n").rows?.[0]).toEqual({ n: 1 });
     expect(() => exec.executeSync("DELETE FROM mesh_peers")).toThrow(ReadOnlyTabError);
+    expect(() => exec.executeSync("BEGIN")).toThrow(ReadOnlyTabError);
   });
 });

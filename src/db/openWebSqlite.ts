@@ -1,6 +1,11 @@
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { SQLITE_BUNDLE_ID } from "./bundleId";
-import { SqlitePersistError, SQLITE_PERSIST_FAILED_EVENT } from "./errors";
+import {
+  SqliteDeleteBlockedError,
+  SqlitePersistError,
+  SqliteSnapshotIntegrityError,
+  SQLITE_PERSIST_FAILED_EVENT,
+} from "./errors";
 import { isMutatingSql } from "./mutatingSql";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
 import { getTabLock } from "@/services/tabLock";
@@ -24,7 +29,19 @@ export function getOpenedVfs(): WebSqliteVfs | null {
 export type SqliteSnapshotMeta = {
   userVersion: number;
   bundleId: string;
+  generation: number;
 };
+
+let persistGeneration = 1;
+
+export function currentPersistGeneration(): number {
+  return persistGeneration;
+}
+
+export function bumpPersistGeneration(): number {
+  persistGeneration = Math.max(persistGeneration + 1, Date.now());
+  return persistGeneration;
+}
 
 type SqliteInit = (config?: {
   print?: (msg: string) => void;
@@ -49,6 +66,8 @@ async function loadOfficialSqlite3(): Promise<Sqlite3Static> {
 
 export type PersistableSqlExecutor = ClosableSqlExecutor & {
   flushPersist?: () => Promise<void>;
+  /** Close without writing the in-memory snapshot to IDB. */
+  discardClose?: () => void;
 };
 
 function emitPersistFailed(err: SqlitePersistError): void {
@@ -64,8 +83,11 @@ function wrapIdbSnapshot(
   let persistChain = Promise.resolve();
   let rolledBack = false;
   let lastPersistError: SqlitePersistError | null = null;
+  const generation = persistGeneration;
+  let persistBlocked = false;
 
   const persistNow = (reason: "commit" | "autocommit" | "close") => {
+    if (persistBlocked) return persistChain;
     if (getTabLock().mode !== "writer") return persistChain;
     if (rolledBack) return persistChain;
     if (!db.pointer) return persistChain;
@@ -78,7 +100,11 @@ function wrapIdbSnapshot(
     const userVersion = Number(versionRows?.[0]?.user_version ?? 0);
     persistChain = persistChain
       .then(() =>
-        putIdbSnapshot(bytes, { userVersion, bundleId: SQLITE_BUNDLE_ID }),
+        putIdbSnapshot(bytes, {
+          userVersion,
+          bundleId: SQLITE_BUNDLE_ID,
+          generation,
+        }),
       )
       .then(() => {
         lastPersistError = null;
@@ -120,9 +146,13 @@ function wrapIdbSnapshot(
       return result;
     },
     close() {
-      if (getTabLock().mode === "writer" && !rolledBack) {
+      if (getTabLock().mode === "writer" && !rolledBack && !persistBlocked) {
         void persistNow("close");
       }
+      inner.close();
+    },
+    discardClose() {
+      persistBlocked = true;
       inner.close();
     },
     flushPersist() {
@@ -147,37 +177,76 @@ function openIdb(): Promise<IDBDatabase> {
   });
 }
 
-async function getIdbSnapshot(): Promise<Uint8Array | null> {
+function decodeSnapshotBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return null;
+}
+
+export async function getIdbSnapshot(): Promise<Uint8Array | null> {
+  const { bytes } = await getIdbSnapshotAndMeta();
+  return bytes;
+}
+
+async function getIdbSnapshotAndMeta(): Promise<{
+  bytes: Uint8Array | null;
+  meta: SqliteSnapshotMeta | null;
+}> {
   const db = await openIdb();
   try {
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readonly");
-      const req = tx.objectStore(IDB_STORE).get(IDB_KEY);
-      req.onsuccess = () => {
-        const value = req.result;
-        if (value instanceof Uint8Array) resolve(value);
-        else if (value instanceof ArrayBuffer) resolve(new Uint8Array(value));
-        else resolve(null);
+      const store = tx.objectStore(IDB_STORE);
+      const blobReq = store.get(IDB_KEY);
+      const metaReq = store.get(IDB_META_KEY);
+      tx.oncomplete = () => {
+        const raw = metaReq.result;
+        const meta =
+          raw &&
+          typeof raw === "object" &&
+          typeof (raw as SqliteSnapshotMeta).bundleId === "string" &&
+          typeof (raw as SqliteSnapshotMeta).userVersion === "number"
+            ? {
+                userVersion: Number((raw as SqliteSnapshotMeta).userVersion),
+                bundleId: String((raw as SqliteSnapshotMeta).bundleId),
+                generation: Number((raw as SqliteSnapshotMeta).generation ?? 0),
+              }
+            : null;
+        resolve({ bytes: decodeSnapshotBytes(blobReq.result), meta });
       };
-      req.onerror = () =>
-        reject(req.error ?? new Error("indexedDB get failed"));
+      tx.onerror = () =>
+        reject(tx.error ?? new Error("indexedDB get failed"));
     });
   } finally {
     db.close();
   }
 }
 
-async function putIdbSnapshot(bytes: Uint8Array, meta: SqliteSnapshotMeta): Promise<void> {
+export async function putIdbSnapshot(
+  bytes: Uint8Array,
+  meta: SqliteSnapshotMeta,
+): Promise<void> {
   const db = await openIdb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      const existingReq = store.get(IDB_META_KEY);
+      existingReq.onsuccess = () => {
+        const existing = existingReq.result as SqliteSnapshotMeta | undefined;
+        if (
+          existing &&
+          typeof existing.generation === "number" &&
+          existing.generation > meta.generation
+        ) {
+          return;
+        }
+        store.put(bytes, IDB_KEY);
+        store.put(meta, IDB_META_KEY);
+      };
       tx.oncomplete = () => resolve();
       tx.onerror = () =>
         reject(tx.error ?? new Error("indexedDB put failed"));
-      const store = tx.objectStore(IDB_STORE);
-      store.put(bytes, IDB_KEY);
-      store.put(meta, IDB_META_KEY);
     });
   } finally {
     db.close();
@@ -209,11 +278,33 @@ function hydrateMemoryDb(
   return db;
 }
 
+function pragmaUserVersion(db: Database): number {
+  const versionRows = db.exec({
+    sql: "PRAGMA user_version",
+    rowMode: "object",
+    returnValue: "resultRows",
+  }) as Array<{ user_version?: number }>;
+  return Number(versionRows?.[0]?.user_version ?? 0);
+}
+
 async function openIdbSnapshotVfs(
   sqlite3: Sqlite3Static,
 ): Promise<PersistableSqlExecutor> {
-  const bytes = await getIdbSnapshot();
+  const { bytes, meta } = await getIdbSnapshotAndMeta();
   const db = hydrateMemoryDb(sqlite3, bytes);
+  if (bytes && bytes.byteLength > 0 && meta) {
+    const blobVersion = pragmaUserVersion(db);
+    if (meta.bundleId !== SQLITE_BUNDLE_ID || meta.userVersion !== blobVersion) {
+      db.close();
+      const err = new SqliteSnapshotIntegrityError();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(
+          new CustomEvent(SQLITE_PERSIST_FAILED_EVENT, { detail: err.message }),
+        );
+      }
+      throw err;
+    }
+  }
   return wrapIdbSnapshot(sqlite3, db);
 }
 
@@ -223,6 +314,9 @@ function openKvvfs(sqlite3: Sqlite3Static): PersistableSqlExecutor {
   return {
     ...inner,
     flushPersist: async () => undefined,
+    discardClose() {
+      inner.close();
+    },
   };
 }
 
@@ -263,15 +357,39 @@ export function clearOpenedVfs(): void {
   openedVfs = null;
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function deleteIdbDatabaseOnce(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(IDB_NAME);
+    req.onsuccess = () => resolve();
+    req.onblocked = () =>
+      reject(new SqliteDeleteBlockedError());
+    req.onerror = () =>
+      reject(req.error ?? new Error("indexedDB.deleteDatabase failed"));
+  });
+}
+
 /** Deletes the IDB sqlite snapshot and kvvfs localStorage keys. Keeps KeyStore. */
 export async function deleteSqliteSnapshot(): Promise<void> {
   if (typeof indexedDB !== "undefined") {
-    await new Promise<void>((resolve, reject) => {
-      const req = indexedDB.deleteDatabase(IDB_NAME);
-      req.onsuccess = () => resolve();
-      req.onblocked = () => resolve();
-      req.onerror = () => reject(req.error ?? new Error("indexedDB.deleteDatabase failed"));
-    });
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        await deleteIdbDatabaseOnce();
+        lastError = undefined;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (!(err instanceof SqliteDeleteBlockedError)) throw err;
+        await delay(40 * (attempt + 1));
+      }
+    }
+    if (lastError) throw lastError;
   }
   if (typeof localStorage !== "undefined") {
     const keys: string[] = [];

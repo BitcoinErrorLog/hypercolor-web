@@ -12,6 +12,7 @@ import { PaykitLinkWeb, type SessionHandle } from "./link/PaykitLinkWeb";
 import { adoptApprovedSession } from "./link/session";
 import { provisionReceiver } from "./link/provisionReceiver";
 import {
+  finishLegacyChainedGrant,
   finishSingleApproval,
   watchCombinedGrant,
   type TrackedAuthFlow,
@@ -265,4 +266,56 @@ describe("watchCombinedGrant split delivery", () => {
     await expect(resultP).resolves.toMatchObject({ kind: "aborted" });
     await vi.waitFor(() => expect(signOut).toHaveBeenCalled());
   });
+
+  it("signs out a delivered session when the locator poll fails (F4)", async () => {
+    const session = fakeSession(OWNER);
+    const signOut = vi.spyOn(PaykitLinkWeb, "signOutSession").mockResolvedValue(undefined);
+    vi.spyOn(PaykitLinkWeb, "awaitAuthApproval").mockResolvedValue(session as never);
+    vi.spyOn(await import("./RingConnect"), "waitForHandoffParams").mockRejectedValue(
+      Object.assign(new Error("relay exploded"), { name: "Error" }),
+    );
+    const flow: TrackedAuthFlow = {
+      handle: { authorizationUrl: () => "" } as never,
+      canceled: false,
+    };
+    const abort = new AbortController();
+    await expect(
+      watchCombinedGrant({
+        ch: "ch-fail",
+        deadlineMs: Date.now() + 5_000,
+        flow,
+        signal: abort.signal,
+      }),
+    ).rejects.toThrow("relay exploded");
+    expect(signOut).toHaveBeenCalled();
+  });
 });
+
+describe("finishLegacyChainedGrant (F7)", () => {
+  beforeEach(async () => {
+    await KeyStore.initKeyStore();
+    await KeyStore.clear();
+    vi.mocked(adoptApprovedSession).mockReset();
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await KeyStore.clear();
+  });
+
+  it("checks pubky before adoptApprovedSession and signs out on mismatch", async () => {
+    const signOut = vi.spyOn(PaykitLinkWeb, "signOutSession").mockResolvedValue(undefined);
+    const session = fakeSession(OTHER);
+    await expect(
+      finishLegacyChainedGrant({
+        params: params("secure_handoff"),
+        payload: payload(),
+        session: session as never,
+        ch: "ch-legacy",
+      }),
+    ).rejects.toMatchObject({ name: "BindingMismatchError" });
+    expect(signOut).toHaveBeenCalled();
+    expect(adoptApprovedSession).not.toHaveBeenCalled();
+  });
+});
+

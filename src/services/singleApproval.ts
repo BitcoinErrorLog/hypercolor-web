@@ -11,12 +11,14 @@ import {
   type HandoffPublicParams,
 } from "@/services/RingConnect";
 import { PaykitLinkWeb, type AuthFlowHandle, type SessionHandle } from "@/services/link/PaykitLinkWeb";
-import { adoptApprovedSession } from "@/services/link/session";
+import { adoptApprovedSession, wipeSessionMetadata } from "@/services/link/session";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
+import { useAuthStore } from "@/stores/authStore";
 
 export type TrackedAuthFlow = {
   handle: AuthFlowHandle;
   canceled: boolean;
+  session?: SessionHandle;
 };
 
 export type CombinedWatchResult =
@@ -60,13 +62,6 @@ async function signOutQuietly(session: SessionHandle): Promise<void> {
   }
 }
 
-export async function cancelTrackedAuthFlow(
-  flow: TrackedAuthFlow | null | undefined,
-): Promise<void> {
-  if (!flow) return;
-  flow.canceled = true;
-}
-
 export async function watchCombinedGrant(input: {
   ch: string;
   deadlineMs: number;
@@ -94,6 +89,10 @@ export async function watchCombinedGrant(input: {
       if (settled) return;
       settled = true;
       if (timerHolder.id !== undefined) clearTimeout(timerHolder.id);
+      if (session) {
+        void signOutQuietly(session);
+        session = undefined;
+      }
       reject(error);
     };
 
@@ -195,6 +194,7 @@ export async function watchCombinedGrant(input: {
         }
         onProgress?.("auth");
         session = next;
+        flow.session = next;
         maybeCombined();
       })
       .catch((error: unknown) => {
@@ -219,6 +219,32 @@ export async function finishSingleApproval(input: {
   if (!(await pendingChannelMatches(ch))) {
     await signOutQuietly(session);
     throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
+  }
+  const adopted = await adoptApprovedSession(session);
+  await adoptHandoff(params, payload, ch);
+  try {
+    await provisionReceiver(adopted.handle, adopted.pubky);
+  } catch (error) {
+    throw new ProvisionReceiverFailedError(
+      error instanceof Error ? error.message : "Failed to publish receiver",
+    );
+  }
+  return { pubky: adopted.pubky, homeserver: params.homeserver };
+}
+
+export async function finishLegacyChainedGrant(input: {
+  params: HandoffPublicParams;
+  payload: HandoffPayload;
+  session: SessionHandle;
+  ch: string;
+}): Promise<{ pubky: string; homeserver: string }> {
+  const { params, payload, session, ch } = input;
+  const handlePubky = session.pubky();
+  if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
+    await signOutQuietly(session);
+    await wipeSessionMetadata();
+    useAuthStore.getState().clearSession();
+    throw new BindingMismatchError("Handoff pubky does not match the approved session");
   }
   const adopted = await adoptApprovedSession(session);
   await adoptHandoff(params, payload, ch);

@@ -6,12 +6,14 @@ import { createRoot, type Root } from "react-dom/client";
 import { RingCallbackPage } from "@/components/ring-callback-page";
 import { KeyStore } from "@/services/KeyStore";
 import {
-  adoptHandoff,
   decryptPendingHandoff,
   pendingChannelMatches,
   publishHandoffParamsToRelay,
   validateHandoffPublicParams,
 } from "@/services/RingConnect";
+import { finishLegacyChainedGrant, finishSingleApproval } from "@/services/singleApproval";
+import { getLivePaykitConnect } from "@/services/paykitConnectLive";
+import { getLiveSession } from "@/services/link/session";
 
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
@@ -23,13 +25,29 @@ vi.mock("@/services/RingConnect", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/RingConnect")>();
   return {
     ...actual,
-    adoptHandoff: vi.fn(),
     decryptPendingHandoff: vi.fn(),
     pendingChannelMatches: vi.fn(),
     publishHandoffParamsToRelay: vi.fn(),
     validateHandoffPublicParams: vi.fn(),
   };
 });
+
+vi.mock("@/services/singleApproval", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/singleApproval")>();
+  return {
+    ...actual,
+    finishSingleApproval: vi.fn(),
+    finishLegacyChainedGrant: vi.fn(),
+  };
+});
+
+vi.mock("@/services/paykitConnectLive", () => ({
+  getLivePaykitConnect: vi.fn(() => null),
+}));
+
+vi.mock("@/services/link/session", () => ({
+  getLiveSession: vi.fn(() => null),
+}));
 
 let host: HTMLDivElement;
 let root: Root;
@@ -59,13 +77,16 @@ describe("RingCallbackPage errors", () => {
     vi.mocked(validateHandoffPublicParams).mockReset().mockReturnValue({
       pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
       requestId: "req-1",
-      mode: "auth",
+      mode: "secure_handoff",
       homeserver: "homeserver.staging.pubky.app",
     });
     vi.mocked(pendingChannelMatches).mockReset();
     vi.mocked(decryptPendingHandoff).mockReset();
     vi.mocked(publishHandoffParamsToRelay).mockReset();
-    vi.mocked(adoptHandoff).mockReset();
+    vi.mocked(finishSingleApproval).mockReset();
+    vi.mocked(finishLegacyChainedGrant).mockReset();
+    vi.mocked(getLivePaykitConnect).mockReset().mockReturnValue(null);
+    vi.mocked(getLiveSession).mockReset().mockReturnValue(null);
   });
 
   afterEach(() => {
@@ -130,7 +151,11 @@ describe("RingCallbackPage errors", () => {
       inbox_keypair: { public_key: "pk", secret_key: "sk" },
       expires_at: Date.now() + 60_000,
     });
-    vi.mocked(adoptHandoff).mockRejectedValueOnce(new Error("session adopt exploded"));
+    vi.mocked(getLiveSession).mockReturnValue({
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      handle: { pubky: () => "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq" },
+    } as never);
+    vi.mocked(finishLegacyChainedGrant).mockRejectedValueOnce(new Error("session adopt exploded"));
     await render(<RingCallbackPage />);
     await act(async () => {
       await Promise.resolve();
@@ -144,4 +169,74 @@ describe("RingCallbackPage errors", () => {
     expect(detailsText()).not.toContain("exploded");
     expect(primaryErrorText()).not.toContain("exploded");
   });
+
+  it("refuses combined adopt without a live tracked session and never persists keys", async () => {
+    vi.mocked(validateHandoffPublicParams).mockReturnValue({
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      requestId: "req-1",
+      mode: "secure_handoff+pubkyauth",
+      homeserver: "homeserver.staging.pubky.app",
+    });
+    vi.mocked(pendingChannelMatches).mockResolvedValueOnce(true);
+    vi.mocked(decryptPendingHandoff).mockResolvedValueOnce({
+      version: 1,
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      noise_keypairs: [],
+      inbox_keypair: { public_key: "pk", secret_key: "sk" },
+      expires_at: Date.now() + 60_000,
+    });
+    await render(<RingCallbackPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      host.querySelector("button")?.click();
+    });
+    expect(finishSingleApproval).not.toHaveBeenCalled();
+    expect(finishLegacyChainedGrant).not.toHaveBeenCalled();
+    expect(primaryErrorText()).toBe("Could not complete this Ring handoff.");
+  });
+
+  it("routes combined adopt through finishSingleApproval when the tracked flow has a session", async () => {
+    const handle = { pubky: () => "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq" };
+    vi.mocked(getLivePaykitConnect).mockReturnValue({
+      started: { ch: "test-channel", url: "", deviceId: "d", deadlineMs: Date.now() + 1000, ephemeralPkHex: "aa", authFlow: {} },
+      abort: new AbortController(),
+      authFlow: { handle: {} as never, canceled: false, session: handle as never },
+    } as never);
+    vi.mocked(validateHandoffPublicParams).mockReturnValue({
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      requestId: "req-1",
+      mode: "secure_handoff+pubkyauth",
+      homeserver: "homeserver.staging.pubky.app",
+    });
+    vi.mocked(pendingChannelMatches).mockResolvedValueOnce(true);
+    vi.mocked(decryptPendingHandoff).mockResolvedValueOnce({
+      version: 1,
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      noise_keypairs: [],
+      inbox_keypair: { public_key: "pk", secret_key: "sk" },
+      expires_at: Date.now() + 60_000,
+    });
+    vi.mocked(finishSingleApproval).mockResolvedValueOnce({
+      pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      homeserver: "homeserver.staging.pubky.app",
+    });
+    await render(<RingCallbackPage />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      host.querySelector("button")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(finishSingleApproval).toHaveBeenCalled();
+    expect(finishLegacyChainedGrant).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("Identity stored");
+  });
 });
+

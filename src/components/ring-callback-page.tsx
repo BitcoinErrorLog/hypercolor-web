@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import {
-  adoptHandoff,
+  classifyHandoffMode,
   decryptPendingHandoff,
+  HANDOFF_MODE_COMBINED,
+  HANDOFF_MODE_LEGACY,
   pendingChannelMatches,
   publishHandoffParamsToRelay,
   sanitizeHandoffError,
@@ -14,6 +16,9 @@ import {
 import { KeyStore } from "@/services/KeyStore";
 import { Button } from "@/components/ui/button";
 import { ErrorDetails } from "@/components/error-details";
+import { getLivePaykitConnect } from "@/services/paykitConnectLive";
+import { getLiveSession } from "@/services/link/session";
+import { finishLegacyChainedGrant, finishSingleApproval } from "@/services/singleApproval";
 
 const RING_CALLBACK_KEYSTORE_ERROR = "Could not open the key store.";
 const RING_CALLBACK_HANDOFF_ERROR = "Could not complete this Ring handoff.";
@@ -47,6 +52,39 @@ function readParamsFromLocation(): {
       homeserver: search.get("homeserver"),
     }),
   };
+}
+
+function liveTrackedSession() {
+  const live = getLivePaykitConnect();
+  if (live && !live.authFlow.canceled && live.authFlow.session) {
+    return live.authFlow.session;
+  }
+  return getLiveSession()?.handle ?? null;
+}
+
+async function completeSameDeviceAdopt(
+  params: HandoffPublicParams,
+  payload: HandoffPayload,
+  ch: string | undefined,
+): Promise<{ pubky: string; homeserver: string } | null> {
+  const mode = classifyHandoffMode(params.mode);
+  const session = liveTrackedSession();
+  if (!ch) {
+    throw new Error("Missing channel id (ch).");
+  }
+  if (mode === HANDOFF_MODE_COMBINED) {
+    if (!session) {
+      throw new Error("No live session from this approval. Return to Welcome and finish the QR flow.");
+    }
+    return finishSingleApproval({ params, payload, session, ch });
+  }
+  if (mode === HANDOFF_MODE_LEGACY) {
+    if (!session) {
+      throw new Error("No live session cookie. Approve the chained grant first.");
+    }
+    return finishLegacyChainedGrant({ params, payload, session, ch });
+  }
+  throw new Error("Unknown handoff mode.");
 }
 
 export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallbackPhase } = {}) {
@@ -143,7 +181,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
       if (getTabLock().mode !== "writer") {
         await requestTakeoverAndWait();
       }
-      const result = await adoptHandoff(phase.params, phase.payload, ch ?? undefined);
+      const result = await completeSameDeviceAdopt(phase.params, phase.payload, ch ?? undefined);
       if (result) {
         setPhase({ kind: "done", pubky: result.pubky });
       }
