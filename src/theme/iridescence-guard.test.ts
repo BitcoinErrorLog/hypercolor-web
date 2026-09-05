@@ -31,10 +31,7 @@ describe("iridescence confinement", () => {
   it("uses --brand-iridescent only inside the five allowed class names", () => {
     const files = [
       path.join(ROOT, "app/globals.css"),
-      ...walk(path.join(ROOT, "src/design")),
-      ...walk(path.join(ROOT, "src/components/shell")),
-      ...walk(path.join(ROOT, "src/components/ui")),
-      ...walk(path.join(ROOT, "app/design")),
+      ...walk(path.join(ROOT, "src/components")),
     ];
     const hits: string[] = [];
     for (const file of files) {

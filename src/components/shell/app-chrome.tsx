@@ -28,9 +28,12 @@ function shellTitle(pathname: string): string {
 
 export function AppChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname() ?? "/";
-  const design = pathname.startsWith("/design");
   const e2e = pathname.startsWith("/e2e");
-  const hideChrome = e2e || pathname.startsWith("/ring-callback");
+  const hideChrome =
+    e2e ||
+    pathname === "/" ||
+    pathname.startsWith("/enable") ||
+    pathname.startsWith("/ring-callback");
   const fillViewport =
     pathname.startsWith("/chats") ||
     pathname.startsWith("/contacts") ||
@@ -61,7 +64,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
       <a href="#main-content" className="skip-link">
         Skip to main content
       </a>
-      {design || e2e ? (
+      {e2e ? (
         <div id="main-content" tabIndex={-1} className="flex-1">
           {children}
         </div>
