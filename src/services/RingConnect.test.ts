@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { DEFAULT_APP_ORIGIN } from "@/lib/app-origin";
 import { setRelayFetchForTests } from "./relayChannel";
+import { PaykitLinkWeb } from "./link/PaykitLinkWeb";
 import {
   HANDOFF_TTL_MS,
   buildPaykitConnectUrl,
+  fetchHandoffBytes,
   parseHandoffPlaintext,
   parseRelayHandoffBody,
+  sanitizeHandoffError,
+  setHandoffFetchForTests,
   validateHandoffPublicParams,
   waitForHandoffParams,
 } from "./RingConnect";
@@ -80,6 +84,48 @@ describe("RingConnect URL and params", () => {
     const params = await waitForHandoffParams("abc", Date.now() + 5_000);
     expect(params.pubky).toBe(OWNER);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("fetchHandoffBytes", () => {
+  afterEach(() => {
+    setHandoffFetchForTests(null);
+    vi.restoreAllMocks();
+  });
+
+  it("retries a not-found and succeeds on the second attempt", async () => {
+    const body = new Uint8Array([1, 2, 3]);
+    const publicGet = vi
+      .spyOn(PaykitLinkWeb, "publicGet")
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(body);
+    setHandoffFetchForTests({ sleep: async () => undefined });
+    await expect(fetchHandoffBytes(OWNER, "/pub/paykit.app/v0/handoff/ab")).resolves.toEqual(
+      body,
+    );
+    expect(publicGet).toHaveBeenCalledTimes(2);
+  });
+
+  it("surfaces a timeout after the bounded attempts", async () => {
+    vi.spyOn(PaykitLinkWeb, "publicGet").mockImplementation(
+      () => new Promise(() => undefined),
+    );
+    setHandoffFetchForTests({ sleep: async () => undefined, timeoutMs: 5 });
+    await expect(fetchHandoffBytes(OWNER, "/pub/paykit.app/v0/handoff/ab")).rejects.toThrow(
+      "Handoff fetch timed out",
+    );
+    expect(sanitizeHandoffError(new Error("Handoff fetch timed out"))).toBe("network error");
+  });
+
+  it("does not retry decrypt or auth failures", async () => {
+    const publicGet = vi
+      .spyOn(PaykitLinkWeb, "publicGet")
+      .mockRejectedValue(Object.assign(new Error("box open failed"), { name: "AuthError" }));
+    setHandoffFetchForTests({ sleep: async () => undefined });
+    await expect(fetchHandoffBytes(OWNER, "/pub/paykit.app/v0/handoff/ab")).rejects.toThrow(
+      "box open failed",
+    );
+    expect(publicGet).toHaveBeenCalledTimes(1);
   });
 });
 

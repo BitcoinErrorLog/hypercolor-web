@@ -5,11 +5,13 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { AuthUrlActions } from "@/components/auth-url-actions";
 import { AuthUrlPanel } from "@/components/auth-url-panel";
 import { WelcomePage } from "@/components/welcome-page";
+import { resolveWelcomePhase } from "@/components/welcome-phase";
 import { usePaykitConnect } from "@/hooks/usePaykitConnect";
 import { APP_NAME } from "@/lib/app-meta";
 import {
   adoptHandoff,
   decryptPendingHandoff,
+  sanitizeHandoffError,
   type HandoffPayload,
   type HandoffPublicParams,
 } from "@/services/RingConnect";
@@ -47,18 +49,24 @@ export function WelcomePageHost() {
   const adopted = useRef(false);
   const cancelled = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
   const [pending, setPending] = useState<{
     params: HandoffPublicParams;
     payload: HandoffPayload;
+    ch: string;
   } | null>(null);
   const [adopting, setAdopting] = useState(false);
 
-  const onParams = useCallback(async (params: HandoffPublicParams) => {
+  const onParams = useCallback(async (params: HandoffPublicParams, ch: string) => {
+    setFinishing(true);
+    setError(null);
     try {
-      const payload = await decryptPendingHandoff(params);
-      setPending({ params, payload });
+      const payload = await decryptPendingHandoff(params, ch);
+      setPending({ params, payload, ch });
+      setFinishing(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Handoff failed");
+      setFinishing(false);
+      setError(sanitizeHandoffError(err));
       emitCoarseError("welcome", err);
     }
   }, []);
@@ -67,9 +75,18 @@ export function WelcomePageHost() {
     autoStart: !isAuthenticated,
     onParams,
     onError: (err) => {
-      setError(err instanceof Error ? err.message : "paykit-connect failed");
+      setFinishing(false);
+      setError(sanitizeHandoffError(err));
       emitCoarseError("welcome", err);
     },
+  });
+
+  const phase = resolveWelcomePhase({
+    isExpired: connect.isExpired,
+    error,
+    pendingPubky: pending?.params.pubky ?? null,
+    linkLive: Boolean(connect.url) && !connect.isExpired && !finishing && !pending && !error,
+    finishing,
   });
 
   useEffect(() => {
@@ -96,18 +113,25 @@ export function WelcomePageHost() {
     }
     setAdopting(true);
     try {
-      const result = await adoptHandoff(pending.params, pending.payload);
+      const result = await adoptHandoff(pending.params, pending.payload, pending.ch);
       if (result) {
         adopted.current = true;
         setNeedsEnable();
         router.push("/enable");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Handoff failed");
+      setError(sanitizeHandoffError(err));
       emitCoarseError("welcome", err);
     } finally {
       setAdopting(false);
     }
+  }
+
+  function mintNewLink() {
+    setError(null);
+    setPending(null);
+    setFinishing(false);
+    void connect.start({ replace: true });
   }
 
   return (
@@ -120,12 +144,15 @@ export function WelcomePageHost() {
       error={error}
       pendingPubky={pending?.params.pubky ?? null}
       adopting={adopting}
-      authPanel={!connect.isExpired ? buildAuthPanel(connect.url) : null}
-      linkLive={Boolean(connect.url) && !connect.isExpired}
+      finishing={finishing}
+      phase={phase}
+      authPanel={phase === "waiting" ? buildAuthPanel(connect.url) : null}
+      linkLive={phase === "waiting"}
       onGenerateLink={() => {
-        if (connect.url && !connect.isExpired) return;
-        void connect.start();
+        if (phase === "waiting") return;
+        mintNewLink();
       }}
+      onTryAgain={mintNewLink}
       onConfirmAdoption={() => void confirmAdoption(true)}
       onCancelAdoption={() => void confirmAdoption(false)}
       onCancelWaiting={() => {
@@ -133,6 +160,7 @@ export function WelcomePageHost() {
         connect.cancel();
         setError(null);
         setPending(null);
+        setFinishing(false);
       }}
     />
   );

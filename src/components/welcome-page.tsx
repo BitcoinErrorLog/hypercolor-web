@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/button";
 import { ErrorDetails } from "@/components/error-details";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { CUSTODY_LINE } from "@/lib/session-ui";
+import { resolveWelcomePhase, type WelcomePhase } from "@/components/welcome-phase";
+
+export type { WelcomePhase };
+export { resolveWelcomePhase };
 
 export function WelcomePage({
   appName,
@@ -18,10 +22,13 @@ export function WelcomePage({
   adopting,
   authPanel,
   linkLive,
+  finishing = false,
+  phase: phaseProp,
   onGenerateLink,
   onConfirmAdoption,
   onCancelAdoption,
   onCancelWaiting,
+  onTryAgain,
 }: {
   appName: string;
   isAuthenticated: boolean;
@@ -33,12 +40,25 @@ export function WelcomePage({
   adopting: boolean;
   authPanel: ReactNode;
   linkLive: boolean;
+  finishing?: boolean;
+  phase?: WelcomePhase;
   onGenerateLink: () => void;
   onConfirmAdoption: () => void;
   onCancelAdoption: () => void;
   onCancelWaiting: () => void;
+  onTryAgain?: () => void;
 }) {
-  const presentingAuth = linkLive || isExpired;
+  const phase = resolveWelcomePhase({
+    isExpired,
+    error,
+    pendingPubky,
+    linkLive,
+    finishing,
+    phase: phaseProp,
+  });
+  const showQr = phase === "waiting";
+  const retry = onTryAgain ?? onGenerateLink;
+
   return (
     <article className="space-y-6" data-surface="welcome-page">
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
@@ -55,7 +75,7 @@ export function WelcomePage({
             Enable encrypted messaging
           </Link>
         </p>
-      ) : presentingAuth ? null : (
+      ) : phase === "idle" ? (
         <Button
           type="button"
           data-testid="welcomeConnect"
@@ -64,13 +84,13 @@ export function WelcomePage({
         >
           Connect with Pubky Ring
         </Button>
-      )}
+      ) : null}
 
-      {isLoading ? (
+      {phase === "idle" && isLoading ? (
         <p className="text-sm text-muted-foreground">Preparing paykit-connect…</p>
       ) : null}
 
-      {isExpired ? (
+      {phase === "expired" ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             This paykit-connect link expired. Generate a new one.
@@ -79,11 +99,11 @@ export function WelcomePage({
             Generate new link
           </Button>
         </div>
-      ) : (
-        authPanel
-      )}
+      ) : null}
 
-      {linkLive && !isExpired ? (
+      {showQr ? authPanel : null}
+
+      {phase === "waiting" ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Waiting for Pubky Ring… Approve the request in Pubky Ring, or scan the code on another
@@ -100,7 +120,23 @@ export function WelcomePage({
         </div>
       ) : null}
 
-      {pendingPubky ? (
+      {phase === "finishing" ? (
+        <div
+          className="space-y-3 rounded-md border border-border bg-card p-4"
+          data-testid="welcomeFinishing"
+          role="status"
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="inline-block size-5 shrink-0 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            <p className="text-sm text-muted-foreground">Finishing sign-in…</p>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "ready" && pendingPubky ? (
         <div
           className="space-y-3 rounded-md border border-border bg-card p-4"
           data-testid="welcomeAdopt"
@@ -124,8 +160,15 @@ export function WelcomePage({
         </div>
       ) : null}
 
-      {error ? (
-        <ErrorDetails fallback="Could not start authorization." details={error} />
+      {phase === "failed" ? (
+        <div className="w-full space-y-3" data-testid="welcomeFailed">
+          <ErrorDetails
+            fallback={error || "Could not finish sign-in."}
+            details={null}
+            onRetry={retry}
+            retryLabel="Try again"
+          />
+        </div>
       ) : null}
     </article>
   );

@@ -2,6 +2,13 @@ import { getHttpRelayBase } from "@/lib/http-relay";
 
 export const RELAY_CHANNEL_PREFIX = "hc-";
 export const RELAY_MAX_CONSECUTIVE_FAILURES = 3;
+export const POST_LINK_TIMEOUT_MS = 30_000;
+
+let postLinkTimeoutMs = POST_LINK_TIMEOUT_MS;
+
+export function setPostLinkTimeoutForTests(ms: number | null): void {
+  postLinkTimeoutMs = ms ?? POST_LINK_TIMEOUT_MS;
+}
 
 export type RelayFetch = typeof fetch;
 
@@ -85,16 +92,24 @@ export async function postLink(ch: string, body: Uint8Array | string): Promise<v
   const url = relayChannelUrl(ch);
   const payload: BodyInit =
     typeof body === "string" ? body : new Uint8Array(body);
-  const response = await relayFetch(url, {
-    method: "POST",
-    body: payload,
-    headers:
-      typeof body === "string"
-        ? { "content-type": "application/json" }
-        : undefined,
-  });
-  if (!response.ok) {
-    throw new Error(`httprelay POST ${response.status}`);
+  try {
+    const response = await relayFetch(url, {
+      method: "POST",
+      body: payload,
+      signal: AbortSignal.timeout(postLinkTimeoutMs),
+      headers:
+        typeof body === "string"
+          ? { "content-type": "application/json" }
+          : undefined,
+    });
+    if (!response.ok) {
+      throw new Error(`httprelay POST ${response.status}`);
+    }
+  } catch (error) {
+    if (isAbortTimeout(error)) {
+      throw new Error("httprelay POST timed out");
+    }
+    throw error;
   }
 }
 

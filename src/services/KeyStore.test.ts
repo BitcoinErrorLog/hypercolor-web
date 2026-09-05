@@ -131,21 +131,42 @@ describe("KeyStore", () => {
 
   it("wraps and unwraps the pending ring handoff", async () => {
     await KeyStore.setPubky(owner);
-    await KeyStore.setPendingRingHandoff("deadbeef");
-    expect(await KeyStore.getPendingRingHandoff()).toBe("deadbeef");
-    await KeyStore.clearPendingRingHandoff();
-    expect(await KeyStore.getPendingRingHandoff()).toBeNull();
+    const deadline = Date.now() + 60_000;
+    await KeyStore.setPendingRingHandoff("deadbeef", undefined, "ch-one", deadline);
+    expect(await KeyStore.getPendingRingHandoff("ch-one")).toBe("deadbeef");
+    await KeyStore.clearPendingRingHandoff("ch-one");
+    expect(await KeyStore.getPendingRingHandoff("ch-one")).toBeNull();
   });
 
   it("wraps pending ring handoff before an owner pubky exists", async () => {
-    await KeyStore.setPendingRingHandoff("cafebabe", "aa".repeat(32));
-    expect(await KeyStore.getPendingRingHandoff()).toBe("cafebabe");
-    expect(await KeyStore.getPendingRingHandoffPublicKey()).toBe("aa".repeat(32));
+    const deadline = Date.now() + 60_000;
+    await KeyStore.setPendingRingHandoff("cafebabe", "aa".repeat(32), "ch-pre", deadline);
+    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBe("cafebabe");
+    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-pre")).toBe("aa".repeat(32));
     await KeyStore.setPubky(owner);
-    expect(await KeyStore.getPendingRingHandoff()).toBe("cafebabe");
-    await KeyStore.clearPendingRingHandoff();
-    expect(await KeyStore.getPendingRingHandoff()).toBeNull();
-    expect(await KeyStore.getPendingRingHandoffPublicKey()).toBeNull();
+    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBe("cafebabe");
+    await KeyStore.clearPendingRingHandoff("ch-pre");
+    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBeNull();
+    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-pre")).toBeNull();
+  });
+
+  it("keeps two pending secrets keyed by channel id", async () => {
+    const deadline = Date.now() + 60_000;
+    await KeyStore.setPendingRingHandoff("secret-a", "aa".repeat(32), "ch-a", deadline);
+    await KeyStore.setPendingRingHandoff("secret-b", "bb".repeat(32), "ch-b", deadline);
+    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBe("secret-a");
+    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
+    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-a")).toBe("aa".repeat(32));
+    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-b")).toBe("bb".repeat(32));
+    await KeyStore.clearPendingRingHandoff("ch-a");
+    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBeNull();
+    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
+  });
+
+  it("expires a pending secret after its deadline", async () => {
+    await KeyStore.setPendingRingHandoff("stale", "cc".repeat(32), "ch-stale", Date.now() - 1);
+    expect(await KeyStore.getPendingRingHandoff("ch-stale")).toBeNull();
+    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-stale")).toBeNull();
   });
 
   it("wraps Encrypted Link snapshots under purpose link-snapshot", async () => {

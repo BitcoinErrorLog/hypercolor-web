@@ -8,12 +8,14 @@ import {
   postLink,
   relayChannelId,
   relayChannelUrl,
+  setPostLinkTimeoutForTests,
   setRelayFetchForTests,
 } from "./relayChannel";
 
 describe("relay channel keying", () => {
   afterEach(() => {
     setRelayFetchForTests(null);
+    setPostLinkTimeoutForTests(null);
   });
 
   it("prefixes the digest with hc- and joins the default relay base", () => {
@@ -65,5 +67,21 @@ describe("relay channel keying", () => {
       `${DEFAULT_HTTP_RELAY}/hc-abc`,
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("fails the sender when the POST hangs past the timeout", async () => {
+    setPostLinkTimeoutForTests(20);
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(Object.assign(new Error("The operation was aborted due to timeout"), {
+            name: "TimeoutError",
+          }));
+        });
+      });
+    });
+    setRelayFetchForTests(fetchMock as unknown as typeof fetch);
+    await expect(postLink("abc", "{}")).rejects.toThrow("httprelay POST timed out");
+    setPostLinkTimeoutForTests(null);
   });
 });

@@ -3,13 +3,38 @@ import { hexToBytes, isEvenHex, zeroizeBytes } from "@/lib/hex";
 import { isValidPubky } from "@/utils/pubkyId";
 import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { KeyStore, type AppCert } from "@/services/KeyStore";
-import { PaykitLinkWeb } from "@/services/link/PaykitLinkWeb";
+import { PaykitLinkWeb, toLinkNativeError } from "@/services/link/PaykitLinkWeb";
 import { pollLink, postLink, RelayPollExhaustedError } from "@/services/relayChannel";
 import { deriveRingCallbackChannelId } from "@/services/ringChannelId";
 import { useAuthStore } from "@/stores/authStore";
 
 export const HANDOFF_TTL_MS = 5 * 60 * 1000;
 export const HANDOFF_PATH_PREFIX = "/pub/paykit.app/v0/handoff/";
+export const HANDOFF_FETCH_TIMEOUT_MS = 15_000;
+export const HANDOFF_FETCH_MAX_ATTEMPTS = 3;
+export const HANDOFF_FETCH_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
+
+type HandoffSleep = (ms: number) => Promise<void>;
+
+function defaultHandoffSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+let handoffSleep: HandoffSleep = defaultHandoffSleep;
+let handoffFetchTimeoutMs = HANDOFF_FETCH_TIMEOUT_MS;
+
+export function setHandoffFetchForTests(
+  hooks: { sleep?: HandoffSleep; timeoutMs?: number } | null,
+): void {
+  handoffSleep = hooks?.sleep ?? defaultHandoffSleep;
+  handoffFetchTimeoutMs = hooks?.timeoutMs ?? HANDOFF_FETCH_TIMEOUT_MS;
+}
+
+export function sanitizeHandoffError(err: unknown): string {
+  return toLinkNativeError(err).message;
+}
 
 export type PaykitConnectStart = {
   url: string;
@@ -103,7 +128,8 @@ export async function startPaykitConnect(): Promise<PaykitConnectStart> {
   const pair = await PaykitLinkWeb.x25519GenerateKeypair();
   const pkBytes = hexToBytes(pair.publicKey);
   const ch = await deriveRingCallbackChannelId(pkBytes);
-  await KeyStore.setPendingRingHandoff(pair.secretKey, pair.publicKey);
+  const deadlineMs = Date.now() + HANDOFF_TTL_MS;
+  await KeyStore.setPendingRingHandoff(pair.secretKey, pair.publicKey, ch, deadlineMs);
   const deviceId = `hypercolor-web-${Date.now().toString(16)}`;
   const callbackUrl = getRingCallbackUrl(ch);
   const url = buildPaykitConnectUrl({
@@ -115,7 +141,7 @@ export async function startPaykitConnect(): Promise<PaykitConnectStart> {
     url,
     ch,
     deviceId,
-    deadlineMs: Date.now() + HANDOFF_TTL_MS,
+    deadlineMs,
     ephemeralPkHex: pair.publicKey,
   };
 }
@@ -226,7 +252,7 @@ export function parseHandoffPlaintext(
 }
 
 export async function pendingChannelMatches(ch: string): Promise<boolean> {
-  const pkHex = await KeyStore.getPendingRingHandoffPublicKey();
+  const pkHex = await KeyStore.getPendingRingHandoffPublicKey(ch);
   if (!pkHex) return false;
   try {
     const derived = await deriveRingCallbackChannelId(hexToBytes(pkHex));
@@ -236,15 +262,73 @@ export async function pendingChannelMatches(ch: string): Promise<boolean> {
   }
 }
 
+export function isRetryableHandoffFetchError(err: unknown): boolean {
+  if (err === null || typeof err !== "object") return false;
+  const name =
+    "name" in err && typeof err.name === "string" ? err.name : "";
+  const message =
+    "message" in err && typeof err.message === "string" ? err.message : "";
+  const combined = `${name} ${message}`;
+  if (name === "TimeoutError" || /timeout/i.test(combined)) return true;
+  if (/\b404\b|not[- ]found|pkarr|resol(ve|ution) miss|failed to resolve/i.test(combined)) {
+    return true;
+  }
+  return false;
+}
+
+async function withHandoffFetchTimeout<T>(work: Promise<T>): Promise<T> {
+  void work.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            Object.assign(new Error("Handoff fetch timed out"), {
+              name: "TimeoutError",
+            }),
+          );
+        }, handoffFetchTimeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+export async function fetchHandoffBytes(
+  pubky: string,
+  storagePath: string,
+): Promise<Uint8Array> {
+  let lastError: unknown = new Error("Handoff not found");
+  for (let attempt = 0; attempt < HANDOFF_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const raw = await withHandoffFetchTimeout(
+        PaykitLinkWeb.publicGet(pubky, storagePath),
+      );
+      if (raw) return raw;
+      lastError = new Error("Handoff not found");
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableHandoffFetchError(err)) {
+        throw err;
+      }
+    }
+    if (attempt < HANDOFF_FETCH_MAX_ATTEMPTS - 1) {
+      const backoff = HANDOFF_FETCH_BACKOFF_MS[attempt] ?? HANDOFF_FETCH_BACKOFF_MS[2];
+      await handoffSleep(backoff);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Handoff not found");
+}
+
 async function fetchAndDecryptHandoff(
   params: HandoffPublicParams,
   ephemeralSkHex: string,
 ): Promise<HandoffPayload> {
   const storagePath = `${HANDOFF_PATH_PREFIX}${params.requestId}`;
-  const raw = await PaykitLinkWeb.publicGet(params.pubky, storagePath);
-  if (!raw) {
-    throw new Error(`Handoff not found at ${storagePath}`);
-  }
+  const raw = await fetchHandoffBytes(params.pubky, storagePath);
   const parsed = JSON.parse(new TextDecoder().decode(raw)) as { sb2?: unknown };
   if (typeof parsed.sb2 !== "string" || parsed.sb2.length === 0) {
     throw new Error('Handoff response is missing the "sb2" field.');
@@ -280,8 +364,9 @@ async function fetchAndDecryptHandoff(
  */
 export async function decryptPendingHandoff(
   params: HandoffPublicParams,
+  ch: string,
 ): Promise<HandoffPayload> {
-  const ephemeralSkHex = await KeyStore.getPendingRingHandoff();
+  const ephemeralSkHex = await KeyStore.getPendingRingHandoff(ch);
   if (!ephemeralSkHex) {
     throw new Error(
       "No pending delegation request. Call startPaykitConnect() before handling the callback.",
@@ -297,6 +382,7 @@ export async function decryptPendingHandoff(
 export async function adoptHandoff(
   params: HandoffPublicParams,
   payload: HandoffPayload,
+  ch?: string,
 ): Promise<{ pubky: string; homeserver: string }> {
   const pubky = assertHandoffPubky(payload.pubky, params);
   const homeserver = params.homeserver;
@@ -324,7 +410,7 @@ export async function adoptHandoff(
   if (payload.noise_seed) {
     await KeyStore.setNoiseSeed(payload.noise_seed);
   }
-  await KeyStore.clearPendingRingHandoff();
+  await KeyStore.clearPendingRingHandoff(ch);
   useAuthStore.getState().setAuthenticated(pubky, homeserver);
   return { pubky, homeserver };
 }
@@ -332,10 +418,11 @@ export async function adoptHandoff(
 export async function completeHandoffAfterConfirmation(
   params: HandoffPublicParams,
   confirm: (pubky: string) => Promise<boolean>,
+  ch: string,
 ): Promise<{ pubky: string; homeserver: string } | null> {
-  const payload = await decryptPendingHandoff(params);
+  const payload = await decryptPendingHandoff(params, ch);
   const pubky = assertHandoffPubky(payload.pubky, params);
   const accepted = await confirm(pubky);
   if (!accepted) return null;
-  return adoptHandoff(params, payload);
+  return adoptHandoff(params, payload, ch);
 }

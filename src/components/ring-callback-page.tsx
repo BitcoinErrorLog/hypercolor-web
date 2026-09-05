@@ -89,7 +89,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
       if (cancelled) return;
       if (sameDevice) {
         try {
-          const payload = await decryptPendingHandoff(params);
+          const payload = await decryptPendingHandoff(params, ch);
           if (!cancelled) {
             setPhase({
               kind: "confirm",
@@ -134,7 +134,8 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
   async function adopt() {
     if (phase.kind !== "confirm") return;
     try {
-      const result = await adoptHandoff(phase.params, phase.payload);
+      const { ch } = readParamsFromLocation();
+      const result = await adoptHandoff(phase.params, phase.payload, ch ?? undefined);
       if (result) {
         setPhase({ kind: "done", pubky: result.pubky });
       }
