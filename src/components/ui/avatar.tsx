@@ -9,7 +9,7 @@ const avatarVariants = cva("relative flex shrink-0 overflow-hidden rounded-full"
   variants: {
     size: {
       sm: "h-6 w-6",
-      md: "h-8 w-8",
+      md: "h-10 w-10",
       default: "h-10 w-10",
       lg: "h-12 w-12",
       xl: "h-16 w-16",
@@ -18,7 +18,7 @@ const avatarVariants = cva("relative flex shrink-0 overflow-hidden rounded-full"
   defaultVariants: { size: "default" },
 });
 
-const SIZE_PX = { sm: 24, md: 32, default: 40, lg: 48, xl: 64 } as const;
+const SIZE_PX = { sm: 24, md: 40, default: 40, lg: 48, xl: 64 } as const;
 
 export function Avatar({
   className,

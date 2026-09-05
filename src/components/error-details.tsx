@@ -27,13 +27,16 @@ export function ErrorDetails({
     onTakeOver && details && isReadOnlyTabError(new Error(details)) ? onTakeOver : undefined;
   if (!details && !onRetry && !takeOver && !repairHref) {
     return (
-      <p className="text-sm hc-danger-text" role={role}>
+      <p
+        className="rounded-lg border border-destructive/32 bg-destructive/8 p-4 text-sm hc-danger-text"
+        role={role}
+      >
         {fallback}
       </p>
     );
   }
   return (
-    <div className="space-y-1 text-sm hc-danger-text" role={role}>
+    <div className="rounded-lg border border-destructive/32 bg-destructive/8 space-y-1 p-4 text-sm hc-danger-text" role={role}>
       {showFallbackLead ? <p>{fallback}</p> : null}
       <p className="break-words">{inline}</p>
       {onRetry ? (

@@ -69,15 +69,18 @@ export function WelcomePage({
 
   return (
     <article className="space-y-6" data-surface="welcome-page">
+      <section className="hc-hero-iridescent hc-hero-frame w-full rounded-xl">
+        <div className="hc-hero-inner flex min-w-0 flex-col justify-center gap-8 bg-background p-8 lg:flex-row lg:items-center">
+          <div className="min-w-0 flex-1 space-y-4">
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
-      <p className="text-muted-foreground leading-7">{CUSTODY_LINE}</p>
+      <p className="text-muted-foreground leading-7" data-testid="welcomeScanHint">{CUSTODY_LINE}</p>
       <p className="text-muted-foreground leading-7">
         Approve once in Pubky Ring to sign this device in and set up messaging keys.
       </p>
 
       {isAuthenticated && pubky ? (
         <p className="text-sm text-muted-foreground">
-          Signed in as <TruncatedPubky pubky={pubky} />.{" "}
+          Signed in as <TruncatedPubky pubky={pubky} full />.{" "}
           <Link href="/enable" className="underline underline-offset-4">
             Enable encrypted messaging
           </Link>
@@ -85,6 +88,7 @@ export function WelcomePage({
       ) : phase === "idle" ? (
         <Button
           type="button"
+          variant="brand"
           data-testid="welcomeConnect"
           disabled={isLoading}
           onClick={onGenerateLink}
@@ -116,7 +120,7 @@ export function WelcomePage({
             Verification code
           </p>
           <p
-            className="font-mono text-sm tracking-wide text-foreground"
+            className="text-4xl font-bold tracking-wide hc-brand-2-text"
             data-testid="welcomeVerificationCode"
           >
             {verificationCode}
@@ -186,10 +190,10 @@ export function WelcomePage({
           data-testid="welcomeAdopt"
         >
           <p className="text-sm leading-6">
-            Continue as <TruncatedPubky pubky={pendingPubky} />?
+            Continue as <TruncatedPubky pubky={pendingPubky} full />?
           </p>
           <div className="flex gap-2">
-            <Button type="button" disabled={adopting} onClick={onConfirmAdoption}>
+            <Button type="button" variant="brand" disabled={adopting} onClick={onConfirmAdoption}>
               Continue
             </Button>
             <Button
@@ -254,6 +258,9 @@ export function WelcomePage({
           ) : null}
         </div>
       ) : null}
+          </div>
+        </div>
+      </section>
     </article>
   );
 }

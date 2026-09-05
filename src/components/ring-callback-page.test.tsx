@@ -21,6 +21,12 @@ vi.mock("@/services/KeyStore", () => ({
   },
 }));
 
+vi.mock("@/services/tabLock", () => ({
+  initTabLock: vi.fn().mockResolvedValue(undefined),
+  getTabLock: vi.fn().mockReturnValue({ mode: "writer" }),
+  requestTakeoverAndWait: vi.fn(),
+}));
+
 vi.mock("@/services/RingConnect", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/RingConnect")>();
   return {
@@ -71,11 +77,11 @@ async function render(ui: ReactElement) {
 }
 
 function primaryErrorText(): string | undefined {
-  return host.querySelector('[role="alert"] > p')?.textContent ?? undefined;
+  return host.querySelector('[role="alert"] p')?.textContent ?? undefined;
 }
 
 function detailsText(): string {
-  return host.querySelector('[role="alert"] details')?.textContent ?? "";
+  return host.querySelector('[role="alert"]')?.textContent ?? "";
 }
 
 describe("RingCallbackPage errors", () => {
@@ -175,7 +181,11 @@ describe("RingCallbackPage errors", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      host.querySelector("button")?.click();
+      host.querySelector("[data-testid=ringCallbackConfirm] button")?.click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
     });
     expect(primaryErrorText()).toBe("Could not complete this Ring handoff.");
     expect(detailsText()).toContain("protocol error");

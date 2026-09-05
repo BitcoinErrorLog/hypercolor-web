@@ -179,7 +179,7 @@ export function ThreadView({
 
   return (
     <article className="flex h-full hc-detail-panel flex-col" data-testid="threadScreen" data-surface="thread-view">
-      <header className="mb-4 flex items-start justify-between gap-3 border-b border-border pb-3">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="min-w-0 space-y-2">
           <DetailBackLink
             href={backHref}
@@ -213,14 +213,11 @@ export function ThreadView({
 
       {!mayCompose ? enableCta : null}
 
-      <div
-        className="flex-1 space-y-3 overflow-y-auto py-4"
-        aria-busy={loading || undefined}
-      >
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" aria-busy={loading || undefined}>
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading messages…</p>
         ) : messages.length === 0 ? (
-          <div className="space-y-1 text-sm text-muted-foreground">
+          <div className="flex flex-1 flex-col justify-center space-y-1 text-sm text-muted-foreground">
             <p>No messages yet.</p>
             <p>Say something. Only the two of you can read this.</p>
           </div>

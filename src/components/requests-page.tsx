@@ -2,6 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Avatar } from "@/components/ui/avatar";
+import { Skeleton } from "@/components/ui/skeleton";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { IconInbox } from "@/components/ui/icons";
 import { CopyPubkyButton } from "@/components/truncated-pubky";
 import { DetailBackLink } from "@/components/detail-back";
 import { ErrorDetails } from "@/components/error-details";
@@ -69,9 +74,9 @@ function InviteBlock({ pubky }: { pubky: string | null }) {
 
 function SkeletonRows() {
   return (
-    <ul className="divide-y divide-border" data-testid="requestsLoading">
-      <li className="h-16 animate-pulse rounded-md bg-secondary" />
-      <li className="mt-2 h-16 animate-pulse rounded-md bg-secondary" />
+    <ul className="space-y-2" data-testid="requestsLoading">
+      <li><Skeleton className="h-16 w-full rounded-lg" /></li>
+      <li><Skeleton className="h-16 w-full rounded-lg" /></li>
     </ul>
   );
 }
@@ -142,9 +147,12 @@ export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; 
   }, [loaded, rows.length]);
 
   return (
-    <article className="space-y-6" data-testid="messageRequestsScreen" data-surface="requests-page" aria-busy={!loaded || undefined}>
+    <article className="flex h-full min-h-0 flex-col space-y-6 overflow-y-auto" data-testid="messageRequestsScreen" data-surface="requests-page" aria-busy={!loaded || undefined}>
       <DetailBackLink href="/chats" listLabel="Chats" always />
-      <h1 className="text-2xl font-semibold tracking-tight">Message requests</h1>
+      <PageHeader>
+        <h1 className="text-2xl font-bold tracking-tight">Message requests</h1>
+        <PageSubtitle>Accept to open an encrypted link.</PageSubtitle>
+      </PageHeader>
       <p className="text-sm text-muted-foreground">{EXPLAIN}</p>
       {loadError ? (
         <ErrorDetails
@@ -162,10 +170,11 @@ export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; 
         <SkeletonRows />
       ) : rows.length === 0 ? (
         <div className="space-y-4" data-testid="requestsEmpty">
-          <p className="text-muted-foreground">No pending requests.</p>
-          <p className="text-sm text-muted-foreground">
-            New inbound chats wait here until you accept.
-          </p>
+          <IllustratedEmptyState
+            icon={IconInbox}
+            title="No pending requests."
+            subtitle="New inbound chats wait here until you accept."
+          />
           <InviteBlock pubky={ownerPubky} />
         </div>
       ) : (
@@ -185,8 +194,10 @@ export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; 
               const busy = busyPeer === peer;
               const decisionDisabled = busy || offline;
               return (
-                <li key={peer} className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
+                <li key={peer} className="flex flex-col gap-3 rounded-lg border border-border p-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <Avatar seed={peer} size="lg" />
+                    <div>
                     <p className="font-medium">{name}</p>
                     {claimed ? <p className="text-sm text-muted-foreground">{claimed}</p> : null}
                     <p className="break-all font-mono text-xs text-muted-foreground">{peer}</p>
@@ -203,11 +214,13 @@ export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; 
                         ))}
                       </ul>
                     ) : null}
+                    </div>
                   </div>
                   <div className="flex gap-2">
                     <Button
                       type="button"
                       size="sm"
+                      variant="brand"
                       disabled={decisionDisabled}
                       data-testid="messageRequestAccept"
                       onClick={() => {
@@ -236,7 +249,7 @@ export function RequestsPage({ fixture, now }: { fixture?: RequestsPageFixture; 
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
+                      variant="destructive"
                       disabled={decisionDisabled}
                       data-testid="messageRequestDecline"
                       onClick={() => {

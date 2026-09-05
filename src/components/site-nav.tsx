@@ -3,69 +3,32 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { cn } from "@/lib/utils";
+import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { IconHash, IconHome, IconInbox, IconMessageCircle, IconSettings, IconUsers } from "@/components/ui/icons";
+import { unreadLabel } from "@/lib/format";
+import { hasIdentity, sessionCopy } from "@/lib/session-ui";
 import { emit } from "@/services/vibeware/collector";
 import { productRouteFromPathname, type ProductRoute } from "@/services/vibeware/route";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
 import { useInboxStore } from "@/stores/inboxStore";
 import { useSessionStatusStore, type SessionUiStatus } from "@/stores/sessionStatusStore";
-import { unreadLabel } from "@/lib/format";
-import { hasIdentity, sessionCopy } from "@/lib/session-ui";
 import { loadChannelRows, totalChannelUnread, useChannelsStore } from "@/stores/channelsStore";
 
 const PRIMARY = [
-  { href: "/chats", label: "Chats", prefix: "/chats", icon: IconChats },
-  { href: "/channels", label: "Channels", prefix: "/channels", icon: IconChannels },
-  { href: "/contacts", label: "Contacts", prefix: "/contacts", icon: IconContacts },
-  { href: "/profile", label: "Profile", prefix: "/profile", icon: IconProfile },
+  { href: "/", label: "Home", prefix: "/", icon: IconHome, exact: true },
+  { href: "/chats", label: "Chats", prefix: "/chats", icon: IconMessageCircle },
+  { href: "/contacts", label: "Contacts", prefix: "/contacts", icon: IconUsers },
+  { href: "/channels", label: "Channels", prefix: "/channels", icon: IconHash },
+  { href: "/requests", label: "Requests", prefix: "/requests", icon: IconInbox },
+  { href: "/settings", label: "Settings", prefix: "/settings", icon: IconSettings },
 ] as const;
 
-function isActive(pathname: string, href: string, prefix: string): boolean {
+function isActive(pathname: string, href: string, prefix: string, exact?: boolean): boolean {
+  if (exact) return pathname === href;
   return pathname === href || pathname.startsWith(`${prefix}/`);
-}
-
-function IconChats() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M4 4h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H8l-4 4V5a1 1 0 0 1 1-1z"
-      />
-    </svg>
-  );
-}
-
-function IconChannels() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 3 4 7v10l8 4 8-4V7l-8-4zm0 2.2 5.5 2.75L12 10.7 6.5 7.95 12 5.2zM6 9.3l5 2.5v7.1L6 16.4V9.3zm12 0v7.1l-5 2.5v-7.1l5-2.5z"
-      />
-    </svg>
-  );
-}
-
-function IconContacts() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 12a4 4 0 1 0-4-4 4 4 0 0 0 4 4zm0 2c-4 0-8 2-8 5v1h16v-1c0-3-4-5-8-5z"
-      />
-    </svg>
-  );
-}
-
-function IconProfile() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
-      <path
-        fill="currentColor"
-        d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm0 5a3 3 0 1 1-3 3 3 3 0 0 1 3-3zm0 13.2a7.2 7.2 0 0 1-5.3-2.2 5.2 5.2 0 0 1 10.6 0A7.2 7.2 0 0 1 12 20.2z"
-      />
-    </svg>
-  );
 }
 
 function NavBadge({ count, testId }: { count: number; testId: string }) {
@@ -90,7 +53,7 @@ export function SiteNav({
   fixturePendingRequests?: number;
 } = {}) {
   const routePathname = usePathname();
-  const pathname = fixturePathname ?? routePathname;
+  const pathname = fixturePathname ?? routePathname ?? "/";
   const storedStatus = useSessionStatusStore((s) => s.status);
   const status = fixtureStatus ?? storedStatus;
   const pubky = useAuthStore((s) => s.pubky);
@@ -121,12 +84,10 @@ export function SiteNav({
       .then((rows) => {
         setChannelRows(rows);
       })
-      .catch(() => {
-        // list page owns the error surface
-      });
+      .catch(() => undefined);
   }, [pubky, pathname, setPendingRequests, setChannelRows]);
 
-  if (pathname.startsWith("/e2e")) return null;
+  if (pathname.startsWith("/e2e") && !fixturePathname) return null;
 
   const sessionLink =
     !hasIdentity(status) ? (
@@ -152,83 +113,103 @@ export function SiteNav({
     ) : null;
 
   return (
-    <nav aria-label="Primary" className="w-full" data-surface="site-nav">
-      <div className="hidden items-center gap-x-4 md:flex">
+    <>
+      <nav aria-label="Primary" className="hidden items-center gap-3 lg:flex" data-surface="site-nav">
         {PRIMARY.map((link) => {
-          const active = isActive(pathname, link.href, link.prefix);
+          const active = isActive(pathname, link.href, link.prefix, "exact" in link ? Boolean(link.exact) : false);
+          const Icon = link.icon;
           return (
-            <Link
-              key={link.href}
-              href={link.href}
-              prefetch={false}
-              aria-current={active ? "page" : undefined}
-              className={
-                active
-                  ? "inline-flex min-h-11 min-w-11 items-center font-semibold text-foreground underline underline-offset-4"
-                  : "inline-flex min-h-11 min-w-11 items-center text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-              }
-            >
-              {link.label}
-              {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
-              {link.label === "Channels" ? (
-                <NavBadge count={channelUnread} testId="channelsNavBadge" />
-              ) : null}
-            </Link>
+            <Button key={link.href} asChild variant="secondary" size="icon" className={cn("hc-nav-circle", active ? "" : "hc-nav-circle-idle")}>
+              <Link
+                href={link.href}
+                prefetch={false}
+                aria-current={active ? "page" : undefined}
+                aria-label={
+                  link.label === "Chats" && pendingRequests > 0
+                    ? `Chats, ${pendingRequests} message requests`
+                    : link.label === "Channels" && channelUnread > 0
+                      ? `Channels, ${channelUnread} unread`
+                      : link.label
+                }
+              >
+                <Icon className="size-6" />
+                <span className="sr-only">
+                  {link.label}
+                  {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
+                  {link.label === "Channels" ? (
+                    <NavBadge count={channelUnread} testId="channelsNavBadge" />
+                  ) : null}
+                </span>
+              </Link>
+            </Button>
           );
         })}
         {sessionLink}
+        {pubky ? (
+          <Link href="/profile" prefetch={false} aria-label="Profile">
+            <span className="relative inline-flex shrink-0">
+              <Avatar seed={pubky} size="lg" ring />
+            </span>
+          </Link>
+        ) : null}
+      </nav>
+
+      <div className="flex items-center justify-end gap-3 lg:hidden">
+        {sessionLink}
+        {pubky ? (
+          <Link href="/profile" prefetch={false} aria-label="Profile" className="inline-flex shrink-0">
+            <Avatar seed={pubky} size="lg" ring />
+          </Link>
+        ) : null}
       </div>
 
-      <div className="flex items-center justify-end md:hidden">{sessionLink}</div>
-
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background md:hidden" data-surface="site-nav-mobile">
-        <ul className="mx-auto grid max-w-5xl grid-cols-4">
+      <nav
+        className="fixed inset-x-0 bottom-0 z-(--z-mobile-menu) bg-linear-to-t from-background via-background/95 to-transparent px-3 py-4 lg:hidden"
+        aria-label="Primary"
+        data-surface="site-nav-mobile"
+      >
+        <ul className="mx-auto flex w-full hc-mobile-nav-max items-center justify-between rounded-full p-3">
           {PRIMARY.map((link) => {
-            const active = isActive(pathname, link.href, link.prefix);
+            const active = isActive(pathname, link.href, link.prefix, "exact" in link ? Boolean(link.exact) : false);
             const Icon = link.icon;
             return (
               <li key={link.href}>
-                <Link
-                  href={link.href}
-                  prefetch={false}
-                  aria-current={active ? "page" : undefined}
-                  aria-label={
-                    link.label === "Chats" && pendingRequests > 0
-                      ? `Chats, ${pendingRequests} message requests`
-                      : link.label === "Channels" && channelUnread > 0
-                        ? `Channels, ${channelUnread} unread`
-                        : link.label
-                  }
-                  className={
-                    active
-                      ? "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 hc-nav-label font-semibold text-foreground"
-                      : "flex min-h-11 flex-col items-center justify-center gap-0.5 pt-1 hc-nav-label text-muted-foreground"
-                  }
-                >
-                  <span className="relative">
-                    <Icon />
-                    {link.label === "Chats" && pendingRequests > 0 ? (
-                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
-                    ) : null}
-                    {link.label === "Channels" && channelUnread > 0 ? (
-                      <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
-                    ) : null}
-                  </span>
-                  <span className="inline-flex items-center">
-                    {link.label}
-                    {link.label === "Chats" ? (
-                      <NavBadge count={pendingRequests} testId="chatsNavBadge" />
-                    ) : null}
-                    {link.label === "Channels" ? (
-                      <NavBadge count={channelUnread} testId="channelsNavBadge" />
-                    ) : null}
-                  </span>
-                </Link>
+                <Button asChild size="icon" variant="ghost" className={cn("hc-nav-circle", active ? "bg-secondary" : "hc-nav-circle-idle")}>
+                  <Link
+                    href={link.href}
+                    prefetch={false}
+                    aria-current={active ? "page" : undefined}
+                    aria-label={
+                      link.label === "Chats" && pendingRequests > 0
+                        ? `Chats, ${pendingRequests} message requests`
+                        : link.label === "Channels" && channelUnread > 0
+                          ? `Channels, ${channelUnread} unread`
+                          : link.label
+                    }
+                  >
+                    <span className="relative">
+                      <Icon className="h-6 w-6" />
+                      {link.label === "Chats" && pendingRequests > 0 ? (
+                        <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
+                      ) : null}
+                      {link.label === "Channels" && channelUnread > 0 ? (
+                        <span className="absolute -right-2 -top-1 h-2 w-2 rounded-full hc-brand-dot" />
+                      ) : null}
+                    </span>
+                    <span className="sr-only">
+                      {link.label}
+                      {link.label === "Chats" ? <NavBadge count={pendingRequests} testId="chatsNavBadge" /> : null}
+                      {link.label === "Channels" ? (
+                        <NavBadge count={channelUnread} testId="channelsNavBadge" />
+                      ) : null}
+                    </span>
+                  </Link>
+                </Button>
               </li>
             );
           })}
         </ul>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }

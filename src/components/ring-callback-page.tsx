@@ -204,8 +204,9 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
   }
 
   return (
-    <article className="space-y-4" data-surface="ring-callback-page">
-      <h1 className="text-2xl font-semibold tracking-tight">Ring callback</h1>
+    <article className="hc-hero-iridescent hc-hero-frame space-y-4 rounded-xl" data-surface="ring-callback-page">
+      <div className="hc-hero-inner space-y-4 bg-background p-8">
+      <h1 className="text-2xl font-bold tracking-tight">Ring callback</h1>
 
       {phase.kind === "reading" ? (
         <p className="text-sm text-muted-foreground">Reading return URL…</p>
@@ -222,7 +223,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
           <p className="leading-7">
             Continue as <code className="break-all font-mono">{phase.pubky}</code>?
           </p>
-          <Button type="button" onClick={() => void adopt()}>
+          <Button type="button" variant="brand" onClick={() => void adopt()}>
             Continue
           </Button>
         </div>
@@ -246,6 +247,7 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
       {phase.kind === "error" ? (
         <ErrorDetails fallback={phase.fallback} details={phase.details} />
       ) : null}
+      </div>
     </article>
   );
 }

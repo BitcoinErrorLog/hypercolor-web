@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { DetailBackLink } from "@/components/detail-back";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { DetailHeading } from "@/components/detail-heading";
+import { Avatar } from "@/components/ui/avatar";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { relationshipBadges } from "@/lib/contacts-sort";
 import { StorageService } from "@/services/StorageService";
@@ -80,7 +81,9 @@ export function ContactDetail({
 
   return (
     <article className="space-y-6" data-testid="contactDetail" data-surface="contact-detail">
+      <div className="flex h-full w-full min-w-0 flex-1 flex-col items-stretch justify-center gap-4 self-stretch px-6 py-6">
       <DetailBackLink href="/contacts" listLabel="Contacts" />
+      <Avatar seed={pubky} size="xl" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
         <DetailHeading headingRef={headingRef} className="text-xl font-semibold">
@@ -143,7 +146,7 @@ export function ContactDetail({
         ) : null}
       </section>
 
-      <Button asChild>
+      <Button asChild variant="brand">
         <Link
           href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}
           onClick={() => rememberThreadOrigin({ kind: "contact", pubky })}
@@ -151,6 +154,7 @@ export function ContactDetail({
           Message
         </Link>
       </Button>
+      </div>
     </article>
   );
 }

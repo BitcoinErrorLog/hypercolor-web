@@ -16,7 +16,7 @@ export function SessionBanner({ fixtureStatus }: { fixtureStatus?: SessionUiStat
   return (
     <div
       role="status"
-      className="border-b border-border bg-card px-6 py-3 text-sm"
+      className="border-b border-border bg-brand/8 px-6 py-3 text-sm"
       data-testid="sessionBanner"
       data-surface="session-banner"
     >

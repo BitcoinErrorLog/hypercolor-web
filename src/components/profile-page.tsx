@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { avatarInitial } from "@/components/avatar-initial";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
+import { Avatar } from "@/components/ui/avatar";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
 import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { useSignOut } from "@/hooks/useSignOut";
 import { sanitizeDisplayName } from "@/lib/display-name";
@@ -19,18 +20,19 @@ export function ProfilePage() {
 
   return (
     <article className="space-y-6" data-testid="profileScreen" data-surface="profile-page">
-      <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
+      <PageHeader>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <PageSubtitle>{sessionStatusLabel(status)}</PageSubtitle>
+      </PageHeader>
       <div className="flex flex-col items-center gap-3 py-8">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl hc-brand-text" data-testid="profileAvatarInitial">
-          {avatarInitial(profile?.displayName
-            ? sanitizeDisplayName(profile.displayName)
-            : pubky ?? "?")}
+        <div className="flex h-20 w-20 items-center justify-center" data-testid="profileAvatarInitial">
+          <Avatar seed={pubky ?? profile?.displayName ?? "anon"} size="xl" ring />
         </div>
         <p className="text-lg font-medium">
           {profile?.displayName ? sanitizeDisplayName(profile.displayName) : "Unnamed"}
         </p>
         {pubky ? (
-          <TruncatedPubky pubky={pubky} testId="profilePubky" />
+          <TruncatedPubky pubky={pubky} testId="profilePubky" full />
         ) : (
           <p className="text-sm text-muted-foreground">Not connected</p>
         )}

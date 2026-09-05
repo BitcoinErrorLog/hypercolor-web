@@ -44,11 +44,8 @@ for (const scene of UX_CATALOG_SCENES) {
       await expect(page.getByTestId("enableMessagingQr")).toBeVisible();
     }
     if (scene.id === "profile-enabled") {
-      const avatarInitial = surface.getByTestId("profileAvatarInitial");
-      const text = (await avatarInitial.textContent()) ?? "";
-      expect(text.length).toBeGreaterThan(0);
-      expect(text).not.toMatch(/^\p{Cf}$/u);
-      await expect(avatarInitial).toHaveText(/[^\p{Cf}\s]/u);
+      const avatar = surface.getByTestId("profileAvatarInitial");
+      await expect(avatar.locator("svg, canvas, img")).toHaveCount(1);
     }
     if (scene.id === "settings-recovery-gate") {
       const stay = page.getByTestId("backupLeaveStay");

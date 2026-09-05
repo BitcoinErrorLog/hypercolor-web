@@ -4,11 +4,17 @@ import Link from "next/link";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { avatarInitial } from "@/components/avatar-initial";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { IconMessageCircle } from "@/components/ui/icons";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar } from "@/components/ui/avatar";
+import { MasterDetail } from "@/components/shell/master-detail";
 import { ErrorDetails } from "@/components/error-details";
 import { rememberAndOpen } from "@/components/detail-back";
 import { sanitizeDisplayName } from "@/lib/display-name";
-import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
+import { displayPubkyShort } from "@/components/truncated-pubky";
+import { formatRelativeTime, unreadLabel } from "@/lib/format";
 import { chatRowDomId, rememberThreadOrigin, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
 import { canComposeMessages } from "@/lib/session-ui";
 import type { SessionUiStatus } from "@/stores/sessionStatusStore";
@@ -74,18 +80,22 @@ export function ChatsPage({
   }, [conversationId]);
 
   return (
-    <div className="hc-master-detail" data-testid="chatsScreen" data-surface="chats-page">
-      <aside className={conversationId ? "hidden md:block" : undefined} aria-busy={inboxLoading || undefined}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight">
-            Chats
-          </h1>
-        </div>
-
+    <div className="flex h-full min-h-0 flex-col" data-testid="chatsScreen" data-surface="chats-page">
+      <PageHeader className="shrink-0">
+        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold tracking-tight">
+          Chats
+        </h1>
+        <PageSubtitle>Encrypted threads on this device.</PageSubtitle>
+      </PageHeader>
+      <MasterDetail
+        listClassName={conversationId ? "hidden md:block" : undefined}
+        detailClassName={!conversationId ? "hidden md:flex" : undefined}
+        list={
+        <aside className="px-3 py-3" aria-busy={inboxLoading || undefined}>
         <Link
           href="/requests"
           data-testid="chatsRequests"
-          className="mb-4 flex min-h-11 items-center justify-between rounded-md border border-border bg-card px-3 py-2 text-sm"
+          className="mb-4 flex min-h-11 items-center justify-between rounded-lg border border-border bg-card px-3 py-2 text-sm"
         >
           <span>Message requests</span>
           {pendingRequests > 0 ? (
@@ -115,6 +125,7 @@ export function ChatsPage({
           />
           <Button
             type="submit"
+            variant="brand"
             size="sm"
             disabled={starting || !composeEnabled}
             data-testid="chatsNew"
@@ -134,42 +145,45 @@ export function ChatsPage({
 
         {inboxLoading && rows.length === 0 ? (
           <ul className="mt-4 space-y-2" data-testid="chatsLoading">
-            <li className="h-11 animate-pulse rounded-md bg-secondary" />
-            <li className="h-11 animate-pulse rounded-md bg-secondary" />
-            <li className="h-11 animate-pulse rounded-md bg-secondary" />
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
           </ul>
         ) : rows.length === 0 ? (
           <div className="mt-8 space-y-2" data-testid="chatsEmpty">
-            <p className="text-muted-foreground">No chats yet.</p>
-            <p className="text-sm text-muted-foreground">{emptyStateHint}</p>
-            <Button asChild size="sm">
-              <Link href="/contacts">Add a contact</Link>
-            </Button>
+            <IllustratedEmptyState
+              icon={IconMessageCircle}
+              title="No chats yet."
+              subtitle={emptyStateHint}
+            >
+              <Button asChild size="sm">
+                <Link href="/contacts">Add a contact</Link>
+              </Button>
+            </IllustratedEmptyState>
           </div>
         ) : (
-          <ul className="mt-4 divide-y divide-border">
+          <ul className="mt-4">
             {rows.map((row) => {
               const rowId = chatRowDomId(row.key);
-              const labelName = sanitizeDisplayName(shortPubky(row.title));
+              const labelName = sanitizeDisplayName(displayPubkyShort(row.title));
+              const selected = conversationId !== null && row.href.endsWith(conversationId);
               return (
-                <li key={row.key}>
+                <li key={row.key} className={selected ? "rounded-lg hc-wash px-2" : "px-2"}>
                   <Link
                     id={rowId}
                     href={row.href}
                     data-testid="chatRow"
                     aria-label={`Open chat ${labelName}`}
-                    className="flex min-h-11 items-start gap-3 py-3 hover:bg-accent"
+                    className="flex min-h-11 items-center gap-2 py-2 hover:bg-accent/40"
                     onClick={() => {
                       rememberAndOpen("chats", rowId);
                       rememberThreadOrigin({ kind: "chats" });
                     }}
                   >
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary hc-brand-text">
-                      {avatarInitial(labelName)}
-                    </span>
+                    <Avatar seed={row.title} size="md" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
-                        <span className="truncate font-medium">{shortPubky(row.title)}</span>
+                        <span className="truncate text-sm font-bold">{displayPubkyShort(row.title)}</span>
                         {row.lastMessageAt ? (
                           <span className="text-xs text-muted-foreground">
                             {formatRelativeTime(row.lastMessageAt, now)}
@@ -177,7 +191,7 @@ export function ChatsPage({
                         ) : null}
                       </span>
                       <span className="mt-1 flex items-center justify-between gap-2">
-                        <span className="truncate text-sm text-muted-foreground">{row.preview}</span>
+                        <span className="truncate text-base text-muted-foreground">{row.preview}</span>
                         {row.unreadCount > 0 ? (
                           <span className="rounded-full hc-brand-fill px-2 text-xs">
                             {unreadLabel(row.unreadCount)}
@@ -209,7 +223,9 @@ export function ChatsPage({
           {inboxLoading ? "Loading chats" : `${rows.length} chats`}
         </p>
       </aside>
-      <section className={!conversationId ? "hidden md:block" : undefined}>{thread}</section>
+        }
+        detail={thread}
+      />
     </div>
   );
 }

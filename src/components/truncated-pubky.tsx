@@ -2,23 +2,30 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { shortPubky } from "@/lib/format";
+import { stripPubkyPrefix } from "@/lib/formatPublicKey";
+
+export function displayPubkyShort(pubky: string): string {
+  return stripPubkyPrefix(pubky).slice(0, 8).toUpperCase();
+}
 
 export function TruncatedPubky({
   pubky,
   testId,
-  className = "font-mono text-sm",
+  className = "font-mono text-sm tracking-[1.2px] uppercase",
+  full = false,
 }: {
   pubky: string;
   testId?: string;
   className?: string;
+  full?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  const shown = full ? stripPubkyPrefix(pubky) : displayPubkyShort(pubky);
 
   return (
     <span className="inline-flex max-w-full flex-wrap items-center gap-2">
       <span className={className} data-testid={testId} title={pubky}>
-        {shortPubky(pubky)}
+        {shown}
       </span>
       <Button
         type="button"

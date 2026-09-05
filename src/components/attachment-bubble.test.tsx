@@ -79,7 +79,7 @@ describe("AttachmentBubble errors", () => {
     expect(alert?.querySelector(":scope > p")?.textContent).toBe(
       "Could not decrypt this attachment.",
     );
-    expect(alert?.querySelector("details")?.textContent).toContain(
+    expect(alert?.textContent).toContain(
       "XChaCha20Poly1305: ciphertext is unauthentic",
     );
     expect(alert?.querySelector(":scope > p")?.textContent).not.toContain("XChaCha20Poly1305");

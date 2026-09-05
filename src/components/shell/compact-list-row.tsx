@@ -28,7 +28,7 @@ export function CompactListRow({
           {subtitle ?? formatPublicKey({ key: pubky })}
         </p>
       </div>
-      {time ? <span className="text-xs text-muted-foreground">{formatRelativeTime(time, 1_720_000_000_000)}</span> : null}
+      {time ? <span className="text-xs text-muted-foreground">{formatRelativeTime(time)}</span> : null}
     </div>
   );
 }

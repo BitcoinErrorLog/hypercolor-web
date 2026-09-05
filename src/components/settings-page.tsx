@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Avatar } from "@/components/ui/avatar";
+import { Toast } from "@/components/ui/toast";
 import { DetailBackLink } from "@/components/detail-back";
 import { ErrorDetails } from "@/components/error-details";
 import { TruncatedPubky } from "@/components/truncated-pubky";
@@ -87,13 +90,20 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
   return (
     <article className="space-y-8" data-testid="settingsScreen" data-surface="settings-page">
       <DetailBackLink href="/profile" listLabel="Profile" always />
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-
+      <PageHeader>
+        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+        <PageSubtitle>{pubky ? "Signed in" : "This device"}</PageSubtitle>
+      </PageHeader>
       <section className="space-y-2">
         <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
           Identity
         </h2>
-        {pubky ? <TruncatedPubky pubky={pubky} /> : (
+        {pubky ? (
+          <div className="flex items-center gap-3">
+            <Avatar seed={pubky} size="lg" ring />
+            <TruncatedPubky pubky={pubky} />
+          </div>
+        ) : (
           <p className="break-all font-mono text-sm text-muted-foreground">
             No identity on this device
           </p>
@@ -233,7 +243,9 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
         {restoreError ? (
           <ErrorDetails fallback="That recovery code did not work." details={restoreError} />
         ) : null}
-        {restoreNote ? <p className="text-sm text-muted-foreground">{restoreNote}</p> : null}
+        {restoreNote ? (
+          <Toast title="Restore complete" description={restoreNote} />
+        ) : null}
       </section>
 
       <section id="repair-local-data" className="space-y-3">

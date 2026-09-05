@@ -20,8 +20,8 @@ export function IllustratedEmptyState({
       className={cn("relative flex flex-col items-center justify-center gap-3 px-4 py-5", className)}
       data-slot="empty-state"
     >
-      <div className="relative z-10 flex size-16 shrink-0 items-center justify-center rounded-full bg-brand/16">
-        <Icon className="size-8 text-brand" size={32} />
+      <div className="relative z-10 flex size-16 shrink-0 items-center justify-center rounded-full hc-brand-soft">
+        <Icon className="size-6 hc-brand-text" size={24} />
       </div>
       <div className="relative z-10 flex w-full min-w-0 flex-col items-center">
         <Typography as="h3" className="text-center text-xl font-bold leading-7">

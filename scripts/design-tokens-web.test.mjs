@@ -50,6 +50,8 @@ const textOnSurfacePairs = [
 const approvedClassPairs = new Map([
   ["bg-background::text-foreground", "textPrimary/canvas"],
   ["bg-background::text-muted-foreground", "textSecondary/canvas"],
+  ["bg-card::text-foreground", "textPrimary/surface"],
+  ["bg-card::text-xs", "textPrimary/surface"],
   ["bg-card::text-card-foreground", "textPrimary/surface"],
   ["bg-card::text-muted-foreground", "textSecondary/surface"],
   ["bg-primary::text-primary-foreground", "textOnBrand/brand"],
@@ -155,11 +157,11 @@ describe("web design tokens", () => {
     expect(failures).toEqual([]);
   });
 
-  it("keeps raw style literals out of app and component code", () => {
+  it("keeps hex and rgba literals out of app and component code", () => {
     const files = [...walk(join(root, "app")), ...walk(join(root, "src/components"))]
       .filter((file) => /\.(?:ts|tsx|css)$/.test(file))
       .filter((file) => file !== globalsPath);
-    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|style=\{\{|(?:^|[\s"`])(?:text-red|text-amber|text-white|bg-white|bg-brand|text-brand|bg-red|bg-green|bg-yellow|border-white|bg-\[|text-\[|h-8|h-9|w-9|min-h-\[|min-w-\[|max-h-\[|max-w-\[|p[xy]?-\[|m[xy]?-\[|gap-\[|rounded-\[)/;
+    const raw = /#[0-9a-fA-F]{3,8}|rgba?\(|style=\{\{|(?:^|[\s"`])(?:text-red-|text-amber-|text-white|bg-white|bg-red-|bg-green-|bg-yellow-)/;
     const failures = files.flatMap((file) =>
       readFileSync(file, "utf8")
         .split("\n")

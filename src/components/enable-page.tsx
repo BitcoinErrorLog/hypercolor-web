@@ -88,6 +88,8 @@ export function EnablePage({
 
   return (
     <article className="space-y-6" data-surface="enable-page">
+      <section className="hc-hero-iridescent w-full rounded-xl p-[2px]">
+        <div className="space-y-6 rounded-[10px] bg-background p-8">
       <DetailBackLink href="/chats" listLabel="Chats" always />
       <h1 className="text-2xl font-semibold tracking-tight">Enable encrypted messaging</h1>
       <p className="text-muted-foreground leading-7">{SCOPE_SENTENCE}</p>
@@ -166,6 +168,8 @@ export function EnablePage({
       ) : null}
 
       <p className="text-sm text-muted-foreground">{CUSTODY_LINE}</p>
+        </div>
+      </section>
     </article>
   );
 }

@@ -1,10 +1,17 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ModalSheet } from "@/components/ui/sheet";
 
+/**
+ * Composer actions slot contract:
+ * - Render only working controls (no disabled placeholders).
+ * - Place extra actions (emoji, GIF, …) in `actions` as they become real.
+ * - The default slot is the Send button. Custom `actions` should include Send
+ *   or an equivalent submit control so the layout stays attach | field | actions.
+ */
 function IconPhoto() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
@@ -49,6 +56,7 @@ export function Composer({
   testIdPrefix,
   liveStatus,
   initialMenuOpen = false,
+  actions,
 }: {
   draft: string;
   sending: boolean;
@@ -60,6 +68,8 @@ export function Composer({
   testIdPrefix: string;
   liveStatus?: string | null;
   initialMenuOpen?: boolean;
+  /** Extra working actions to the right of the field. Defaults to Send. */
+  actions?: ReactNode;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -79,9 +89,20 @@ export function Composer({
     window.setTimeout(() => fileRef.current?.click(), 0);
   }
 
+  const sendButton = (
+    <Button
+      type="submit"
+      variant="brand"
+      disabled={blocked || draft.trim().length === 0}
+      data-testid={`${testIdPrefix}Send`}
+    >
+      {sending ? "Sending…" : "Send"}
+    </Button>
+  );
+
   return (
     <form
-      className="flex flex-wrap items-end gap-2 border-t border-border pt-3"
+      className="flex items-end gap-2 border-t border-border px-4 py-3"
       data-surface="composer"
       aria-busy={sending || undefined}
       onSubmit={(event) => {
@@ -90,7 +111,7 @@ export function Composer({
       }}
     >
       {onAttach ? (
-        <>
+        <div className="shrink-0" data-slot="composer-attach">
           <input
             ref={fileRef}
             type="file"
@@ -164,22 +185,19 @@ export function Composer({
               </button>
             </div>
           </ModalSheet>
-        </>
+        </div>
       ) : null}
-      <Input
+      <Textarea
         value={draft}
         disabled={blocked}
         placeholder={placeholder}
         data-testid={`${testIdPrefix}Draft`}
+        className="min-h-12 min-w-0 flex-1 text-base"
         onChange={(event) => onChangeDraft(event.target.value)}
       />
-      <Button
-        type="submit"
-        disabled={blocked || draft.trim().length === 0}
-        data-testid={`${testIdPrefix}Send`}
-      >
-        {sending ? "Sending…" : "Send"}
-      </Button>
+      <div className="flex shrink-0 items-end gap-2" data-slot="composer-actions">
+        {actions ?? sendButton}
+      </div>
       <p className="sr-only" role="status" aria-live="polite">
         {sending ? "Message sending" : liveStatus ?? ""}
       </p>

@@ -11,6 +11,11 @@ import { TagChannelView } from "@/components/tag-channel-view";
 import { rememberAndOpen } from "@/components/detail-back";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { IconHash } from "@/components/ui/icons";
+import { Skeleton } from "@/components/ui/skeleton";
+import { MasterDetail } from "@/components/shell/master-detail";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import { useQueryParam } from "@/hooks/useQueryParam";
 import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
@@ -152,17 +157,22 @@ export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; 
 
   return (
     <div
-      className="hc-master-detail"
+      className="flex h-full min-h-0 flex-col"
       data-testid="channelsScreen"
       data-surface="channels-page"
     >
-      <aside className={detailOpen ? "hidden md:block" : undefined} aria-busy={loading || undefined}>
-        <div className="mb-4 flex items-center justify-between">
-          <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-semibold tracking-tight">
-            Channels
-          </h1>
-        </div>
-        <div role="tablist" aria-label="Channel mode" className="mb-4 grid grid-cols-2 gap-1 rounded-md border border-border p-1">
+      <PageHeader className="shrink-0">
+        <h1 ref={headingRef} tabIndex={-1} className="text-2xl font-bold tracking-tight">
+          Channels
+        </h1>
+        <PageSubtitle>Public topics from the homeserver.</PageSubtitle>
+      </PageHeader>
+      <MasterDetail
+        listClassName={detailOpen ? "hidden md:block" : undefined}
+        detailClassName={!detailOpen ? "hidden md:flex" : undefined}
+        list={
+      <aside className="px-3 py-3" aria-busy={loading || undefined}>
+        <div role="tablist" aria-label="Channel mode" className="mb-4 grid grid-cols-2 gap-1 rounded-full border border-border p-1">
           <Link
             role="tab"
             aria-selected={mode === "private"}
@@ -296,37 +306,42 @@ export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; 
 
             {loading && rows.length === 0 ? (
               <ul className="mt-4 space-y-2" data-testid="channelsLoading">
-                <li className="h-11 animate-pulse rounded-md bg-secondary" />
-                <li className="h-11 animate-pulse rounded-md bg-secondary" />
-                <li className="h-11 animate-pulse rounded-md bg-secondary" />
+                <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+                <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+                <li><Skeleton className="h-14 w-full rounded-lg" /></li>
               </ul>
             ) : rows.length === 0 ? (
               <div className="mt-8 space-y-2" data-testid="channelsEmpty">
-                <p className="text-muted-foreground">No private groups yet.</p>
-                <p className="text-sm text-muted-foreground">
-                  A private group is end-to-end encrypted to every member, up to 50 people.
-                </p>
+                <IllustratedEmptyState
+                  icon={IconHash}
+                  title="No private groups yet."
+                  subtitle="A private group is end-to-end encrypted to every member, up to 50 people."
+                />
               </div>
             ) : (
-              <ul className="mt-4 divide-y divide-border">
+              <ul className="mt-4">
                 {rows.map((row) => {
                   const rowId = channelRowDomId(row.id);
                   return (
-                    <li key={row.id}>
+                    <li key={row.id} className={channelId === row.id ? "hc-wash" : ""}>
                       <Link
                         id={rowId}
                         href={row.href}
                         data-testid="channelRow"
-                        className="block min-h-11 py-3 hover:bg-accent"
+                        className="flex min-h-11 items-center gap-3 px-2 py-3 hover:bg-accent/40"
                         onClick={() => rememberAndOpen("channels", rowId)}
                       >
-                        <span className="font-medium">{sanitizeDisplayName(row.title)}</span>
+                        <div className="flex size-10 shrink-0 items-center justify-center rounded-full hc-brand-soft hc-brand-text">
+                          <IconHash className="size-5" />
+                        </div>
+                        <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-bold">{sanitizeDisplayName(row.title)}</span>
                         <span className="mt-1 block text-xs text-muted-foreground">
                           Private group
                           {row.lastMessageAt ? ` · ${formatRelativeTime(row.lastMessageAt, now)}` : ""}
                         </span>
                         <span className="mt-1 flex items-center justify-between gap-2">
-                          <span className="block truncate text-sm text-muted-foreground">
+                          <span className="block truncate text-base text-muted-foreground">
                             {row.preview}
                           </span>
                           {row.unreadCount > 0 ? (
@@ -338,6 +353,7 @@ export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; 
                             </span>
                           ) : null}
                         </span>
+                        </span>
                       </Link>
                     </li>
                   );
@@ -347,13 +363,15 @@ export function ChannelsPage({ fixture, now }: { fixture?: ChannelsPageFixture; 
           </>
         )}
       </aside>
-      <section className={!detailOpen ? "hidden md:block" : undefined}>
-        {mode === "public" ? (
+        }
+        detail={
+        mode === "public" ? (
           <TagChannelView tag={selectedTag} fixture={fixture?.tagDetail} now={now} />
         ) : (
           <ChannelView channelId={channelId} fixture={fixture?.channelDetail} initialShowMembers={fixture?.channelMembersOpen} />
-        )}
-      </section>
+        )
+        }
+      />
     </div>
   );
 }

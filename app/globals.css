@@ -224,7 +224,7 @@
   --ease-enter: var(--easing-enter);
   --ease-exit: var(--easing-exit);
   --ease-platform: var(--easing-platformEaseOut);
-  --font-sans: var(--font-geist-sans);
+  --font-sans: var(--font-inter-tight), var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --z-index-40: 40;
   --z-index-50: 50;
@@ -282,9 +282,10 @@ body {
   width: 100%;
   min-width: 0;
   flex: 1 1 auto;
-  min-height: calc(100svh - 16rem);
+  min-height: 0;
+  height: 100%;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(20rem, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   align-items: stretch;
 }
 
@@ -292,9 +293,9 @@ body {
   .hc-master-detail {
     grid-template-columns: 360px minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
-    height: calc(100svh - var(--header-height) - 8rem);
-    max-height: calc(100svh - var(--header-height) - 8rem);
-    min-height: calc(100svh - var(--header-height) - 8rem);
+    height: 100%;
+    max-height: none;
+    min-height: 0;
   }
 }
 
@@ -350,6 +351,10 @@ body {
   color: var(--color-brandText);
 }
 
+.hc-brand-soft {
+  background: color-mix(in srgb, var(--color-brand) 16%, transparent);
+}
+
 .hc-brand-fill {
   background: var(--color-brand);
   color: var(--color-textOnBrand);
@@ -381,6 +386,86 @@ body {
 .hc-nav-label {
   font-size: var(--type-meta-size);
   line-height: var(--type-meta-line);
+}
+
+.hc-app-font {
+  font-family: var(--font-inter-tight), "Inter Tight", sans-serif;
+}
+
+.hc-nav-circle {
+  height: 3rem;
+  width: 3rem;
+  backdrop-filter: blur(12px);
+}
+
+.hc-nav-circle-idle {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.hc-mobile-nav-max {
+  max-width: 23.75rem;
+}
+
+@media (min-width: 40rem) {
+  .hc-mobile-nav-max {
+    max-width: 37.5rem;
+  }
+}
+
+@media (min-width: 48rem) {
+  .hc-mobile-nav-max {
+    max-width: 45rem;
+  }
+}
+
+.hc-rail-max {
+  max-height: calc(100svh - var(--header-offset-main));
+}
+
+.hc-wash {
+  background: color-mix(in srgb, var(--foreground) 5%, transparent);
+}
+
+.hc-master-list-scroll {
+  max-height: 36svh;
+}
+
+@media (min-width: 64rem) {
+  .hc-master-list-scroll {
+    max-height: none;
+  }
+}
+
+.hc-hero-frame {
+  min-height: 60svh;
+  padding: 2px;
+}
+
+.hc-hero-inner {
+  min-height: 60svh;
+  border-radius: 10px;
+}
+
+.hc-brand-muted {
+  color: var(--color-brandMuted);
+}
+
+.hc-brand-2-text {
+  color: var(--brand-2);
+}
+
+.hc-overlay {
+  background: var(--color-overlay);
+}
+
+.hc-toast-blur {
+  backdrop-filter: blur(10px);
+}
+
+.hc-toast-default {
+  border-color: color-mix(in srgb, var(--color-brand) 32%, transparent);
+  background: color-mix(in srgb, var(--color-brand) 8%, transparent);
 }
 
 .hc-sheet-panel {

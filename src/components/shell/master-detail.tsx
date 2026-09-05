@@ -5,22 +5,29 @@ export function MasterDetail({
   list,
   detail,
   className,
+  listClassName,
+  detailClassName,
 }: {
   list: ReactNode;
   detail: ReactNode;
   className?: string;
+  listClassName?: string;
+  detailClassName?: string;
 }) {
   return (
-    <div className={cn("hc-master-detail min-h-0 flex-1 border-t border-border", className)}>
+    <div className={cn("hc-master-detail min-h-0 flex-1", className)}>
       <div
         data-slot="master-list"
-        className="max-h-[36svh] overflow-y-auto border-b border-border bg-white/[0.03] lg:max-h-none lg:border-r lg:border-b-0"
+        className={cn(
+          "hc-master-list-scroll overflow-y-auto border-b border-border hc-wash lg:border-r lg:border-b-0",
+          listClassName,
+        )}
       >
         {list}
       </div>
       <div
         data-slot="detail-pane"
-        className="flex h-full min-h-0 w-full min-w-0 flex-col items-stretch overflow-hidden"
+        className={cn("flex h-full min-h-0 w-full min-w-0 flex-col items-stretch overflow-hidden", detailClassName)}
       >
         {detail}
       </div>

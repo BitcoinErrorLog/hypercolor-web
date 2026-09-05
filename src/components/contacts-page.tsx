@@ -10,6 +10,11 @@ import { rememberAndOpen } from "@/components/detail-back";
 import { PubkyAnchors } from "@/components/pubky-anchors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { IconUsers } from "@/components/ui/icons";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Avatar } from "@/components/ui/avatar";
+import { MasterDetail } from "@/components/shell/master-detail";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import {
   followSuggestionContacts,
@@ -136,21 +141,26 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
 
   return (
     <div
-      className="hc-master-detail"
+      className="flex h-full min-h-0 flex-col"
       data-testid="contactsScreen"
       data-surface="contacts-page"
     >
-      <aside className={selected ? "hidden md:block" : undefined}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            id="contactsHeading"
-            className="text-2xl font-semibold tracking-tight"
-          >
-            Contacts
-          </h1>
-        </div>
+      <PageHeader className="shrink-0">
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          id="contactsHeading"
+          className="text-2xl font-bold tracking-tight"
+        >
+          Contacts
+        </h1>
+        <PageSubtitle>People you have an encrypted link with.</PageSubtitle>
+      </PageHeader>
+      <MasterDetail
+        listClassName={selected ? "hidden md:block" : undefined}
+        detailClassName={!selected ? "hidden md:flex" : undefined}
+        list={
+      <aside className="px-3 py-3">
 
         <FollowsImportPanel key={ownerPubky ?? "none"} ownerPubky={ownerPubky} onImported={reload} />
 
@@ -309,16 +319,19 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
 
         {roster.length === 0 ? (
           <div className="mt-8 space-y-2" data-testid="contactsEmpty">
-            <p className="text-muted-foreground">No contacts yet.</p>
-            <p className="text-sm text-muted-foreground">
-              Add someone by pubky, or use your public pubky.app follows to recognise people you
-              already know.
-            </p>
+            <IllustratedEmptyState
+              icon={IconUsers}
+              title="No contacts yet."
+              subtitle="Add someone by pubky, or use your public pubky.app follows to recognise people you already know."
+            />
           </div>
         ) : (
-          <ul className="mt-4 divide-y divide-border">
+          <ul className="mt-4">
             {roster.map((contact) => (
-              <li key={contact.pubky}>
+              <li
+                key={contact.pubky}
+                className={selected === contact.pubky ? "rounded-lg hc-wash px-2" : "px-2"}
+              >
                 <Link
                   id={contactRowDomId(contact.pubky)}
                   href={`/contacts/${encodeURIComponent(contact.pubky)}`}
@@ -328,10 +341,12 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
                       ? sanitizeDisplayName(contact.displayName)
                       : shortPubky(contact.pubky)
                   }`}
-                  className="block min-h-11 py-3 hover:bg-accent"
+                  className="flex min-h-11 items-center gap-2 py-2 hover:bg-accent/40"
                   onClick={() => rememberAndOpen("contacts", contactRowDomId(contact.pubky))}
                 >
-                  <span className="font-medium">
+                  <Avatar seed={contact.pubky} size="md" />
+                  <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold">
                     {contact.displayName
                       ? sanitizeDisplayName(contact.displayName)
                       : shortPubky(contact.pubky)}
@@ -346,19 +361,22 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
                       </span>
                     ))}
                   </span>
+                  </span>
                 </Link>
               </li>
             ))}
           </ul>
         )}
       </aside>
-      <section className={!selected ? "hidden md:block" : undefined}>
-        {selected ? (
+        }
+        detail={
+        selected ? (
           <ContactDetail ownerPubky={ownerPubky} pubky={selected} />
         ) : (
-          <p className="text-sm text-muted-foreground">Select a contact.</p>
-        )}
-      </section>
+          <p className="flex h-full items-center justify-center text-sm text-muted-foreground">Select a contact.</p>
+        )
+        }
+      />
     </div>
   );
 }
