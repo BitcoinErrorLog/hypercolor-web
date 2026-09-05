@@ -49,6 +49,18 @@ vi.mock("@/services/link/session", () => ({
   getLiveSession: vi.fn(() => null),
 }));
 
+vi.mock("@/services/tabLock", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/services/tabLock")>();
+  return {
+    ...actual,
+    getTabLock: vi.fn(() => ({ mode: "readonly", requestTakeover: vi.fn() })),
+    initTabLock: vi.fn(async () => ({ mode: "readonly", requestTakeover: vi.fn() })),
+    requestTakeoverAndWait: vi.fn(async () => undefined),
+  };
+});
+
+import { requestTakeoverAndWait } from "@/services/tabLock";
+
 let host: HTMLDivElement;
 let root: Root;
 
@@ -87,6 +99,7 @@ describe("RingCallbackPage errors", () => {
     vi.mocked(finishLegacyChainedGrant).mockReset();
     vi.mocked(getLivePaykitConnect).mockReset().mockReturnValue(null);
     vi.mocked(getLiveSession).mockReset().mockReturnValue(null);
+    vi.mocked(requestTakeoverAndWait).mockReset().mockResolvedValue(undefined as never);
   });
 
   afterEach(() => {
@@ -195,6 +208,7 @@ describe("RingCallbackPage errors", () => {
     });
     expect(finishSingleApproval).not.toHaveBeenCalled();
     expect(finishLegacyChainedGrant).not.toHaveBeenCalled();
+    expect(requestTakeoverAndWait).not.toHaveBeenCalled();
     expect(primaryErrorText()).toBe("Could not complete this Ring handoff.");
   });
 

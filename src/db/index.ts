@@ -2,6 +2,7 @@ import { runMigrations } from "./migrations";
 import { isMutatingSql } from "./mutatingSql";
 import { ReadOnlyTabError } from "./errors";
 import {
+  bumpPersistGeneration,
   clearOpenedVfs,
   openWebSqlite,
   type PersistableSqlExecutor,
@@ -44,11 +45,16 @@ if (typeof window !== "undefined") {
 subscribeTabLock((lock) => {
   if (!_db || _injected) return;
   if (lock.mode === "writer") {
-    // Takeover: reload the snapshot the previous writer persisted so this
-    // tab does not flush a stale readonly copy over newer rows.
+    // Takeover: bump generation so a previous writer's in-flight IDB put is
+    // strictly older, then reload the snapshot they persisted.
+    bumpPersistGeneration();
     void refreshReadonlySnapshot();
+    return;
   }
-  // Do not close() on lock loss — reads continue on the in-memory DB.
+  const persistable = _db as PersistableSqlExecutor;
+  if (typeof persistable.rollbackOpenTransaction === "function") {
+    persistable.rollbackOpenTransaction();
+  }
 });
 
 function isReadonlyBlockedSql(query: string): boolean {
@@ -59,6 +65,7 @@ function isReadonlyBlockedSql(query: string): boolean {
 
 function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSqlExecutor {
   const persistable = db as PersistableSqlExecutor;
+  let txDepth = 0;
   return {
     executeSync(query, params) {
       if (getTabLock().mode === "readonly" && isReadonlyBlockedSql(query)) {
@@ -70,7 +77,12 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
         }
         throw err;
       }
-      return db.executeSync(query, params);
+      const sql = query.trim();
+      const result = db.executeSync(query, params);
+      if (/^BEGIN\b/i.test(sql)) txDepth += 1;
+      else if (/^COMMIT\b/i.test(sql)) txDepth = Math.max(0, txDepth - 1);
+      else if (/^ROLLBACK\b/i.test(sql)) txDepth = 0;
+      return result;
     },
     close() {
       persistable.close?.();
@@ -78,6 +90,11 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
     discardClose() {
       if (typeof persistable.discardClose === "function") persistable.discardClose();
       else persistable.close?.();
+    },
+    rollbackOpenTransaction() {
+      if (txDepth <= 0) return;
+      db.executeSync("ROLLBACK");
+      txDepth = 0;
     },
     flushPersist: async () => {
       await persistable.flushPersist?.();

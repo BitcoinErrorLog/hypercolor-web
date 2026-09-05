@@ -77,6 +77,33 @@ describe("F2/F5/F6 snapshot generation", () => {
     const stored = await getIdbSnapshot();
     expect(stored ? new TextDecoder().decode(stored) : null).toBe("CURRENT");
   });
+
+  it("rejects an old writer's late put after a plain takeover bump", async () => {
+    const oldGen = currentPersistGeneration();
+    await putIdbSnapshot(new TextEncoder().encode("OLD-WRITER"), {
+      userVersion: 13,
+      bundleId: SQLITE_BUNDLE_ID,
+      generation: oldGen,
+    });
+
+    const takeoverGen = bumpPersistGeneration();
+    await putIdbSnapshot(new TextEncoder().encode("NEW-WRITER"), {
+      userVersion: 13,
+      bundleId: SQLITE_BUNDLE_ID,
+      generation: takeoverGen,
+    });
+
+    await putIdbSnapshot(new TextEncoder().encode("LATE-OLD-PUT"), {
+      userVersion: 13,
+      bundleId: SQLITE_BUNDLE_ID,
+      generation: oldGen,
+    });
+
+    const bytes = await getIdbSnapshot();
+    expect(bytes ? new TextDecoder().decode(bytes) : null).toBe("NEW-WRITER");
+    const meta = await readMeta();
+    expect(meta?.generation).toBe(takeoverGen);
+  });
 });
 
 describe("deleteSqliteSnapshot onblocked", () => {

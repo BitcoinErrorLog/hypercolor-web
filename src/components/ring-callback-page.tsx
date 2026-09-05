@@ -171,12 +171,21 @@ export function RingCallbackPage({ fixturePhase }: { fixturePhase?: RingCallback
     if (phase.kind !== "confirm") return;
     try {
       const { ch } = readParamsFromLocation();
+      const session = liveTrackedSession();
+      const mode = classifyHandoffMode(phase.params.mode);
+      if (mode !== HANDOFF_MODE_COMBINED && mode !== HANDOFF_MODE_LEGACY) {
+        throw new Error("Unknown handoff mode.");
+      }
+      if (!session) {
+        throw new Error(
+          mode === HANDOFF_MODE_COMBINED
+            ? "No live session from this approval. Return to Welcome and finish the QR flow."
+            : "No live session cookie. Approve the chained grant first.",
+        );
+      }
       const { getTabLock, initTabLock, requestTakeoverAndWait } = await import(
         "@/services/tabLock"
       );
-      // Ring completion persists identity + later sqlite writes. If this
-      // document is not the writer, steal before adoptHandoff. Relay-forwarded
-      // callbacks already finish on the waiting writer tab instead.
       await initTabLock();
       if (getTabLock().mode !== "writer") {
         await requestTakeoverAndWait();

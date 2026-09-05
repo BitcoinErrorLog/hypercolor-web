@@ -11,7 +11,7 @@ import { RING_GRANT_CAPABILITIES } from "@/types/link";
 import { APP_NAME } from "@/lib/app-meta";
 import { sanitizeHandoffError, type HandoffPayload, type HandoffPublicParams } from "@/services/RingConnect";
 import { PaykitLinkWeb, type SessionHandle } from "@/services/link/PaykitLinkWeb";
-import { getLiveSession } from "@/services/link/session";
+import { getLivePaykitConnect } from "@/services/paykitConnectLive";
 import { provisionReceiver } from "@/services/link/provisionReceiver";
 import {
   BindingMismatchError,
@@ -43,6 +43,11 @@ function buildAuthPanel(url: string, title: string): ReactNode {
       }
     />
   );
+}
+
+/** Sign out only the tracked approval session, never the global live cookie. */
+export function welcomeFlowErrorSignOutTarget() {
+  return getLivePaykitConnect()?.authFlow.session ?? null;
 }
 
 export function WelcomePageHost() {
@@ -196,9 +201,9 @@ export function WelcomePageHost() {
     },
     onError: (err) => {
       setFinishing(false);
-      const delivered = getLiveSession()?.handle;
-      if (delivered) {
-        void PaykitLinkWeb.signOutSession(delivered).catch(() => undefined);
+      const flowSession = welcomeFlowErrorSignOutTarget();
+      if (flowSession) {
+        void PaykitLinkWeb.signOutSession(flowSession).catch(() => undefined);
       }
       setError(sanitizeHandoffError(err));
       emitCoarseError("welcome", err);

@@ -76,3 +76,4 @@ export class SqliteRepairIncompleteError extends Error {
 }
 
 export const SQLITE_PERSIST_FAILED_EVENT = "hypercolor-sqlite-persist-failed";
+export const SQLITE_BUNDLE_CHANGED_EVENT = "hypercolor-sqlite-bundle-id-changed";

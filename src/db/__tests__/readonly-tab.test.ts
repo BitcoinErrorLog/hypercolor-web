@@ -49,4 +49,34 @@ describe("readonly tab getDb", () => {
     expect(() => exec.executeSync("DELETE FROM mesh_peers")).toThrow(ReadOnlyTabError);
     expect(() => exec.executeSync("BEGIN")).toThrow(ReadOnlyTabError);
   });
+
+  it("rolls back an open in-memory transaction on lock loss", async () => {
+    resetTabLockForTests();
+    const mem = openMemoryDb();
+    vi.mocked(openWebSqlite).mockResolvedValue({
+      ...mem,
+      flushPersist: async () => undefined,
+    });
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: async (
+          _name: string,
+          _options: LockOptions,
+          cb: (lock: unknown) => Promise<unknown>,
+        ) => cb({ name: "hypercolor-writer" }),
+      },
+    });
+
+    const exec = await getDb();
+    exec.executeSync("BEGIN");
+    exec.executeSync("CREATE TABLE n5_lock_loss (id INTEGER)");
+    exec.executeSync("INSERT INTO n5_lock_loss (id) VALUES (1)");
+    resetTabLockForTests();
+    const rows = exec.executeSync(
+      "SELECT name FROM sqlite_master WHERE name = ?",
+      ["n5_lock_loss"],
+    );
+    expect(rows.rows ?? []).toEqual([]);
+    expect(() => exec.executeSync("BEGIN")).toThrow(ReadOnlyTabError);
+  });
 });

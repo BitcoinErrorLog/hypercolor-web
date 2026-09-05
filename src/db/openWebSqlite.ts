@@ -1,9 +1,11 @@
 import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { SQLITE_BUNDLE_ID } from "./bundleId";
+import { CURRENT_VERSION } from "./migrations";
 import {
   SqliteDeleteBlockedError,
   SqlitePersistError,
   SqliteSnapshotIntegrityError,
+  SQLITE_BUNDLE_CHANGED_EVENT,
   SQLITE_PERSIST_FAILED_EVENT,
 } from "./errors";
 import { isMutatingSql } from "./mutatingSql";
@@ -68,6 +70,7 @@ export type PersistableSqlExecutor = ClosableSqlExecutor & {
   flushPersist?: () => Promise<void>;
   /** Close without writing the in-memory snapshot to IDB. */
   discardClose?: () => void;
+  rollbackOpenTransaction?: () => void;
 };
 
 function emitPersistFailed(err: SqlitePersistError): void {
@@ -150,6 +153,12 @@ function wrapIdbSnapshot(
         void persistNow("close");
       }
       inner.close();
+    },
+    rollbackOpenTransaction() {
+      if (txDepth <= 0) return;
+      inner.executeSync("ROLLBACK");
+      txDepth = 0;
+      rolledBack = true;
     },
     discardClose() {
       persistBlocked = true;
@@ -287,6 +296,36 @@ function pragmaUserVersion(db: Database): number {
   return Number(versionRows?.[0]?.user_version ?? 0);
 }
 
+/**
+ * Hydrate integrity: refuse only on meta/blob user_version disagreement
+ * (corruption) or blob newer than this build (downgrade). bundleId mismatch
+ * is informational — runMigrations upgrades a supported user_version.
+ */
+export function assertHydrateIntegrity(
+  meta: SqliteSnapshotMeta,
+  blobVersion: number,
+  options?: { currentVersion?: number; sqliteBundleId?: string },
+): void {
+  const currentVersion = options?.currentVersion ?? CURRENT_VERSION;
+  const sqliteBundleId = options?.sqliteBundleId ?? SQLITE_BUNDLE_ID;
+  if (meta.bundleId !== sqliteBundleId) {
+    console.info("[hypercolor-sqlite] snapshot bundleId changed", {
+      from: meta.bundleId,
+      to: sqliteBundleId,
+    });
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent(SQLITE_BUNDLE_CHANGED_EVENT, {
+          detail: { from: meta.bundleId, to: sqliteBundleId },
+        }),
+      );
+    }
+  }
+  if (meta.userVersion !== blobVersion || blobVersion > currentVersion) {
+    throw new SqliteSnapshotIntegrityError();
+  }
+}
+
 async function openIdbSnapshotVfs(
   sqlite3: Sqlite3Static,
 ): Promise<PersistableSqlExecutor> {
@@ -294,10 +333,11 @@ async function openIdbSnapshotVfs(
   const db = hydrateMemoryDb(sqlite3, bytes);
   if (bytes && bytes.byteLength > 0 && meta) {
     const blobVersion = pragmaUserVersion(db);
-    if (meta.bundleId !== SQLITE_BUNDLE_ID || meta.userVersion !== blobVersion) {
+    try {
+      assertHydrateIntegrity(meta, blobVersion);
+    } catch (err) {
       db.close();
-      const err = new SqliteSnapshotIntegrityError();
-      if (typeof window !== "undefined") {
+      if (err instanceof SqliteSnapshotIntegrityError && typeof window !== "undefined") {
         window.dispatchEvent(
           new CustomEvent(SQLITE_PERSIST_FAILED_EVENT, { detail: err.message }),
         );
@@ -316,6 +356,13 @@ function openKvvfs(sqlite3: Sqlite3Static): PersistableSqlExecutor {
     flushPersist: async () => undefined,
     discardClose() {
       inner.close();
+    },
+    rollbackOpenTransaction() {
+      try {
+        inner.executeSync("ROLLBACK");
+      } catch {
+        /* no open transaction */
+      }
     },
   };
 }
