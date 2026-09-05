@@ -127,7 +127,7 @@ describe("finishSingleApproval order (never keys without cookie)", () => {
     });
     vi.mocked(provisionReceiver).mockImplementation(async () => {
       order.push("provisionReceiver");
-      return { pubky: OWNER, receiverPath: "hypercolor/wallet", noisePublicKey: "n" };
+      return { pubky: OWNER, receiverPath: "hypercolor/wallet", noisePublicKey: "n", receiverRole: "active" };
     });
     vi.spyOn(await import("./RingConnect"), "pendingChannelMatches").mockResolvedValue(true);
     const adoptHandoff = vi.spyOn(await import("./RingConnect"), "adoptHandoff").mockImplementation(async () => {

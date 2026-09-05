@@ -448,21 +448,41 @@ export async function signOut(): Promise<void> {
     (await readSessionMetadata())?.pubky ??
     (await KeyStore.getPubky());
   let markerPath = LINK_RECEIVER_PATH;
+  let receiverAlias = LINK_RECEIVER_PATH;
   if (owner) {
     try {
       const receiver = await StorageService.getLinkReceiver(owner);
-      if (receiver) markerPath = coerceReceiverPath(receiver.receiverPath);
+      if (receiver) {
+        markerPath = coerceReceiverPath(receiver.receiverPath);
+        receiverAlias = receiver.receiverAlias;
+      }
     } catch {
       // SQL may be unavailable in a readonly tab.
     }
   }
   const handle = previous?.handle;
-  if (handle) {
+  if (handle && owner) {
     try {
-      await PaykitLinkWeb.removeReceiverMarker(handle, markerPath);
+      const secret = await KeyStore.getReceiverNoiseSecret(receiverAlias);
+      let localPk: string | null = null;
+      if (secret) {
+        try {
+          localPk = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
+        } finally {
+          zeroizeBytes(secret);
+        }
+      }
+      if (localPk) {
+        const marker = await PaykitLinkWeb.getReceiverMarker(owner, markerPath);
+        if (marker && marker.noisePublicKey === localPk) {
+          await PaykitLinkWeb.removeReceiverMarker(handle, markerPath);
+        }
+      }
     } catch {
-      // Best-effort: peers should stop handshaking into a dead inbox.
+      // Best-effort: never delete a marker we did not confirm as ours.
     }
+  }
+  if (handle) {
     try {
       await PaykitLinkWeb.signOutSession(handle);
     } catch {

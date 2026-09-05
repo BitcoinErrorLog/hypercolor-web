@@ -1,0 +1,289 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const restoreLink = vi.fn();
+const initiateLink = vi.fn();
+const probeInbound = vi.fn();
+const advanceHandshake = vi.fn();
+const restoreHandshake = vi.fn();
+const getMarker = vi.fn();
+const getLink = vi.fn();
+const getReceiver = vi.fn();
+const getPubky = vi.fn();
+const getBudget = vi.fn();
+const upsertBudget = vi.fn();
+const clearBudget = vi.fn();
+const deleteLink = vi.fn();
+const upsertLink = vi.fn();
+const closeLink = vi.fn();
+const clearOutbox = vi.fn();
+
+vi.mock("./PaykitLinkWeb", async () => {
+  const actual = await vi.importActual<typeof import("./PaykitLinkWeb")>("./PaykitLinkWeb");
+  return {
+    ...actual,
+    PaykitLinkWeb: {
+      isAvailable: () => true,
+      getReceiverMarker: (...args: unknown[]) => getMarker(...args),
+      initiateLink: (...args: unknown[]) => initiateLink(...args),
+      probeInboundLink: (...args: unknown[]) => probeInbound(...args),
+      advanceHandshake: (...args: unknown[]) => advanceHandshake(...args),
+      restoreHandshake: (...args: unknown[]) => restoreHandshake(...args),
+      restoreLink: (...args: unknown[]) => restoreLink(...args),
+      sendPrivateMessageJson: vi.fn(),
+      receivePrivateMessages: vi.fn(async () => ({ messages: [], snapshot: "est" })),
+      clearLinkOutbox: (...args: unknown[]) => clearOutbox(...args),
+      closeLink: (...args: unknown[]) => closeLink(...args),
+    },
+  };
+});
+
+vi.mock("@/services/StorageService", () => ({
+  StorageService: {
+    retryPendingCleanup: vi.fn(async () => undefined),
+    getLinkReceiver: (...args: unknown[]) => getReceiver(...args),
+    getHandshakeBudget: (...args: unknown[]) => getBudget(...args),
+    upsertHandshakeBudget: (...args: unknown[]) => upsertBudget(...args),
+    clearHandshakeBudget: (...args: unknown[]) => clearBudget(...args),
+    getLink: (...args: unknown[]) => getLink(...args),
+    getAllLinks: vi.fn(async () => []),
+    upsertLink: (...args: unknown[]) => upsertLink(...args),
+    updateLinkSnapshot: vi.fn(),
+    incrementLinkConsecutiveFailures: vi.fn(),
+    resetLinkConsecutiveFailures: vi.fn(),
+    deleteLink: (...args: unknown[]) => deleteLink(...args),
+    persistLinkSendIntent: vi.fn(),
+    finalizeLinkSend: vi.fn(),
+    listDeliveryQueue: vi.fn(async () => []),
+    getDeliveryQueueItem: vi.fn(async () => null),
+    listOwedOutboundLinkMessages: vi.fn(async () => []),
+    abandonOwedLinkMessagesForPeer: vi.fn(),
+    enqueue: vi.fn(),
+    hasQueueItemForMessage: vi.fn(async () => false),
+    getLinkMessageByEventId: vi.fn(),
+    getMessageRequest: vi.fn(async () => null),
+    upsertMessageRequest: vi.fn(),
+    getContact: vi.fn(async () => null),
+    getAllContacts: vi.fn(async () => []),
+    countLinkMessagesForPeer: vi.fn(async () => 0),
+    getUnprocessedLinkStreamItems: vi.fn(async () => []),
+    saveLinkStreamItems: vi.fn(),
+    markLinkStreamItemProcessed: vi.fn(),
+    saveLinkMessage: vi.fn(),
+    hasLinkMessage: vi.fn(async () => false),
+    getLinkMessage: vi.fn(),
+    listPaymentRequestsWithPendingEvent: vi.fn(async () => []),
+    hasGroupMessage: vi.fn(async () => true),
+    countDeliveryQueueForMessage: vi.fn(async () => 0),
+    updateGroupMessageDeliveryState: vi.fn(),
+    updateLinkMessageDeliveryState: vi.fn(),
+    updateAttachmentDelivery: vi.fn(),
+    markGroupEventSeen: vi.fn(),
+    clearAccountData: vi.fn(),
+    removeFromQueue: vi.fn(),
+    removeQueueItemsForRecipient: vi.fn(),
+    removeQueueItemsAndAbandonOwedForPeer: vi.fn(),
+    deleteLinkStreamItemsForPeer: vi.fn(),
+    deleteLinkMessagesForPeer: vi.fn(),
+  },
+}));
+
+vi.mock("@/services/KeyStore", () => ({
+  KeyStore: {
+    getPubky: (...args: unknown[]) => getPubky(...args),
+    setPubky: vi.fn(),
+    clear: vi.fn(),
+  },
+}));
+
+vi.mock("@/services/RetryQueue", () => ({
+  RetryQueue: {
+    getDue: vi.fn(async () => []),
+    recordFailure: vi.fn(),
+    defer: vi.fn(),
+    park: vi.fn(),
+    recordSuccess: vi.fn(),
+    nextAttemptAt: (n: number) => Date.now() + n,
+  },
+  isRetired: vi.fn(() => false),
+  nextAttemptAt: (n: number) => Date.now() + n,
+}));
+
+vi.mock("./session", () => ({
+  adoptApprovedSession: vi.fn(),
+  adoptLiveHandle: vi.fn(async (handle: { pubky: () => string }) => ({
+    handle,
+    pubky: handle.pubky(),
+  })),
+  getLiveSession: vi.fn(() => null),
+  restoreSessionOnLoad: vi.fn(async () => ({ status: "needs-enable" })),
+  signOut: vi.fn(),
+  getEnableStatus: vi.fn(async () => "enabled"),
+}));
+
+vi.mock("../group/applyGroupInbound", () => ({ applyGroupInbound: vi.fn() }));
+vi.mock("../attachments/applyAttachmentInbound", () => ({ applyAttachmentInbound: vi.fn() }));
+vi.mock("../payments/applyPaymentInbound", () => ({ applyPaymentInbound: vi.fn() }));
+vi.mock("../attachments/redaction", () => ({
+  reconstructAttachmentWireJson: vi.fn(async (raw: string) => raw),
+  fingerprintStoredAttachmentSecret: vi.fn(async () => "fp"),
+}));
+vi.mock("./provisionReceiver", () => ({
+  provisionReceiver: vi.fn(),
+  syncOwnReceiverRole: vi.fn(),
+  takeoverReceiver: vi.fn(),
+}));
+
+import { LinkService, resetLinkServiceHarnessState } from "./LinkService";
+import { LINK_RECEIVER_PATH } from "../../types/link";
+
+const OWNER = "a".repeat(52);
+const PEER = "z".repeat(52);
+const NOW = 1_700_000_000_000;
+
+function handle() {
+  return { pubky: () => OWNER, free: vi.fn() };
+}
+
+function receiver() {
+  return {
+    ownerPubky: OWNER,
+    receiverAlias: "recv",
+    receiverPath: LINK_RECEIVER_PATH,
+    markerPublished: true,
+    receiverRole: "active" as const,
+    lastSeenOwnMarkerPk: "local-pk",
+    updatedAt: NOW,
+  };
+}
+
+function handshaking(remote = "old-pk") {
+  return {
+    ownerPubky: OWNER,
+    peerPubky: PEER,
+    role: "initiator" as const,
+    status: "handshaking" as const,
+    snapshot: "snap-1",
+    remoteNoisePublicKey: remote,
+    localReceiverPath: LINK_RECEIVER_PATH,
+    remoteReceiverPath: LINK_RECEIVER_PATH,
+    consecutiveFailures: 0,
+    lastSeenPeerMarkerPk: remote,
+    updatedAt: NOW,
+  };
+}
+
+describe("W1e marker multi-device + handshake recovery", () => {
+  beforeEach(async () => {
+    resetLinkServiceHarnessState();
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
+    getPubky.mockReset().mockResolvedValue(OWNER);
+    getReceiver.mockReset().mockResolvedValue(receiver());
+    getBudget.mockReset().mockResolvedValue(null);
+    upsertBudget.mockReset().mockResolvedValue(undefined);
+    clearBudget.mockReset().mockResolvedValue(undefined);
+    deleteLink.mockReset().mockResolvedValue(undefined);
+    upsertLink.mockReset().mockResolvedValue(undefined);
+    closeLink.mockReset().mockResolvedValue(undefined);
+    clearOutbox.mockReset().mockResolvedValue(undefined);
+    getMarker.mockReset().mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    probeInbound.mockReset().mockResolvedValue({ result: "none" });
+    initiateLink.mockReset().mockResolvedValue({ linkId: "init-1", snapshot: "init-snap" });
+    advanceHandshake.mockReset().mockResolvedValue({ status: "pending", snapshot: "snap-1" });
+    restoreHandshake.mockReset().mockResolvedValue({
+      linkId: "hs-1",
+      status: "pending",
+      snapshot: "snap-1",
+    });
+    restoreLink.mockReset().mockResolvedValue({ linkId: "est-1" });
+    getLink.mockReset();
+    await LinkService.adoptHarnessSession(handle() as never);
+  });
+
+  it("established link still restores after a foreign marker overwrite", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("stored-peer-pk"),
+      role: "initiator",
+      status: "established",
+      snapshot: "HC1.opaque",
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "foreign-now", capabilitiesJson: "{}" });
+    const status = await LinkService.ensureLinkWith(PEER);
+    expect(status).toBe("ready");
+    expect(restoreLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "stored-peer-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+      "HC1.opaque",
+    );
+    expect(deleteLink).not.toHaveBeenCalled();
+  });
+
+  it("responder pending + valid new msg1 → drop pending + adopt", async () => {
+    getLink.mockResolvedValue({ ...handshaking(), role: "responder" });
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "new-hs",
+      snapshot: "new-snap",
+    });
+    const status = await LinkService.ensureLinkWith(PEER);
+    expect(status).toBe("handshaking-responder");
+    expect(deleteLink).toHaveBeenCalled();
+    expect(upsertLink).toHaveBeenCalledWith(
+      expect.objectContaining({ role: "responder", snapshot: "new-snap" }),
+    );
+  });
+
+  it("junk msg1 → nothing dropped", async () => {
+    getLink.mockResolvedValue({ ...handshaking(), role: "responder" });
+    probeInbound.mockResolvedValue({ result: "none" });
+    await LinkService.ensureLinkWith(PEER);
+    expect(deleteLink).not.toHaveBeenCalled();
+  });
+
+  it("initiator 3 no-advance polls + pk changed → wipe + re-initiate", async () => {
+    getLink.mockResolvedValue(handshaking("old-pk"));
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    await LinkService.ensureLinkWith(PEER);
+    await LinkService.ensureLinkWith(PEER);
+    expect(initiateLink).not.toHaveBeenCalled();
+    await LinkService.ensureLinkWith(PEER);
+    expect(deleteLink).toHaveBeenCalled();
+    expect(initiateLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "new-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+    );
+    expect(upsertBudget).toHaveBeenCalled();
+  });
+
+  it("pk unchanged → no re-initiate after 3 polls", async () => {
+    getLink.mockResolvedValue(handshaking("old-pk"));
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    await LinkService.ensureLinkWith(PEER);
+    await LinkService.ensureLinkWith(PEER);
+    await LinkService.ensureLinkWith(PEER);
+    expect(initiateLink).not.toHaveBeenCalled();
+  });
+
+  it("budget exhaustion stops re-initiate loops", async () => {
+    getLink.mockResolvedValue(handshaking("old-pk"));
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getBudget.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      pendingAdvances: 10,
+      nextAdvanceAt: 0,
+      exhaustedAt: NOW,
+      updatedAt: NOW,
+    });
+    await LinkService.syncInbox([PEER]);
+    await LinkService.syncInbox([PEER]);
+    expect(initiateLink).not.toHaveBeenCalled();
+  });
+});

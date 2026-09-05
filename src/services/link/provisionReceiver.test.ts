@@ -10,6 +10,7 @@ import { LINK_RECEIVER_PATH } from "@/types/link";
 const generateNoiseSecretKey = vi.fn();
 const noisePublicKeyFromSecret = vi.fn();
 const publishReceiverMarker = vi.fn();
+const getReceiverMarker = vi.fn();
 
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
@@ -17,10 +18,11 @@ vi.mock("./PaykitLinkWeb", () => ({
     noisePublicKeyFromSecret: (...args: unknown[]) =>
       noisePublicKeyFromSecret(...args),
     publishReceiverMarker: (...args: unknown[]) => publishReceiverMarker(...args),
+    getReceiverMarker: (...args: unknown[]) => getReceiverMarker(...args),
   },
 }));
 
-import { provisionReceiver, RECEIVER_MARKER_PUBLISH_BUDGET_MS } from "./provisionReceiver";
+import { provisionReceiver, RECEIVER_MARKER_PUBLISH_BUDGET_MS, takeoverReceiver } from "./provisionReceiver";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 
@@ -42,6 +44,7 @@ describe("provisionReceiver", () => {
     generateNoiseSecretKey.mockReset();
     noisePublicKeyFromSecret.mockReset();
     publishReceiverMarker.mockReset();
+    getReceiverMarker.mockReset().mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -62,6 +65,7 @@ describe("provisionReceiver", () => {
       pubky: OWNER,
       receiverPath: LINK_RECEIVER_PATH,
       noisePublicKey: "noise-pk-z32",
+      receiverRole: "active",
     });
     expect(secret).toEqual(new Uint8Array(32));
     expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
@@ -78,6 +82,7 @@ describe("provisionReceiver", () => {
     );
     const row = await StorageService.getLinkReceiver(OWNER);
     expect(row?.markerPublished).toBe(true);
+    expect(row?.receiverRole).toBe("active");
     expect(row?.receiverPath).toBe(LINK_RECEIVER_PATH);
   });
 
@@ -254,5 +259,48 @@ describe("provisionReceiver", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it("mismatch + GET ok → no publish + standby", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk", capabilitiesJson: "{}" });
+    const result = await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    expect(result.receiverRole).toBe("standby");
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("standby");
+  });
+
+  it("GET throw → no publish", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockRejectedValue(new Error("homeserver down"));
+    await expect(provisionReceiver({ pubky: () => OWNER } as never, OWNER)).rejects.toThrow(
+      "homeserver down",
+    );
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+  });
+
+  it("first enable with foreign pk → pending confirm, no PUT", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "other-device", capabilitiesJson: "{}" });
+    await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(false);
+  });
+
+  it("takeover → exactly one PUT + active", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk", capabilitiesJson: "{}" });
+    await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    publishReceiverMarker.mockClear();
+    publishReceiverMarker.mockResolvedValue(undefined);
+    const result = await takeoverReceiver({ pubky: () => OWNER } as never, OWNER);
+    expect(result.receiverRole).toBe("active");
+    expect(publishReceiverMarker).toHaveBeenCalledTimes(1);
+    expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("active");
   });
 });

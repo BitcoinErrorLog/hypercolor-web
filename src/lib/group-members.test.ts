@@ -31,6 +31,7 @@ function link(peerPubky: string, status: LinkRecord["status"]): LinkRecord {
     localReceiverPath: "hypercolor/wallet",
     remoteReceiverPath: "hypercolor/wallet",
     consecutiveFailures: 0,
+    lastSeenPeerMarkerPk: null,
     updatedAt: 1,
   };
 }

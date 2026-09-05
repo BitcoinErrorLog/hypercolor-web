@@ -25,6 +25,7 @@ import {
   SCHEMA_V11_STATEMENTS,
   SCHEMA_V12_STATEMENTS,
   SCHEMA_V13_STATEMENTS,
+  SCHEMA_V14_STATEMENTS,
 } from "../schema";
 import { openMemoryDb } from "./betterSqliteAdapter";
 
@@ -45,6 +46,7 @@ const BY_VERSION: readonly (readonly string[])[] = [
   SCHEMA_V11_STATEMENTS,
   SCHEMA_V12_STATEMENTS,
   SCHEMA_V13_STATEMENTS,
+  SCHEMA_V14_STATEMENTS,
 ];
 
 function applyThrough(version: number): ReturnType<typeof openMemoryDb> {
@@ -63,7 +65,7 @@ function applyThrough(version: number): ReturnType<typeof openMemoryDb> {
 async function exerciseStorage(db: ReturnType<typeof openMemoryDb>): Promise<void> {
   setDbForTests(db);
   await runMigrations(db);
-  expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(13);
+  expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(14);
 
   await expect(StorageService.listLinkConversations(OWNER)).resolves.toEqual([]);
   await expect(StorageService.countPendingMessageRequests(OWNER)).resolves.toBe(0);
@@ -98,11 +100,18 @@ describe("upgrade matrix: historical schema → current migrations → StorageSe
     await exerciseStorage(openMemoryDb());
   });
 
-  for (let version = 1; version <= 13; version += 1) {
+  for (let version = 1; version <= 14; version += 1) {
     it(`upgrades from frozen schema v${version}`, async () => {
       await exerciseStorage(applyThrough(version));
     });
   }
+
+  it("replays v14 ALTER when receiver_role already exists (idempotent ADD COLUMN)", async () => {
+    const db = applyThrough(13);
+    db.executeSync("ALTER TABLE link_receivers ADD COLUMN receiver_role TEXT NOT NULL DEFAULT 'active'");
+    db.executeSync("PRAGMA user_version = 13");
+    await exerciseStorage(db);
+  });
 
   it("replays v13 ALTER when the column already exists (idempotent ADD COLUMN)", async () => {
     const db = applyThrough(12);

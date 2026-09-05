@@ -37,13 +37,13 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     setDbForTests(null);
   });
 
-  it("migrates to v13, inserts and reads a contact and a link", async () => {
+  it("migrates to v14, inserts and reads a contact and a link", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
 
     await StorageService.upsertContact({

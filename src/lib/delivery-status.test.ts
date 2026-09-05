@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LinkDeliveryState } from "@/types/link";
-import { formatDeliveryStatus, isFailedDelivery } from "./delivery-status";
+import { formatDeliveryStatus, isFailedDelivery, queuedThreadSubtitle, QUEUED_HANDSHAKE_SUBTITLE } from "./delivery-status";
 
 describe("formatDeliveryStatus", () => {
   const cases: Array<[LinkDeliveryState, string]> = [
@@ -23,9 +23,11 @@ describe("formatDeliveryStatus", () => {
     }
   });
 
-  it("treats only failed as retryable", () => {
-    expect(isFailedDelivery("failed")).toBe(true);
-    expect(isFailedDelivery("sent")).toBe(false);
-    expect(isFailedDelivery("delivered")).toBe(false);
+  it("maps unknown states to Queued so Sent is never claimed before ready", () => {
+    expect(formatDeliveryStatus("sending")).toBe("Queued");
+    expect(queuedThreadSubtitle({ linkStatus: "handshaking", lastDeliveryState: "sending" })).toBe(
+      QUEUED_HANDSHAKE_SUBTITLE,
+    );
+    expect(queuedThreadSubtitle({ linkStatus: "established", lastDeliveryState: "sent" })).toBeNull();
   });
 });

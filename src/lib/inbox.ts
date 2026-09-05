@@ -5,6 +5,7 @@ import {
   type GroupChannel,
 } from "@/types/group";
 import type { LinkConversationSummary } from "@/types/link";
+import { queuedThreadSubtitle } from "@/lib/delivery-status";
 import { isPaykitPaymentKind } from "@/types/payment";
 import { paymentKindTitle } from "@/lib/payment-notice";
 
@@ -53,9 +54,15 @@ export function messagePreview(kind: string, body: string): string {
 }
 
 export function inboxRowFromDm(row: LinkConversationSummary): InboxRow {
-  const preview = isPaykitPaymentKind(row.lastKind)
-    ? paymentKindTitle(row.lastKind)
-    : row.lastMessage || "No messages yet";
+  const waiting = queuedThreadSubtitle({
+    linkStatus: row.linkStatus,
+    lastDeliveryState: row.lastDeliveryState,
+  });
+  const preview = waiting
+    ? waiting
+    : isPaykitPaymentKind(row.lastKind)
+      ? paymentKindTitle(row.lastKind)
+      : row.lastMessage || "No messages yet";
   return {
     id: row.conversationId,
     kind: "dm",

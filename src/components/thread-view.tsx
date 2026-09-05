@@ -10,6 +10,7 @@ import { ErrorDetails } from "@/components/error-details";
 import { PaymentNotice } from "@/components/payment-notice";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
+import { QUEUED_HANDSHAKE_SUBTITLE } from "@/lib/delivery-status";
 import { canComposeMessages } from "@/lib/session-ui";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import {
@@ -194,6 +195,13 @@ export function ThreadView({
           >
             {title ?? <TruncatedPubky pubky={participantPubky} />}
           </DetailHeading>
+          {messages.some(
+            (message) => message.direction === "sent" && message.deliveryState === "sending",
+          ) ? (
+            <p className="text-sm text-muted-foreground" data-testid="queuedHandshakeSubtitle">
+              {QUEUED_HANDSHAKE_SUBTITLE}
+            </p>
+          ) : null}
         </div>
         <Link
           href={`/contacts/${encodeURIComponent(participantPubky)}`}

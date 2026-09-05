@@ -14,11 +14,14 @@ import type {
   LinkDeliveryState,
   LinkMessage,
   LinkMessageDirection,
+  HandshakeBudget,
+  HandshakeBudgetInput,
   LinkReceiver,
   LinkReceiverInput,
   LinkRecord,
   LinkRecordInput,
   LinkRole,
+  ReceiverRole,
   LinkStreamItem,
   LinkStreamItemInput,
   StoredLinkStatus,
@@ -468,18 +471,23 @@ export const StorageService = {
     const db = await getDb();
     db.executeSync(
       `INSERT INTO link_receivers
-        (owner_pubky, receiver_alias, receiver_path, marker_published, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+        (owner_pubky, receiver_alias, receiver_path, marker_published,
+         receiver_role, last_seen_own_marker_pk, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky) DO UPDATE SET
-         receiver_alias   = excluded.receiver_alias,
-         receiver_path    = excluded.receiver_path,
-         marker_published = excluded.marker_published,
-         updated_at       = excluded.updated_at`,
+         receiver_alias          = excluded.receiver_alias,
+         receiver_path           = excluded.receiver_path,
+         marker_published        = excluded.marker_published,
+         receiver_role           = excluded.receiver_role,
+         last_seen_own_marker_pk = excluded.last_seen_own_marker_pk,
+         updated_at              = excluded.updated_at`,
       [
         receiver.ownerPubky,
         receiver.receiverAlias,
         receiver.receiverPath,
         receiver.markerPublished ? 1 : 0,
+        receiver.receiverRole ?? 'active',
+        receiver.lastSeenOwnMarkerPk ?? null,
         now(),
         now(),
       ],
@@ -501,6 +509,57 @@ export const StorageService = {
     db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
   },
 
+  async getHandshakeBudget(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+  ): Promise<HandshakeBudget | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      'SELECT * FROM link_handshake_budgets WHERE owner_pubky = ? AND peer_pubky = ?',
+      [ownerPubky, peerPubky],
+    );
+    const row = result.rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky: String(row.owner_pubky),
+      peerPubky: String(row.peer_pubky),
+      pendingAdvances: Number(row.pending_advances),
+      nextAdvanceAt: Number(row.next_advance_at),
+      exhaustedAt: row.exhausted_at === null ? null : Number(row.exhausted_at),
+      updatedAt: Number(row.updated_at),
+    };
+  },
+
+  async upsertHandshakeBudget(budget: HandshakeBudgetInput): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `INSERT INTO link_handshake_budgets
+        (owner_pubky, peer_pubky, pending_advances, next_advance_at, exhausted_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
+         pending_advances = excluded.pending_advances,
+         next_advance_at  = excluded.next_advance_at,
+         exhausted_at     = excluded.exhausted_at,
+         updated_at       = excluded.updated_at`,
+      [
+        budget.ownerPubky,
+        budget.peerPubky,
+        budget.pendingAdvances,
+        budget.nextAdvanceAt,
+        budget.exhaustedAt,
+        now(),
+      ],
+    );
+  },
+
+  async clearHandshakeBudget(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      'DELETE FROM link_handshake_budgets WHERE owner_pubky = ? AND peer_pubky = ?',
+      [ownerPubky, peerPubky],
+    );
+  },
+
   // ── Links (Paykit Encrypted Links) ────────────────────────────────────────
 
   async upsertLink(link: LinkRecordInput): Promise<void> {
@@ -509,17 +568,18 @@ export const StorageService = {
       `INSERT INTO links
         (owner_pubky, peer_pubky, role, status, snapshot,
          remote_noise_public_key, local_receiver_path, remote_receiver_path,
-         consecutive_failures, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         consecutive_failures, last_seen_peer_marker_pk, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
-         role                    = excluded.role,
-         status                  = excluded.status,
-         snapshot                = excluded.snapshot,
-         remote_noise_public_key = excluded.remote_noise_public_key,
-         local_receiver_path     = excluded.local_receiver_path,
-         remote_receiver_path    = excluded.remote_receiver_path,
-         consecutive_failures    = excluded.consecutive_failures,
-         updated_at              = excluded.updated_at`,
+         role                      = excluded.role,
+         status                    = excluded.status,
+         snapshot                  = excluded.snapshot,
+         remote_noise_public_key   = excluded.remote_noise_public_key,
+         local_receiver_path       = excluded.local_receiver_path,
+         remote_receiver_path      = excluded.remote_receiver_path,
+         consecutive_failures      = excluded.consecutive_failures,
+         last_seen_peer_marker_pk  = COALESCE(excluded.last_seen_peer_marker_pk, last_seen_peer_marker_pk),
+         updated_at                = excluded.updated_at`,
       [
         link.ownerPubky,
         link.peerPubky,
@@ -530,6 +590,7 @@ export const StorageService = {
         link.localReceiverPath,
         link.remoteReceiverPath,
         link.consecutiveFailures,
+        link.lastSeenPeerMarkerPk ?? null,
         now(),
         now(),
       ],
@@ -743,7 +804,8 @@ export const StorageService = {
   async listLinkConversations(ownerPubky: PubkyKey): Promise<LinkConversationSummary[]> {
     const db = await getDb();
     const result = db.executeSync(
-      `SELECT m.conversation_id, m.peer_pubky, m.body, m.kind, m.sent_at,
+      `SELECT m.conversation_id, m.peer_pubky, m.body, m.kind, m.sent_at, m.delivery_state,
+              l.status AS link_status,
               COALESCE(c.last_read_at, 0) AS last_read_at,
               (
                 SELECT COUNT(*) FROM link_messages u
@@ -753,6 +815,8 @@ export const StorageService = {
                    AND u.sent_at > COALESCE(c.last_read_at, 0)
               ) AS unread_count
          FROM link_messages m
+         LEFT JOIN links l
+           ON l.owner_pubky = m.owner_pubky AND l.peer_pubky = m.peer_pubky
          LEFT JOIN link_read_cursors c
            ON c.owner_pubky = m.owner_pubky AND c.conversation_id = m.conversation_id
         WHERE m.owner_pubky = ?
@@ -781,6 +845,8 @@ export const StorageService = {
         lastMessage: conversationPreview(kind, body),
         lastMessageAt: Number(row.sent_at),
         lastKind: kind,
+        lastDeliveryState: (row.delivery_state as LinkDeliveryState | null) ?? null,
+        linkStatus: (row.link_status as StoredLinkStatus | null) ?? null,
         unreadCount: Number(row.unread_count ?? 0),
       };
     });
@@ -1101,6 +1167,7 @@ export const StorageService = {
       db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_read_cursors WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM links WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM link_handshake_budgets WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM message_requests WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contacts WHERE owner_pubky = ?', [ownerPubky]);
@@ -2267,11 +2334,15 @@ function insertLinkMessage(db: SqlExecutor, message: LinkMessage): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToLinkReceiver(row: any): LinkReceiver {
+  const role = row.receiver_role === 'standby' ? 'standby' : 'active';
   return {
     ownerPubky: row.owner_pubky,
     receiverAlias: row.receiver_alias,
     receiverPath: row.receiver_path,
     markerPublished: row.marker_published === 1,
+    receiverRole: role as ReceiverRole,
+    lastSeenOwnMarkerPk:
+      typeof row.last_seen_own_marker_pk === 'string' ? row.last_seen_own_marker_pk : null,
     updatedAt: row.updated_at,
   };
 }
@@ -2288,6 +2359,8 @@ function rowToLink(row: any): LinkRecord {
     localReceiverPath: row.local_receiver_path,
     remoteReceiverPath: row.remote_receiver_path,
     consecutiveFailures: row.consecutive_failures,
+    lastSeenPeerMarkerPk:
+      typeof row.last_seen_peer_marker_pk === 'string' ? row.last_seen_peer_marker_pk : null,
     updatedAt: row.updated_at,
   };
 }

@@ -44,6 +44,9 @@ vi.mock("@/services/StorageService", () => ({
   StorageService: {
     retryPendingCleanup: vi.fn(async () => undefined),
     getLinkReceiver: (...args: unknown[]) => getReceiver(...args),
+    getHandshakeBudget: vi.fn(async () => null),
+    upsertHandshakeBudget: vi.fn(),
+    clearHandshakeBudget: vi.fn(),
     getLink: (...args: unknown[]) => getLink(...args),
     getAllLinks: vi.fn(async () => []),
     upsertLink: vi.fn(),
@@ -138,6 +141,8 @@ vi.mock("../attachments/redaction", () => ({
 }));
 vi.mock("./provisionReceiver", () => ({
   provisionReceiver: vi.fn(),
+  syncOwnReceiverRole: vi.fn(),
+  takeoverReceiver: vi.fn(),
 }));
 
 import { RetryQueue, isRetired } from "@/services/RetryQueue";

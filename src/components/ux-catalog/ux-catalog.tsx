@@ -161,6 +161,7 @@ function link(partial: Partial<LinkRecord> = {}): LinkRecord {
     localReceiverPath: "hypercolor/wallet",
     remoteReceiverPath: "hypercolor/wallet",
     consecutiveFailures: 0,
+    lastSeenPeerMarkerPk: partial.lastSeenPeerMarkerPk ?? null,
     updatedAt: NOW,
     ...partial,
   };

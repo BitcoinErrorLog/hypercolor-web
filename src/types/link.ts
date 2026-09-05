@@ -283,6 +283,8 @@ export interface LinkConversationSummary {
   lastMessage: string;
   lastMessageAt: number;
   lastKind: string;
+  lastDeliveryState: LinkDeliveryState | null;
+  linkStatus: StoredLinkStatus | null;
   unreadCount: number;
 }
 
@@ -332,6 +334,9 @@ export type LinkStatus =
 
 export type LinkRole = 'initiator' | 'responder';
 
+/** This device's published-inbox role. Standby must not auto-PUT the marker. */
+export type ReceiverRole = 'active' | 'standby';
+
 /** Persisted link lifecycle — in-progress handshakes and established links. */
 export type StoredLinkStatus = 'handshaking' | 'established';
 
@@ -356,10 +361,15 @@ export interface LinkReceiver {
   receiverAlias: string;
   receiverPath: string;
   markerPublished: boolean;
+  receiverRole: ReceiverRole;
+  lastSeenOwnMarkerPk: string | null;
   updatedAt: number;
 }
 
-export type LinkReceiverInput = Omit<LinkReceiver, 'updatedAt'>;
+export type LinkReceiverInput = Omit<LinkReceiver, 'updatedAt' | 'receiverRole' | 'lastSeenOwnMarkerPk'> & {
+  receiverRole?: ReceiverRole;
+  lastSeenOwnMarkerPk?: string | null;
+};
 
 /**
  * One Encrypted Link (or in-progress handshake) per (owner, counterparty).
@@ -376,10 +386,24 @@ export interface LinkRecord {
   localReceiverPath: string;
   remoteReceiverPath: string;
   consecutiveFailures: number;
+  lastSeenPeerMarkerPk: string | null;
   updatedAt: number;
 }
 
-export type LinkRecordInput = Omit<LinkRecord, 'updatedAt'>;
+export interface HandshakeBudget {
+  ownerPubky: PubkyKey;
+  peerPubky: PubkyKey;
+  pendingAdvances: number;
+  nextAdvanceAt: number;
+  exhaustedAt: number | null;
+  updatedAt: number;
+}
+
+export type HandshakeBudgetInput = Omit<HandshakeBudget, 'updatedAt'>;
+
+export type LinkRecordInput = Omit<LinkRecord, 'updatedAt' | 'lastSeenPeerMarkerPk'> & {
+  lastSeenPeerMarkerPk?: string | null;
+};
 
 /**
  * Device-local message history (plaintext bodies — never log them). Dedup

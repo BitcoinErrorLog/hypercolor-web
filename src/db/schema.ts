@@ -1,6 +1,30 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/schema.ts
 // pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
+ * Schema v14 — W1e single-active receiver + durable handshake budget.
+ *
+ * `link_receivers.receiver_role` is this device's inbox role (`active` |
+ * `standby`). `last_seen_own_marker_pk` is the last successfully GETed own
+ * `receiver.json` pk. `links.last_seen_peer_marker_pk` is the last GETed
+ * peer marker pk for that conversation. `link_handshake_budgets` survives
+ * unestablished wipes so a flapping peer cannot reset the charge counter.
+ */
+export const SCHEMA_V14_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_receivers ADD COLUMN receiver_role TEXT NOT NULL DEFAULT 'active'`,
+  `ALTER TABLE link_receivers ADD COLUMN last_seen_own_marker_pk TEXT`,
+  `ALTER TABLE links ADD COLUMN last_seen_peer_marker_pk TEXT`,
+  `CREATE TABLE IF NOT EXISTS link_handshake_budgets (
+    owner_pubky      TEXT NOT NULL,
+    peer_pubky       TEXT NOT NULL,
+    pending_advances INTEGER NOT NULL DEFAULT 0,
+    next_advance_at  INTEGER NOT NULL DEFAULT 0,
+    exhausted_at     INTEGER,
+    updated_at       INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+];
+
+/**
  * Schema v13 — retire research-era DM/channel tables; keep the live
  * Encrypted-Link retry queue (`delivery_queue`). Add author scoping on
  * group-message replies (`reply_to_author_pubky`).

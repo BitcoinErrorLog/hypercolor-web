@@ -37,9 +37,12 @@ export const MAX_AGE_MS = 24 * 60 * 60 * 1000;
  * writes `next_retry_at` directly instead of going through `defer`. */
 export const RETIRED_ITEM_PARK_MS = 365 * 24 * 60 * 60 * 1000;
 
+export function nextAttemptAt(attempts: number, now = Date.now()): number {
+  return now + Math.min(15_000 * Math.pow(2, attempts), 30 * 60 * 1000);
+}
+
 function nextRetryMs(attempts: number): number {
-  const delayMs = Math.min(15_000 * Math.pow(2, attempts), 30 * 60 * 1000);
-  return Date.now() + delayMs;
+  return nextAttemptAt(attempts);
 }
 
 export function isRetired(item: DeliveryQueueItem, now = Date.now()): boolean {
@@ -47,6 +50,7 @@ export function isRetired(item: DeliveryQueueItem, now = Date.now()): boolean {
 }
 
 export const RetryQueue = {
+  nextAttemptAt,
   async enqueue(
     item: Omit<DeliveryQueueItem, "attempts" | "nextRetryAt" | "createdAt">,
   ): Promise<void> {

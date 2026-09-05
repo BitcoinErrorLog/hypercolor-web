@@ -23,6 +23,8 @@ function dm(
     lastMessage: "hello",
     lastMessageAt: 100,
     lastKind: "chat.message.v0",
+    lastDeliveryState: null,
+    linkStatus: "established",
     unreadCount: 0,
     ...partial,
   };

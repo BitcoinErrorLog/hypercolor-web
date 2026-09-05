@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { BackupLeaveGuard } from "@/components/backup-leave-guard";
 import { PwaRegister } from "@/components/pwa-register";
 import { SessionBanner } from "@/components/session-banner";
+import { StandbyBanner } from "@/components/standby-banner";
 import { SessionBootstrap } from "@/components/session-bootstrap";
 import { SiteNav } from "@/components/site-nav";
 import { TabLockBanner } from "@/components/tab-lock-banner";
@@ -60,6 +61,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           Skip to main content
         </a>
         <SessionBanner />
+        <StandbyBanner />
         <TabLockBanner />
         <PwaRegister />
         <header className="border-b border-border">

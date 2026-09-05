@@ -120,12 +120,12 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     );
   });
 
-  it("reaches user_version 13 from a fresh database", async () => {
+  it("reaches user_version 14 from a fresh database", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
     await runMigrations(db);
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
   });
 
@@ -143,7 +143,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     expect(db.executeSync("SELECT * FROM link_receivers").rows).toEqual([]);
     expect(tableExists(db, "link_receivers")).toBe(1);
@@ -208,7 +208,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     const cols = db.executeSync("PRAGMA table_info(contacts)").rows ?? [];
     const names = cols.map((row) => row.name);
@@ -287,7 +287,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     for (const name of [
       "threads",
@@ -312,7 +312,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     for (const name of [
       "group_channels",
@@ -351,7 +351,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     const row = db.executeSync("SELECT * FROM group_messages").rows?.[0];
     expect(row).toEqual(
@@ -376,7 +376,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     expect(tableExists(db, "attachments")).toBe(1);
     expect(tableExists(db, "pending_cleanup")).toBe(1);
@@ -406,7 +406,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     const paymentCols = (
       db.executeSync("PRAGMA table_info(payment_requests)").rows ?? []

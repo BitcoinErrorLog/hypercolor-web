@@ -65,7 +65,7 @@ describe("web SqlExecutor", () => {
         1,
       );
       expect(exec.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-        13,
+        14,
       );
     } finally {
       closeDb();
@@ -110,12 +110,12 @@ describe("web SqlExecutor", () => {
     }
   });
 
-  it("runMigrations is idempotent at user_version 13", async () => {
+  it("runMigrations is idempotent at user_version 14", async () => {
     const db = openMemoryDb();
     await runMigrations(db);
     await runMigrations(db);
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      14,
     );
     expect(
       db.executeSync(
