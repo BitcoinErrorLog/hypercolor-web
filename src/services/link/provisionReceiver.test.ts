@@ -22,7 +22,8 @@ vi.mock("./PaykitLinkWeb", () => ({
   },
 }));
 
-import { provisionReceiver, RECEIVER_MARKER_PUBLISH_BUDGET_MS, takeoverReceiver } from "./provisionReceiver";
+import { provisionReceiver, RECEIVER_MARKER_PUBLISH_BUDGET_MS, syncOwnReceiverRole, takeoverReceiver } from "./provisionReceiver";
+import { useReceiverRoleStore } from "./receiverRoleStore";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 
@@ -45,6 +46,7 @@ describe("provisionReceiver", () => {
     noisePublicKeyFromSecret.mockReset();
     publishReceiverMarker.mockReset();
     getReceiverMarker.mockReset().mockResolvedValue(null);
+    useReceiverRoleStore.getState().reset();
   });
 
   afterEach(() => {
@@ -302,5 +304,22 @@ describe("provisionReceiver", () => {
     expect(result.receiverRole).toBe("active");
     expect(publishReceiverMarker).toHaveBeenCalledTimes(1);
     expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("active");
+  });
+
+  it("active role + later absent own marker → re-enable prompt, no republish", async () => {
+    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    publishReceiverMarker.mockResolvedValue(undefined);
+    await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    publishReceiverMarker.mockClear();
+    getReceiverMarker.mockResolvedValue(null);
+
+    const role = await syncOwnReceiverRole(OWNER);
+
+    expect(role).toBe("active");
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("active");
+    expect(useReceiverRoleStore.getState().needsReenable).toBe(true);
+    expect(useReceiverRoleStore.getState().role).toBe("active");
   });
 });

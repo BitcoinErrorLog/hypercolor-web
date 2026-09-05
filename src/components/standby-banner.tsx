@@ -4,6 +4,10 @@ import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ModalSheet } from "@/components/ui/sheet";
 import {
+  REENABLE_BANNER_BODY,
+  REENABLE_BANNER_TITLE,
+  REENABLE_PRIMARY,
+  REENABLE_SECONDARY,
   STANDBY_BANNER_BODY,
   STANDBY_BANNER_TITLE,
   STANDBY_PRIMARY,
@@ -15,11 +19,35 @@ import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
 export function StandbyBanner() {
   const role = useReceiverRoleStore((s) => s.role);
   const toast = useReceiverRoleStore((s) => s.toast);
+  const needsReenable = useReceiverRoleStore((s) => s.needsReenable);
+  const snoozedStandby = useReceiverRoleStore((s) => s.snoozedStandby);
+  const snoozedReenable = useReceiverRoleStore((s) => s.snoozedReenable);
   const clearToast = useReceiverRoleStore((s) => s.clearToast);
+  const snoozeCurrentBanner = useReceiverRoleStore((s) => s.snoozeCurrentBanner);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+
+  const showStandby = role === "standby" && !snoozedStandby;
+  const showReenable = !showStandby && needsReenable && role === "active" && !snoozedReenable;
+  const copy = showReenable
+    ? {
+        title: REENABLE_BANNER_TITLE,
+        body: REENABLE_BANNER_BODY,
+        primary: REENABLE_PRIMARY,
+        secondary: REENABLE_SECONDARY,
+        testId: "reenableBanner" as const,
+        primaryTestId: "reenableTakeover" as const,
+      }
+    : {
+        title: STANDBY_BANNER_TITLE,
+        body: STANDBY_BANNER_BODY,
+        primary: STANDBY_PRIMARY,
+        secondary: STANDBY_SECONDARY,
+        testId: "standbyBanner" as const,
+        primaryTestId: "standbyTakeover" as const,
+      };
 
   const onTakeover = useCallback(async () => {
     setBusy(true);
@@ -52,38 +80,38 @@ export function StandbyBanner() {
     );
   }
 
-  if (role !== "standby") return null;
+  if (!showStandby && !showReenable) return null;
 
   return (
     <>
       <div
         role="status"
         className="border-b border-border bg-card px-6 py-3 text-sm"
-        data-testid="standbyBanner"
+        data-testid={copy.testId}
         data-surface="standby-banner"
       >
         <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
           <div className="space-y-1">
-            <p className="font-medium">{STANDBY_BANNER_TITLE}</p>
-            <p className="text-muted-foreground">{STANDBY_BANNER_BODY}</p>
+            <p className="font-medium">{copy.title}</p>
+            <p className="text-muted-foreground">{copy.body}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
-              data-testid="standbyTakeover"
+              data-testid={copy.primaryTestId}
               onClick={() => setConfirmOpen(true)}
             >
-              {STANDBY_PRIMARY}
+              {copy.primary}
             </Button>
             <Button
               type="button"
               size="sm"
               variant="outline"
               data-testid="standbyKeepExisting"
-              onClick={() => undefined}
+              onClick={() => snoozeCurrentBanner()}
             >
-              {STANDBY_SECONDARY}
+              {copy.secondary}
             </Button>
           </div>
         </div>
@@ -99,10 +127,10 @@ export function StandbyBanner() {
         surface="standby-takeover-confirm"
       >
         <h2 id="standby-takeover-title" className="text-lg font-semibold">
-          {STANDBY_BANNER_TITLE}
+          {copy.title}
         </h2>
         <p id="standby-takeover-body" className="text-sm text-muted-foreground">
-          {STANDBY_BANNER_BODY}
+          {copy.body}
         </p>
         {error ? <p className="text-sm hc-danger-text">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
@@ -113,7 +141,7 @@ export function StandbyBanner() {
             data-testid="standbyTakeoverCancel"
             onClick={() => setConfirmOpen(false)}
           >
-            {STANDBY_SECONDARY}
+            {copy.secondary}
           </Button>
           <Button
             type="button"
@@ -123,7 +151,7 @@ export function StandbyBanner() {
               void onTakeover();
             }}
           >
-            {busy ? "Taking over…" : STANDBY_PRIMARY}
+            {busy ? "Taking over…" : copy.primary}
           </Button>
         </div>
       </ModalSheet>

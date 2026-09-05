@@ -50,6 +50,7 @@ vi.mock("@/services/StorageService", () => ({
     getLink: (...args: unknown[]) => getLink(...args),
     getAllLinks: vi.fn(async () => []),
     upsertLink: vi.fn(),
+    recordLastSeenPeerMarkerPk: vi.fn(),
     updateLinkSnapshot: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
     resetLinkConsecutiveFailures: vi.fn(),

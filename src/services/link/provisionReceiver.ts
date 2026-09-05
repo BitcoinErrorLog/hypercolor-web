@@ -23,6 +23,12 @@ export const STANDBY_SECONDARY = "Keep using this device for existing chats";
 export const TAKEOVER_TOAST =
   "This device now receives new messages. Other signed-in devices will stop accepting new chats until they take over.";
 
+export const REENABLE_BANNER_TITLE = "This device stopped receiving new chats";
+export const REENABLE_BANNER_BODY =
+  "The published receiver marker is gone. Conversations already on this device still work. Re-enable receiving if you want new message requests and new handshakes to land here.";
+export const REENABLE_PRIMARY = "Re-enable receiving";
+export const REENABLE_SECONDARY = "Not now";
+
 async function withBudget<T>(
   promise: Promise<T>,
   ms: number,
@@ -239,7 +245,12 @@ export async function syncOwnReceiverRole(ownerPubky: PubkyKey): Promise<Receive
   } catch {
     return receiver.receiverRole;
   }
-  if (published.kind === "absent") return receiver.receiverRole;
+  if (published.kind === "absent") {
+    if (receiver.receiverRole === "active") {
+      setReceiverRoleState("active", null, { needsReenable: true });
+    }
+    return receiver.receiverRole;
+  }
   const role: ReceiverRole = published.noisePublicKey === localPk ? "active" : "standby";
   await persistReceiverRow(
     ownerPubky,

@@ -597,6 +597,20 @@ export const StorageService = {
     );
   },
 
+  async recordLastSeenPeerMarkerPk(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    noisePublicKey: string,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET last_seen_peer_marker_pk = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [noisePublicKey, ownerPubky, peerPubky],
+    );
+  },
+
   async getLink(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<LinkRecord | null> {
     const db = await getDb();
     const result = db.executeSync('SELECT * FROM links WHERE owner_pubky = ? AND peer_pubky = ?', [

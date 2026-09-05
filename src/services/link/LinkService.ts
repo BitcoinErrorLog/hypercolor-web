@@ -78,6 +78,9 @@ export const HANDSHAKE_FAILURE_LIMIT = 5;
 /** Unproductive handshake steps against one peer before abandonment. */
 export const HANDSHAKE_PENDING_ADVANCE_LIMIT = 10;
 
+/** Composer / user-driven ensure vs automatic retry/inbox. */
+export type HandshakeIntent = "user" | "auto";
+
 /** Non-ready links older than this are wiped so a later probe can adopt a fresh msg1. */
 export const HANDSHAKE_STALE_MS = 10 * 60 * 1000;
 
@@ -273,7 +276,7 @@ export const LinkService = {
   async ensureLinkWith(peerPubky: PubkyKey): Promise<LinkStatus> {
     return withQueue(peerPubky, async () => {
       try {
-        const outcome = await ensureLinkLocked(peerPubky, true, false);
+        const outcome = await ensureLinkLocked(peerPubky, true, false, "user");
         return outcome === "idle" ? "error" : outcome;
       } catch (err) {
         if (isLinkNativeError(err) && err.code === "unavailable") return "native-missing";
@@ -285,7 +288,7 @@ export const LinkService = {
 
   async sendDm(peerPubky: PubkyKey, body: string): Promise<LinkMessage> {
     return withQueue(peerPubky, async () => {
-      const outcome = await ensureLinkLocked(peerPubky, true, false);
+      const outcome = await ensureLinkLocked(peerPubky, true, false, "user");
       if (
         outcome !== "ready" &&
         outcome !== "handshaking-initiator" &&
@@ -333,7 +336,7 @@ export const LinkService = {
     sentAt: number;
   }): Promise<LinkMessage> {
     return withQueue(input.peerPubky, async () => {
-      const outcome = await ensureLinkLocked(input.peerPubky, true, false);
+      const outcome = await ensureLinkLocked(input.peerPubky, true, false, "user");
       if (
         outcome !== "ready" &&
         outcome !== "handshaking-initiator" &&
@@ -379,7 +382,7 @@ export const LinkService = {
     return withQueue(input.peerPubky, async () => {
       let outcome: EnsureOutcome;
       try {
-        outcome = await ensureLinkLocked(input.peerPubky, true, false);
+        outcome = await ensureLinkLocked(input.peerPubky, true, false, "auto");
       } catch {
         return "queued";
       }
@@ -455,7 +458,7 @@ export const LinkService = {
     return withQueue(input.peerPubky, async () => {
       let outcome: EnsureOutcome;
       try {
-        outcome = await ensureLinkLocked(input.peerPubky, true, false);
+        outcome = await ensureLinkLocked(input.peerPubky, true, false, "auto");
       } catch {
         return "queued";
       }
@@ -762,6 +765,7 @@ async function ensureLinkLocked(
   peerPubky: PubkyKey,
   allowInitiate: boolean,
   alreadyRecovered: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   const lookup = await sessionOrRestore();
   if (lookup && "status" in lookup && lookup.status === "offline") return "session-offline";
@@ -776,7 +780,7 @@ async function ensureLinkLocked(
   let live = liveHandles.get(key);
   let stored = await StorageService.getLink(ownerPubky, peerPubky);
 
-  if (allowInitiate) {
+  if (allowInitiate && intent === "user") {
     await StorageService.clearHandshakeBudget(ownerPubky, peerPubky);
   }
 
@@ -788,11 +792,11 @@ async function ensureLinkLocked(
 
   if (live?.status === "established") return "ready";
   if (stored?.status === "established") {
-    return restoreEstablished(activeSession, receiver, stored, alreadyRecovered);
+    return restoreEstablished(activeSession, receiver, stored, alreadyRecovered, allowInitiate, intent);
   }
 
-  if (!allowInitiate && (await isHandshakeBudgetExhausted(ownerPubky, peerPubky))) {
-    return "idle";
+  if (await isHandshakeBudgetExhausted(ownerPubky, peerPubky)) {
+    return intent === "user" ? "idle" : "error";
   }
 
   let marker: ReceiverMarker | null | undefined;
@@ -800,10 +804,11 @@ async function ensureLinkLocked(
     marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, localPath);
     if (marker) {
       if (stored) {
-        await StorageService.upsertLink({
-          ...stored,
-          lastSeenPeerMarkerPk: marker.noisePublicKey,
-        });
+        await StorageService.recordLastSeenPeerMarkerPk(
+          ownerPubky,
+          peerPubky,
+          marker.noisePublicKey,
+        );
         stored = { ...stored, lastSeenPeerMarkerPk: marker.noisePublicKey };
       }
     }
@@ -856,6 +861,8 @@ async function ensureLinkLocked(
       peerPubky,
       live,
       alreadyRecovered,
+      allowInitiate,
+      intent,
     );
   }
 
@@ -865,6 +872,8 @@ async function ensureLinkLocked(
       receiver,
       stored,
       alreadyRecovered,
+      allowInitiate,
+      intent,
     );
   }
 
@@ -879,6 +888,8 @@ async function ensureLinkLocked(
         peerPubky,
         live,
         alreadyRecovered,
+        allowInitiate,
+        intent,
       );
     }
     if (stored?.status === "handshaking") {
@@ -887,6 +898,8 @@ async function ensureLinkLocked(
         receiver,
         stored,
         alreadyRecovered,
+        allowInitiate,
+        intent,
       );
     }
     return "idle";
@@ -902,6 +915,8 @@ async function ensureLinkLocked(
     marker,
     localPath,
     alreadyRecovered,
+    allowInitiate,
+    intent,
   );
 }
 
@@ -910,6 +925,8 @@ async function restoreEstablished(
   receiver: LinkReceiver,
   stored: LinkRecord,
   alreadyRecovered: boolean,
+  allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   const localPath = coerceReceiverPath(stored.localReceiverPath);
   const remotePath = coerceReceiverPath(stored.remoteReceiverPath);
@@ -930,7 +947,7 @@ async function restoreEstablished(
     await StorageService.resetLinkConsecutiveFailures(stored.ownerPubky, stored.peerPubky);
     return "ready";
   } catch (err) {
-    return handleLinkFailure(err, stored, alreadyRecovered, true);
+    return handleLinkFailure(err, stored, alreadyRecovered, allowInitiate, intent);
   }
 }
 
@@ -939,6 +956,8 @@ async function restoreAndAdvanceHandshake(
   receiver: LinkReceiver,
   stored: LinkRecord,
   alreadyRecovered: boolean,
+  allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   const localPath = coerceReceiverPath(stored.localReceiverPath);
   const remotePath = coerceReceiverPath(stored.remoteReceiverPath);
@@ -978,9 +997,11 @@ async function restoreAndAdvanceHandshake(
       stored.peerPubky,
       { status: "handshaking", linkId: restored.linkId, role: stored.role },
       alreadyRecovered,
+      allowInitiate,
+      intent,
     );
   } catch (err) {
-    return handleLinkFailure(err, stored, alreadyRecovered, true);
+    return handleLinkFailure(err, stored, alreadyRecovered, allowInitiate, intent);
   }
 }
 
@@ -991,6 +1012,8 @@ async function advanceLiveHandshake(
   peerPubky: PubkyKey,
   live: Extract<LiveHandle, { status: "handshaking" }>,
   alreadyRecovered: boolean,
+  allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   const stored = await StorageService.getLink(ownerPubky, peerPubky);
   try {
@@ -1025,6 +1048,8 @@ async function advanceLiveHandshake(
         stored,
         result.snapshot,
         alreadyRecovered,
+        allowInitiate,
+        intent,
       );
       if (recovered !== null) return recovered;
     }
@@ -1063,7 +1088,7 @@ async function advanceLiveHandshake(
       lastSeenPeerMarkerPk: null,
       updatedAt: Date.now(),
     };
-    return handleLinkFailure(err, fallback, alreadyRecovered, true);
+    return handleLinkFailure(err, fallback, alreadyRecovered, allowInitiate, intent);
   }
 }
 
@@ -1114,6 +1139,8 @@ async function initiateHandshake(
   marker: ReceiverMarker,
   localPath: string,
   alreadyRecovered: boolean,
+  allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   const remotePath = LINK_RECEIVER_PATH;
   const initiated = await PaykitLinkWeb.initiateLink(
@@ -1148,6 +1175,8 @@ async function initiateHandshake(
     peerPubky,
     { status: "handshaking", linkId: initiated.linkId, role: "initiator" },
     alreadyRecovered,
+    allowInitiate,
+    intent,
   );
 }
 
@@ -1225,6 +1254,7 @@ async function handleLinkFailure(
   stored: LinkRecord,
   alreadyRecovered: boolean,
   allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
   if (isLinkNativeError(err) && err.code === "unavailable") return "native-missing";
   if (isLinkNativeError(err) && err.code === "auth") {
@@ -1245,12 +1275,12 @@ async function handleLinkFailure(
       stored.peerPubky,
     );
     if (failures >= HANDSHAKE_FAILURE_LIMIT) {
-      return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, err);
+      return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, intent, err);
     }
     return roleStatus(stored.role);
   }
   if (isLinkNativeError(err) && err.code === "protocol") {
-    return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, err);
+    return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, intent, err);
   }
 
   if (established) {
@@ -1266,7 +1296,7 @@ async function handleLinkFailure(
     stored.peerPubky,
   );
   if (failures >= HANDSHAKE_FAILURE_LIMIT) {
-    return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, err);
+    return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, intent, err);
   }
   console.warn(`[LinkService] Handshake step failed for ${stored.peerPubky}:`, errorMessage(err));
   return roleStatus(stored.role);
@@ -1276,6 +1306,7 @@ async function recoverWedgedLink(
   stored: LinkRecord,
   alreadyRecovered: boolean,
   allowInitiate: boolean,
+  intent: HandshakeIntent,
   cause: unknown,
 ): Promise<EnsureOutcome> {
   const protocol = isLinkNativeError(cause) && cause.code === "protocol";
@@ -1297,36 +1328,25 @@ async function recoverWedgedLink(
   }
 
   if (stored.status !== "established") {
-    const budget = await chargeHandshakeBudget(stored.ownerPubky, stored.peerPubky, {
-      reason: "unestablished-wipe",
-    });
+    const budget = await chargeHandshakeBudget(stored.ownerPubky, stored.peerPubky);
     if (budget.exhausted) return abandonUnestablishedLink(stored);
   }
 
   await wipeLinkState(stored);
 
   if (alreadyRecovered) return "error";
-  return ensureLinkLocked(stored.peerPubky, allowInitiate, true);
+  return ensureLinkLocked(stored.peerPubky, allowInitiate, true, intent);
 }
-
-type HandshakeCharge =
-  | { reason: "pending-advance"; user: boolean }
-  | { reason: "unestablished-wipe" };
 
 async function chargeHandshakeBudget(
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
-  charge: HandshakeCharge,
 ): Promise<{ advances: number; exhausted: boolean }> {
   const current = await StorageService.getHandshakeBudget(ownerPubky, peerPubky);
   const held = {
     advances: current?.pendingAdvances ?? 0,
     exhausted: current ? current.exhaustedAt !== null : false,
   };
-  if (charge.reason === "pending-advance") {
-    if (charge.user) return held;
-    if (current && current.nextAdvanceAt > Date.now()) return held;
-  }
   const advances = held.advances + 1;
   const exhausted = advances >= HANDSHAKE_PENDING_ADVANCE_LIMIT;
   await StorageService.upsertHandshakeBudget({
@@ -1348,6 +1368,7 @@ async function isHandshakeBudgetExhausted(
 }
 
 async function abandonUnestablishedLink(stored: LinkRecord): Promise<EnsureOutcome> {
+  handshakeWatch.delete(linkKey(stored.ownerPubky, stored.peerPubky));
   await StorageService.abandonOwedLinkMessagesForPeer(stored.ownerPubky, stored.peerPubky);
   await wipeLinkState(stored);
   return "error";
@@ -1378,6 +1399,8 @@ async function maybeRecoverInitiatorMarkerRotation(
   stored: LinkRecord | null,
   snapshot: string,
   alreadyRecovered: boolean,
+  allowInitiate: boolean,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome | null> {
   const key = linkKey(ownerPubky, peerPubky);
   const watch = handshakeWatch.get(key);
@@ -1421,7 +1444,7 @@ async function maybeRecoverInitiatorMarkerRotation(
       updatedAt: now,
     } satisfies LinkRecord);
 
-  const budget = await chargeHandshakeBudget(ownerPubky, peerPubky, { reason: "unestablished-wipe" });
+  const budget = await chargeHandshakeBudget(ownerPubky, peerPubky);
   if (budget.exhausted) return abandonUnestablishedLink(row);
 
   await wipeLinkState(row);
@@ -1435,6 +1458,8 @@ async function maybeRecoverInitiatorMarkerRotation(
     marker,
     coerceReceiverPath(receiver.receiverPath),
     true,
+    allowInitiate,
+    intent,
   );
 }
 
@@ -1594,7 +1619,7 @@ async function syncPeerLocked(peerPubky: PubkyKey): Promise<LinkMessage[]> {
     return [];
   }
   try {
-    const outcome = await ensureLinkLocked(peerPubky, false, false);
+    const outcome = await ensureLinkLocked(peerPubky, false, false, "auto");
     const priorRoutedConversationCount = await StorageService.countLinkMessagesForPeer(
       ownerPubky,
       peerPubky,
@@ -1645,7 +1670,7 @@ async function syncPeerLocked(peerPubky: PubkyKey): Promise<LinkMessage[]> {
   } catch (err) {
     if (isLinkNativeError(err) && err.code === "protocol") {
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
-      if (stored) await recoverWedgedLink(stored, false, false, err);
+      if (stored) await recoverWedgedLink(stored, false, false, "auto", err);
     }
     throw err;
   }
@@ -1967,7 +1992,7 @@ async function deliverQueuedPayloadLocked(
 
   let outcome: EnsureOutcome;
   try {
-    outcome = await ensureLinkLocked(payload.peerPubky, true, false);
+    outcome = await ensureLinkLocked(payload.peerPubky, true, false, "auto");
   } catch (err) {
     if (isTransientLinkError(err)) {
       await RetryQueue.defer(item.id, item.attempts);

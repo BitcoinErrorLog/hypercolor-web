@@ -47,6 +47,7 @@ vi.mock("@/services/StorageService", () => ({
     getLink: (...args: unknown[]) => getLink(...args),
     getAllLinks: vi.fn(async () => []),
     upsertLink: (...args: unknown[]) => upsertLink(...args),
+    recordLastSeenPeerMarkerPk: vi.fn(),
     updateLinkSnapshot: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
     resetLinkConsecutiveFailures: vi.fn(),
@@ -135,6 +136,8 @@ vi.mock("./provisionReceiver", () => ({
 
 import { LinkService, resetLinkServiceHarnessState } from "./LinkService";
 import { LINK_RECEIVER_PATH } from "../../types/link";
+import { RetryQueue } from "@/services/RetryQueue";
+import { StorageService } from "@/services/StorageService";
 
 const OWNER = "a".repeat(52);
 const PEER = "z".repeat(52);
@@ -285,5 +288,121 @@ describe("W1e marker multi-device + handshake recovery", () => {
     await LinkService.syncInbox([PEER]);
     await LinkService.syncInbox([PEER]);
     expect(initiateLink).not.toHaveBeenCalled();
+  });
+
+  it("automatic drain of a flapping peer exhausts the budget and fails the queue", async () => {
+    let stored: ReturnType<typeof handshaking> | null = handshaking("old-pk");
+    const budget = {
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      pendingAdvances: 0,
+      nextAdvanceAt: 0,
+      exhaustedAt: null as number | null,
+      updatedAt: NOW,
+    };
+    getLink.mockImplementation(async () => stored);
+    upsertLink.mockImplementation(async (row: Record<string, unknown>) => {
+      stored = {
+        ...handshaking(String(row.remoteNoisePublicKey ?? "old-pk")),
+        ...row,
+        status: (row.status as "handshaking") ?? "handshaking",
+        snapshot: String(row.snapshot ?? stored?.snapshot ?? "snap-1"),
+        updatedAt: NOW,
+        lastSeenPeerMarkerPk:
+          (row.lastSeenPeerMarkerPk as string | null | undefined) ??
+          stored?.lastSeenPeerMarkerPk ??
+          null,
+      } as ReturnType<typeof handshaking>;
+    });
+    deleteLink.mockImplementation(async () => {
+      stored = null;
+    });
+    getBudget.mockImplementation(async () =>
+      budget.pendingAdvances === 0 && budget.exhaustedAt === null ? null : { ...budget },
+    );
+    upsertBudget.mockImplementation(async (row: {
+      pendingAdvances: number;
+      nextAdvanceAt: number;
+      exhaustedAt: number | null;
+    }) => {
+      budget.pendingAdvances = row.pendingAdvances;
+      budget.nextAdvanceAt = row.nextAdvanceAt;
+      budget.exhaustedAt = row.exhaustedAt;
+    });
+    clearBudget.mockImplementation(async () => {
+      budget.pendingAdvances = 0;
+      budget.nextAdvanceAt = 0;
+      budget.exhaustedAt = null;
+    });
+    let flap = 0;
+    getMarker.mockImplementation(async () => ({
+      noisePublicKey: `flap-${flap++}`,
+      capabilitiesJson: "{}",
+    }));
+    advanceHandshake.mockImplementation(async () => ({
+      status: "pending",
+      snapshot: stored?.snapshot ?? "snap-1",
+    }));
+    restoreHandshake.mockImplementation(async () => ({
+      linkId: "hs-1",
+      status: "pending",
+      snapshot: stored?.snapshot ?? "snap-1",
+    }));
+
+    const eventId = "11111111-1111-4111-8111-111111111111";
+    const queueItem = {
+      id: "q-flap",
+      messageId: eventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: "link.chat.message",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: "chat.message.v0",
+        eventId,
+        rawJson: "{}",
+      }),
+      attempts: 0,
+      nextRetryAt: 0,
+      createdAt: NOW,
+    };
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([queueItem]);
+    vi.mocked(StorageService.listDeliveryQueue).mockResolvedValue([queueItem]);
+    vi.mocked(StorageService.getLinkMessage).mockResolvedValue({
+      ownerPubky: OWNER,
+      eventId,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent",
+      kind: "chat.message.v0",
+      rawJson: "{}",
+      body: "hi",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sending",
+    });
+
+    const abandon = vi.mocked(StorageService.abandonOwedLinkMessagesForPeer);
+    abandon.mockClear();
+    initiateLink.mockClear();
+
+    for (let i = 0; i < 40 && abandon.mock.calls.length === 0; i += 1) {
+      await LinkService.drainRetries();
+    }
+
+    expect(abandon).toHaveBeenCalledWith(OWNER, PEER);
+    expect(budget.exhaustedAt).not.toBeNull();
+    expect(budget.pendingAdvances).toBeGreaterThanOrEqual(10);
+    const initiatesBeforeUser = initiateLink.mock.calls.length;
+
+    await LinkService.drainRetries();
+    expect(initiateLink.mock.calls.length).toBe(initiatesBeforeUser);
+
+    const status = await LinkService.ensureLinkWith(PEER);
+    expect(clearBudget).toHaveBeenCalled();
+    expect(initiateLink.mock.calls.length).toBe(initiatesBeforeUser + 1);
+    expect(status).toBe("handshaking-initiator");
   });
 });

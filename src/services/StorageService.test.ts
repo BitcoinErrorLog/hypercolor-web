@@ -87,6 +87,37 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     );
   });
 
+  it("recording last_seen_peer_marker_pk does not bump links.updated_at", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    await StorageService.upsertLink({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "handshaking",
+      snapshot: "cipher-hs",
+      remoteNoisePublicKey: "noise",
+      localReceiverPath: "hypercolor/wallet",
+      remoteReceiverPath: "hypercolor/wallet",
+      consecutiveFailures: 0,
+    });
+    const before = await StorageService.getLink(OWNER, PEER);
+    expect(before).not.toBeNull();
+    db.executeSync(
+      "UPDATE links SET updated_at = 111 WHERE owner_pubky = ? AND peer_pubky = ?",
+      [OWNER, PEER],
+    );
+
+    await StorageService.recordLastSeenPeerMarkerPk(OWNER, PEER, "marker-pk-2");
+
+    const after = await StorageService.getLink(OWNER, PEER);
+    expect(after?.lastSeenPeerMarkerPk).toBe("marker-pk-2");
+    expect(after?.updatedAt).toBe(111);
+    expect(after?.snapshot).toBe("cipher-hs");
+  });
+
   it("clearAccountData wipes owner rows and leaves the other account", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
