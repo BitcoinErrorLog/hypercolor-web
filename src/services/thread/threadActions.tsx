@@ -42,6 +42,8 @@ export function ThreadViewHost({ conversationId }: { conversationId: string | nu
       onResolved={() => void thread.reload()}
       receiverRole={thread.receiverRole}
       linkStatus={thread.linkStatus}
+      linkSnapshot={thread.linkSnapshot}
+      linkReady={thread.linkReady}
       onTakeoverReceive={async () => {
         await LinkService.takeOverReceiver();
         await thread.reload();

@@ -44,10 +44,31 @@ describe("formatDeliveryStatus", () => {
     ).toBe(QUEUED_STANDBY_SUBTITLE);
   });
 
-  it("blocks new chats on standby unless the link is already established", () => {
+  it("blocks new chats on standby unless the service ready predicate holds", () => {
     expect(isStandbyNewChatBlocked("standby", null)).toBe(true);
     expect(isStandbyNewChatBlocked("standby", "handshaking")).toBe(true);
-    expect(isStandbyNewChatBlocked("standby", "established")).toBe(false);
+    expect(isStandbyNewChatBlocked("standby", "established")).toBe(true);
+    expect(isStandbyNewChatBlocked("standby", "established", { snapshot: "" })).toBe(true);
+    expect(isStandbyNewChatBlocked("standby", "established", { snapshot: "HC1.opaque" })).toBe(false);
+    expect(isStandbyNewChatBlocked("standby", "ready")).toBe(false);
+    expect(isStandbyNewChatBlocked("standby", "handshaking", { linkReady: true })).toBe(false);
     expect(isStandbyNewChatBlocked("active", null)).toBe(false);
+  });
+
+  it("uses standby queued subtitle for initiator and responder roles", () => {
+    expect(
+      queuedThreadSubtitle({
+        linkStatus: "handshaking-initiator",
+        lastDeliveryState: "sending",
+        receiverRole: "standby",
+      }),
+    ).toBe(QUEUED_STANDBY_SUBTITLE);
+    expect(
+      queuedThreadSubtitle({
+        linkStatus: "handshaking-responder",
+        lastDeliveryState: "sending",
+        receiverRole: "standby",
+      }),
+    ).toBe(QUEUED_STANDBY_SUBTITLE);
   });
 });

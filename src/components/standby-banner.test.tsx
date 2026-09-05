@@ -9,6 +9,7 @@ import {
   STANDBY_BANNER_TITLE,
 } from "@/services/link/provisionReceiver";
 import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
+import { LinkService } from "@/services/link/LinkService";
 
 vi.mock("@/services/link/LinkService", () => ({
   LinkService: {
@@ -71,5 +72,38 @@ describe("StandbyBanner", () => {
     });
     expect(host.querySelector('[data-testid="reenableBanner"]')).toBeNull();
     expect(useReceiverRoleStore.getState().snoozedReenable).toBe(true);
+  });
+
+  it("double-confirming takeover fires one takeOverReceiver", async () => {
+    const takeOver = vi.mocked(LinkService.takeOverReceiver);
+    let release: () => void = () => undefined;
+    takeOver.mockReset().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = () =>
+            resolve({
+              pubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+              receiverPath: "hypercolor/wallet",
+              noisePublicKey: "pk",
+              receiverRole: "active",
+            });
+        }),
+    );
+    useReceiverRoleStore.getState().setRole("standby");
+    await render(<StandbyBanner />);
+    await act(async () => {
+      host.querySelector('[data-testid="standbyTakeover"]')?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    const confirm = document.querySelector('[data-testid="standbyTakeoverConfirm"]');
+    await act(async () => {
+      confirm?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      confirm?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(takeOver).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release();
+    });
   });
 });

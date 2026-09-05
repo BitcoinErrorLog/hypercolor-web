@@ -135,9 +135,11 @@ vi.mock("./provisionReceiver", () => ({
 }));
 
 import { LinkService, resetLinkServiceHarnessState } from "./LinkService";
+import { LinkSendError } from "./LinkSendError";
 import { LINK_RECEIVER_PATH } from "../../types/link";
 import { RetryQueue } from "@/services/RetryQueue";
 import { StorageService } from "@/services/StorageService";
+import { takeoverReceiver } from "./provisionReceiver";
 
 const OWNER = "a".repeat(52);
 const PEER = "z".repeat(52);
@@ -199,6 +201,9 @@ describe("W1e marker multi-device + handshake recovery", () => {
     });
     restoreLink.mockReset().mockResolvedValue({ linkId: "est-1" });
     getLink.mockReset();
+    vi.mocked(takeoverReceiver).mockReset();
+    vi.mocked(StorageService.getAllLinks).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.abandonOwedLinkMessagesForPeer).mockReset();
     await LinkService.adoptHarnessSession(handle() as never);
   });
 
@@ -481,6 +486,145 @@ describe("W1e marker multi-device + handshake recovery", () => {
       LINK_RECEIVER_PATH,
       LINK_RECEIVER_PATH,
     );
-    expect(upsertBudget).toHaveBeenCalledTimes(1);
+    expect(clearBudget).toHaveBeenCalled();
+  });
+
+  it("standby + existing handshaking row blocks send with typed error", async () => {
+    getReceiver.mockResolvedValue({ ...receiver(), receiverRole: "standby" });
+    getLink.mockResolvedValue(handshaking("wedged-pk"));
+    await expect(LinkService.sendDm(PEER, "hello")).rejects.toEqual(
+      expect.objectContaining({
+        name: "LinkSendError",
+        code: "standby-not-receiving",
+      }),
+    );
+    await expect(LinkService.sendDm(PEER, "hello")).rejects.toBeInstanceOf(LinkSendError);
+    expect(restoreHandshake).not.toHaveBeenCalled();
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(StorageService.persistLinkSendIntent).not.toHaveBeenCalled();
+  });
+
+  it("standby + handshaking persists no sendPreparedMessage", async () => {
+    getReceiver.mockResolvedValue({ ...receiver(), receiverRole: "standby" });
+    getLink.mockResolvedValue({ ...handshaking("wedged-pk"), role: "responder" });
+    await expect(
+      LinkService.sendPreparedMessage({
+        peerPubky: PEER,
+        kind: "chat.message.v0",
+        eventId: "11111111-1111-4111-8111-111111111111",
+        rawJson: "{}",
+        body: "hi",
+        sentAt: NOW,
+      }),
+    ).rejects.toMatchObject({ code: "standby-not-receiving" });
+    expect(StorageService.persistLinkSendIntent).not.toHaveBeenCalled();
+  });
+
+  it("standby + handshaking drain stays queued", async () => {
+    getReceiver.mockResolvedValue({ ...receiver(), receiverRole: "standby" });
+    getLink.mockResolvedValue(handshaking("wedged-pk"));
+    const result = await LinkService.attemptPersistedSend({
+      peerPubky: PEER,
+      kind: "chat.message.v0",
+      eventId: "11111111-1111-4111-8111-111111111111",
+      queueId: "q1",
+      rawJson: "{}",
+    });
+    expect(result).toBe("queued");
+    expect(restoreHandshake).not.toHaveBeenCalled();
+    expect(initiateLink).not.toHaveBeenCalled();
+  });
+
+  it("getLinkStatus uses snapshot/live ready predicate not a bare established row", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("stored-peer-pk"),
+      status: "established",
+      snapshot: "",
+    });
+    expect(await LinkService.getLinkStatus(PEER)).toBe("handshaking-initiator");
+    getLink.mockResolvedValue({
+      ...handshaking("stored-peer-pk"),
+      status: "established",
+      snapshot: "HC1.opaque",
+    });
+    expect(await LinkService.getLinkStatus(PEER)).toBe("ready");
+  });
+
+  it("takeover on a budget-exhausted peer resets budget and re-initiates without failing queued", async () => {
+    let stored: ReturnType<typeof handshaking> | null = handshaking("dead-pk");
+    getReceiver.mockResolvedValue({ ...receiver(), receiverRole: "active" });
+    getBudget.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      pendingAdvances: 10,
+      nextAdvanceAt: NOW,
+      exhaustedAt: NOW,
+    });
+    getLink.mockImplementation(async () => stored);
+    vi.mocked(StorageService.getAllLinks).mockResolvedValue([handshaking("dead-pk")]);
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        eventId: "11111111-1111-4111-8111-111111111111",
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        direction: "sent",
+        kind: "chat.message.v0",
+        rawJson: "{}",
+        body: "queued",
+        sentAt: NOW,
+        receivedAt: null,
+        deliveryState: "sending",
+      },
+    ]);
+    deleteLink.mockImplementation(async () => {
+      stored = null;
+    });
+    upsertLink.mockImplementation(async (row: Record<string, unknown>) => {
+      stored = {
+        ...handshaking(String(row.remoteNoisePublicKey ?? "new-pk")),
+        ...row,
+        status: "handshaking",
+        snapshot: String(row.snapshot ?? "init-snap"),
+        updatedAt: NOW,
+      } as ReturnType<typeof handshaking>;
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "live-pk", capabilitiesJson: "{}" });
+    initiateLink.mockResolvedValue({ linkId: "init-2", snapshot: "init-snap-2" });
+    advanceHandshake.mockResolvedValue({ status: "pending", snapshot: "init-snap-2" });
+
+    await LinkService.restartQueuedUnestablishedHandshakes();
+
+    expect(clearBudget).toHaveBeenCalled();
+    expect(StorageService.abandonOwedLinkMessagesForPeer).not.toHaveBeenCalled();
+    expect(initiateLink).toHaveBeenCalledTimes(1);
+    expect(deleteLink).toHaveBeenCalled();
+  });
+
+  it("concurrent takeOverReceiver shares one in-flight PUT", async () => {
+    let release: (value: {
+      pubky: string;
+      receiverPath: string;
+      noisePublicKey: string;
+      receiverRole: "active";
+    }) => void = () => undefined;
+    vi.mocked(takeoverReceiver).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    vi.mocked(StorageService.getAllLinks).mockResolvedValue([]);
+    const first = LinkService.takeOverReceiver();
+    const second = LinkService.takeOverReceiver();
+    release({
+      pubky: OWNER,
+      receiverPath: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      receiverRole: "active",
+    });
+    await Promise.all([first, second]);
+    expect(takeoverReceiver).toHaveBeenCalledTimes(1);
   });
 });

@@ -352,6 +352,8 @@ describe("ThreadView standby composer", () => {
       status: { kind: "enabled", pubky: OWNER },
       receiverRole: "standby",
       linkStatus: "established",
+      linkSnapshot: "HC1.opaque",
+      linkReady: true,
       onSend,
     });
     expect(host.querySelector("[data-testid=standbyComposerNotice]")).toBeNull();
@@ -416,5 +418,50 @@ describe("ThreadView standby composer", () => {
     expect(host.querySelector("[data-testid=queuedHandshakeSubtitle]")?.textContent).toBe(
       "Not receiving on this device — tap Receive on this device to continue.",
     );
+  });
+
+  it("uses standby queued subtitle for a responder handshake", async () => {
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: "handshaking-responder",
+      messages: [
+        {
+          ownerPubky: OWNER,
+          eventId: "11111111-1111-4111-8111-111111111111",
+          conversationId: `dm:${PEER}`,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          direction: "sent",
+          kind: "chat.message.v0",
+          rawJson: "{}",
+          body: "queued",
+          sentAt: NOW,
+          receivedAt: null,
+          deliveryState: "sending",
+        },
+      ],
+    });
+    expect(host.querySelector("[data-testid=queuedHandshakeSubtitle]")?.textContent).toBe(
+      "Not receiving on this device — tap Receive on this device to continue.",
+    );
+  });
+
+  it("blocks a zombie established row without a snapshot", async () => {
+    const onSend = vi.fn();
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      draft: "hello",
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: "established",
+      linkSnapshot: "",
+      onSend,
+    });
+    expect(host.querySelector("[data-testid=standbyComposerNotice]")).not.toBeNull();
+    expect(host.querySelector("[data-testid=threadSend]")).toHaveProperty("disabled", true);
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { ModalSheet } from "@/components/ui/sheet";
 import {
@@ -32,6 +32,10 @@ export function StandbyTakeoverDialog({
   onConfirm: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const confirmInFlight = useRef(false);
+  useEffect(() => {
+    if (!open) confirmInFlight.current = false;
+  }, [open]);
   return (
     <ModalSheet
       open={open}
@@ -65,7 +69,11 @@ export function StandbyTakeoverDialog({
           variant="brand"
           data-testid="standbyTakeoverConfirm"
           disabled={busy}
-          onClick={onConfirm}
+          onClick={() => {
+            if (busy || confirmInFlight.current) return;
+            confirmInFlight.current = true;
+            onConfirm();
+          }}
         >
           {busy ? "Taking over…" : primary}
         </Button>
@@ -104,6 +112,7 @@ export function StandbyReceiveButton({
         error={error}
         onClose={() => setConfirmOpen(false)}
         onConfirm={() => {
+          if (busy) return;
           void (async () => {
             setBusy(true);
             setError(null);

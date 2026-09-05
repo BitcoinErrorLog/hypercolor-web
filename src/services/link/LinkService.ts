@@ -53,7 +53,8 @@ import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
 import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver } from "./provisionReceiver";
-import { isStandbyNewChatBlocked, STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
+import { STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
+import { LinkSendError } from "./LinkSendError";
 import {
   adoptApprovedSession,
   adoptLiveHandle,
@@ -131,7 +132,7 @@ type LiveHandle =
   | { status: "established"; linkId: string }
   | { status: "handshaking"; linkId: string; role: LinkRole };
 type SessionLookup = ActiveSession | { status: "offline" } | null;
-type EnsureOutcome = LinkStatus | "idle";
+type EnsureOutcome = LinkStatus | "idle" | "standby-blocked";
 
 let session: ActiveSession | null = null;
 let restoreInFlight: Promise<SessionLookup> | null = null;
@@ -151,6 +152,21 @@ let drainPassChain: Promise<void> = Promise.resolve();
 const drainItemClaims = new Map<string, number>();
 const DRAIN_CLAIM_TTL_MS = 60_000;
 const handshakeWatch = new Map<string, { polls: number; firstAt: number; snapshot: string }>();
+let takeoverInFlight: Promise<{
+  pubky: string;
+  receiverPath: string;
+  noisePublicKey: string;
+  receiverRole: "active" | "standby";
+}> | null = null;
+
+/** Same `ready` predicate the send path uses: live established handle or snapshot. */
+export function isReadyLinkPredicate(
+  record: { status: string; snapshot: string },
+  live: LiveHandle | undefined,
+): boolean {
+  if (live?.status === "established") return true;
+  return record.status === "established" && record.snapshot.length > 0;
+}
 
 export const LinkService = {
   async signinWithSecret(identitySecretHex: string): Promise<{ pubky: string }> {
@@ -226,10 +242,16 @@ export const LinkService = {
     noisePublicKey: string;
     receiverRole: "active" | "standby";
   }> {
-    const active = requireActiveSession();
-    const result = await takeoverReceiver(active.handle, active.pubky);
-    await restartQueuedUnestablishedHandshakes();
-    return result;
+    if (takeoverInFlight) return takeoverInFlight;
+    takeoverInFlight = (async () => {
+      const active = requireActiveSession();
+      const result = await takeoverReceiver(active.handle, active.pubky);
+      await restartQueuedUnestablishedHandshakes();
+      return result;
+    })().finally(() => {
+      takeoverInFlight = null;
+    });
+    return takeoverInFlight;
   },
 
   async restartQueuedUnestablishedHandshakes(): Promise<void> {
@@ -280,11 +302,25 @@ export const LinkService = {
     await PaykitLinkWeb.deletePublic(handle, ownerDocumentPath(url));
   },
 
+  async getLinkStatus(peerPubky: PubkyKey): Promise<LinkStatus | null> {
+    const owner = session?.pubky ?? (await KeyStore.getPubky());
+    if (!owner) return "needs-enable";
+    try {
+      const record = await StorageService.getLink(owner, peerPubky);
+      if (!record) return null;
+      const live = liveHandles.get(linkKey(owner, peerPubky));
+      if (isReadyLinkPredicate(record, live)) return "ready";
+      return record.role === "initiator" ? "handshaking-initiator" : "handshaking-responder";
+    } catch {
+      return "error";
+    }
+  },
+
   async ensureLinkWith(peerPubky: PubkyKey): Promise<LinkStatus> {
     return withQueue(peerPubky, async () => {
       try {
         const outcome = await ensureLinkLocked(peerPubky, true, false, "user");
-        return outcome === "idle" ? "error" : outcome;
+        return outcome === "idle" || outcome === "standby-blocked" ? "error" : outcome;
       } catch (err) {
         if (isLinkNativeError(err) && err.code === "unavailable") return "native-missing";
         console.warn(`[LinkService] ensureLinkWith failed for ${peerPubky}:`, errorMessage(err));
@@ -295,17 +331,8 @@ export const LinkService = {
 
   async sendDm(peerPubky: PubkyKey, body: string): Promise<LinkMessage> {
     return withQueue(peerPubky, async () => {
-      await assertCanSendOnStandby(peerPubky);
       const outcome = await ensureLinkLocked(peerPubky, true, false, "user");
-      if (
-        outcome !== "ready" &&
-        outcome !== "handshaking-initiator" &&
-        outcome !== "handshaking-responder"
-      ) {
-        throw new Error(
-          `LinkService.sendDm: cannot send to ${peerPubky} — link status is '${outcome}'`,
-        );
-      }
+      assertLinkSendable(outcome, "sendDm");
       const ownerForRequest = await requireOwner();
       const pending = await StorageService.getMessageRequest(ownerForRequest, peerPubky);
       if (pending?.status === "pending") {
@@ -344,17 +371,8 @@ export const LinkService = {
     sentAt: number;
   }): Promise<LinkMessage> {
     return withQueue(input.peerPubky, async () => {
-      await assertCanSendOnStandby(input.peerPubky);
       const outcome = await ensureLinkLocked(input.peerPubky, true, false, "user");
-      if (
-        outcome !== "ready" &&
-        outcome !== "handshaking-initiator" &&
-        outcome !== "handshaking-responder"
-      ) {
-        throw new Error(
-          `LinkService.sendPreparedMessage: cannot send to ${input.peerPubky} — link status is '${outcome}'`,
-        );
-      }
+      assertLinkSendable(outcome, "sendPreparedMessage");
       const ownerForRequest = await requireOwner();
       const pending = await StorageService.getMessageRequest(ownerForRequest, input.peerPubky);
       if (pending?.status === "pending") {
@@ -727,6 +745,7 @@ export function resetLinkServiceHarnessState(): void {
   drainItemClaims.clear();
   handshakeWatch.clear();
   drainPassChain = Promise.resolve();
+  takeoverInFlight = null;
 }
 
 function currentSession(): ActiveSession | null {
@@ -805,14 +824,16 @@ async function ensureLinkLocked(
   }
 
   // Standby: this device's published marker is not live (foreign or orphan).
-  // Established links already returned above. Do not start or advance a
-  // handshake — the peer would answer the published (dead) key.
-  if (receiver.receiverRole === "standby") {
-    return "idle";
+  // Established links already returned above. Cover any non-ready row
+  // (none, handshaking, zombie established that failed restore) so sends
+  // cannot persist+queue against a dead published key.
+  const latestReceiver = await StorageService.getLinkReceiver(ownerPubky);
+  if (latestReceiver?.receiverRole === "standby") {
+    return "standby-blocked";
   }
 
-  if (await isHandshakeBudgetExhausted(ownerPubky, peerPubky)) {
-    return intent === "user" ? "idle" : "error";
+  if (intent !== "user" && (await isHandshakeBudgetExhausted(ownerPubky, peerPubky))) {
+    return "error";
   }
 
   let marker: ReceiverMarker | null | undefined;
@@ -1158,6 +1179,7 @@ async function initiateHandshake(
   allowInitiate: boolean,
   intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
+  if (receiver.receiverRole === "standby") return "standby-blocked";
   const remotePath = LINK_RECEIVER_PATH;
   const initiated = await PaykitLinkWeb.initiateLink(
     activeSession.handle,
@@ -1504,38 +1526,46 @@ async function wipeLinkState(stored: LinkRecord): Promise<void> {
   await StorageService.deleteLink(stored.ownerPubky, stored.peerPubky);
 }
 
-async function assertCanSendOnStandby(peerPubky: PubkyKey): Promise<void> {
-  const ownerPubky = await requireOwner();
-  const receiver = await StorageService.getLinkReceiver(ownerPubky);
-  const stored = await StorageService.getLink(ownerPubky, peerPubky);
-  if (isStandbyNewChatBlocked(receiver?.receiverRole, stored?.status ?? null)) {
-    throw new Error(STANDBY_COMPOSER_NOTICE);
+function assertLinkSendable(
+  outcome: EnsureOutcome,
+  operation: "sendDm" | "sendPreparedMessage",
+): void {
+  if (
+    outcome === "ready" ||
+    outcome === "handshaking-initiator" ||
+    outcome === "handshaking-responder"
+  ) {
+    return;
   }
+  if (outcome === "standby-blocked") {
+    throw new LinkSendError("standby-not-receiving", STANDBY_COMPOSER_NOTICE);
+  }
+  throw new LinkSendError(
+    "not-sendable",
+    `LinkService.${operation}: cannot send — link status is '${outcome}'`,
+  );
 }
 
 /**
  * After this device takes over the receiver marker, in-flight initiator
  * handshakes that targeted the previous (dead) published key cannot complete:
- * the peer already answered msg1 against that key. Wipe the unestablished
- * local handshake + outbox slot and re-initiate once (budget charged once).
+ * the peer already answered msg1 against that key. Wipe unestablished rows
+ * and re-initiate. Takeover is explicit user intent: clear any exhausted
+ * budget first so a long-standby peer is recovered rather than abandoned
+ * (queued sends stay queued). Re-initiate with `user` intent so the
+ * follow-up does not re-charge.
  */
 async function restartQueuedUnestablishedHandshakes(): Promise<void> {
   const ownerPubky = await requireOwner();
-  const [links, owed] = await Promise.all([
-    StorageService.getAllLinks(ownerPubky),
-    StorageService.listOwedOutboundLinkMessages(ownerPubky),
-  ]);
-  const owedPeers = new Set(owed.map((message) => message.peerPubky));
+  const links = await StorageService.getAllLinks(ownerPubky);
   for (const link of links) {
     if (link.status === "established") continue;
-    if (!owedPeers.has(link.peerPubky)) continue;
     await withQueue(link.peerPubky, async () => {
       const current = await StorageService.getLink(ownerPubky, link.peerPubky);
       if (!current || current.status === "established") return;
-      const budget = await chargeHandshakeBudget(ownerPubky, current.peerPubky);
-      if (budget.exhausted) return;
+      await StorageService.clearHandshakeBudget(ownerPubky, current.peerPubky);
       await wipeLinkState(current);
-      await ensureLinkLocked(current.peerPubky, true, true, "auto");
+      await ensureLinkLocked(current.peerPubky, true, true, "user");
     });
   }
 }

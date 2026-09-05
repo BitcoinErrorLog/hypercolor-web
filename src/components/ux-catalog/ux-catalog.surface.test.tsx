@@ -77,6 +77,7 @@ vi.mock("@/services/group/GroupService", () => ({
 vi.mock("@/services/link/LinkService", () => ({
   LinkService: {
     markRead: vi.fn(() => Promise.resolve()),
+    getLinkStatus: vi.fn(async () => null),
   },
 }));
 

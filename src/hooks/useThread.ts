@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { parseDmConversationId, type StoredLinkStatus } from "@/types/link";
+import { parseDmConversationId } from "@/types/link";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { loadInboxRows, useInboxStore } from "@/stores/inboxStore";
@@ -33,7 +33,9 @@ export function useThread(conversationId: string | null) {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(Boolean(conversationId));
   const [error, setError] = useState<string | null>(null);
-  const [linkStatus, setLinkStatus] = useState<StoredLinkStatus | null>(null);
+  const [linkStatus, setLinkStatus] = useState<string | null>(null);
+  const [linkSnapshot, setLinkSnapshot] = useState<string | null>(null);
+  const [linkReady, setLinkReady] = useState(false);
   const receiverRole = useReceiverRoleStore((s) => s.role);
 
   const reload = useCallback(async () => {
@@ -42,12 +44,15 @@ export function useThread(conversationId: string | null) {
       setLoading(false);
       return;
     }
-    const [msgs, atts, link] = await Promise.all([
+    const [msgs, atts, link, serviceStatus] = await Promise.all([
       StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
       StorageService.listAttachmentsForConversation(localPubky, conversationId),
       StorageService.getLink(localPubky, participantPubky),
+      LinkService.getLinkStatus(participantPubky).catch(() => null),
     ]);
-    setLinkStatus(link?.status ?? null);
+    setLinkStatus(serviceStatus ?? link?.status ?? null);
+    setLinkSnapshot(link?.snapshot ?? null);
+    setLinkReady(serviceStatus === "ready");
     useThreadStore.getState().setSnapshot(conversationId, msgs, atts);
     setLoading(false);
     const latest = msgs.reduce((max, message) => Math.max(max, message.sentAt), 0);
@@ -97,7 +102,7 @@ export function useThread(conversationId: string | null) {
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text || sending || !participantPubky) return;
-    if (isStandbyNewChatBlocked(receiverRole, linkStatus)) return;
+    if (isStandbyNewChatBlocked(receiverRole, linkStatus, { snapshot: linkSnapshot, linkReady })) return;
     setDraft("");
     setSending(true);
     setError(null);
@@ -117,7 +122,7 @@ export function useThread(conversationId: string | null) {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, participantPubky, reload, receiverRole, linkStatus]);
+  }, [draft, sending, participantPubky, reload, receiverRole, linkStatus, linkSnapshot, linkReady]);
 
   const retryFailed = useCallback(async () => {
     setError(null);
@@ -133,7 +138,7 @@ export function useThread(conversationId: string | null) {
   const sendAttachment = useCallback(
     async (file: File) => {
       if (!participantPubky || sending) return;
-      if (isStandbyNewChatBlocked(receiverRole, linkStatus)) return;
+      if (isStandbyNewChatBlocked(receiverRole, linkStatus, { snapshot: linkSnapshot, linkReady })) return;
       setSending(true);
       setError(null);
       try {
@@ -161,7 +166,7 @@ export function useThread(conversationId: string | null) {
         setSending(false);
       }
     },
-    [participantPubky, sending, reload, receiverRole, linkStatus],
+    [participantPubky, sending, reload, receiverRole, linkStatus, linkSnapshot, linkReady],
   );
 
   return {
@@ -182,5 +187,7 @@ export function useThread(conversationId: string | null) {
     reload,
     receiverRole,
     linkStatus,
+    linkSnapshot,
+    linkReady,
   };
 }

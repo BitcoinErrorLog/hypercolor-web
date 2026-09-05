@@ -105,6 +105,7 @@ export function StandbyBanner() {
               size="sm"
               variant="brand"
               data-testid={copy.primaryTestId}
+              disabled={busy}
               onClick={() => setConfirmOpen(true)}
             >
               {copy.primary}
@@ -131,6 +132,7 @@ export function StandbyBanner() {
         secondary={copy.secondary}
         onClose={() => setConfirmOpen(false)}
         onConfirm={() => {
+          if (busy) return;
           void onTakeover();
         }}
       />

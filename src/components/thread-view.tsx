@@ -24,7 +24,7 @@ import {
   threadBackLabel,
 } from "@/lib/list-detail-focus";
 import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
-import type { LinkMessage, ReceiverRole, StoredLinkStatus } from "@/types/link";
+import type { LinkMessage, ReceiverRole } from "@/types/link";
 import {
   decodePaymentEnvelope,
   displayPaymentStatus,
@@ -117,6 +117,8 @@ export function ThreadView({
   now,
   receiverRole = null,
   linkStatus = null,
+  linkSnapshot = null,
+  linkReady,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -138,7 +140,9 @@ export function ThreadView({
   onResolved: () => void;
   onTakeoverReceive?: () => Promise<void>;
   receiverRole?: ReceiverRole | null;
-  linkStatus?: StoredLinkStatus | null;
+  linkStatus?: string | null;
+  linkSnapshot?: string | null;
+  linkReady?: boolean;
   now?: number;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -184,7 +188,10 @@ export function ThreadView({
 
   const title = displayName ? sanitizeDisplayName(displayName) : null;
   const mayCompose = canComposeMessages(status);
-  const standbyBlocked = isStandbyNewChatBlocked(receiverRole, linkStatus);
+  const standbyBlocked = isStandbyNewChatBlocked(receiverRole, linkStatus, {
+    snapshot: linkSnapshot,
+    linkReady,
+  });
   const queuedSubtitle = queuedThreadSubtitle({
     linkStatus,
     lastDeliveryState: messages.some(
