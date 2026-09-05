@@ -18,7 +18,13 @@ export function CompactListRow({
       <Avatar seed={pubky} size="md" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-bold">{name}</p>
-        <p className="truncate text-xs font-medium tracking-[1.2px] text-muted-foreground uppercase">
+        <p
+          className={
+            subtitle
+              ? "truncate text-base text-muted-foreground"
+              : "truncate text-xs font-medium tracking-[1.2px] text-muted-foreground uppercase"
+          }
+        >
           {subtitle ?? formatPublicKey({ key: pubky })}
         </p>
       </div>

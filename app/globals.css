@@ -236,21 +236,21 @@
 .hc-brand-cta {
   background-color: var(--color-brand);
   background-image: radial-gradient(
-    ellipse 90% 140% at 100% 40%,
-    color-mix(in srgb, var(--brand-2) 42%, transparent) 0%,
-    transparent 58%
+    ellipse 70% 120% at 100% 30%,
+    color-mix(in srgb, var(--brand-2) 22%, transparent) 0%,
+    transparent 55%
   );
   color: var(--color-textOnBrand);
 }
 
 .hc-header-iridescent {
-  background-image:
-    linear-gradient(to bottom, var(--background) 50%, transparent),
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-brand) 28%, transparent),
-      color-mix(in srgb, var(--brand-2) 22%, transparent)
-    );
+  --brand-iridescent: linear-gradient(
+    180deg,
+    color-mix(in srgb, #7c3aed 7%, var(--background)) 0%,
+    var(--background) 70%,
+    transparent 100%
+  );
+  background-image: var(--brand-iridescent);
 }
 
 .hc-hero-iridescent {
@@ -258,8 +258,12 @@
 }
 
 .hc-avatar-ring {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: fit-content;
+  height: fit-content;
   padding: 2px;
-  background-image: linear-gradient(135deg, var(--color-brand), var(--brand-2));
+  background-image: var(--brand-iridescent);
   border-radius: 9999px;
 }
 
@@ -275,14 +279,41 @@ body {
 
 .hc-master-detail {
   display: grid;
-  min-height: 70vh;
-  gap: var(--space-xxl);
+  width: 100%;
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: calc(100svh - 16rem);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(20rem, 1fr);
+  align-items: stretch;
 }
 
-@media (min-width: 48rem) {
+@media (min-width: 64rem) {
   .hc-master-detail {
-    grid-template-columns: minmax(16rem, 20rem) 1fr;
+    grid-template-columns: 360px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    height: calc(100svh - var(--header-height) - 8rem);
+    max-height: calc(100svh - var(--header-height) - 8rem);
+    min-height: calc(100svh - var(--header-height) - 8rem);
   }
+}
+
+.hc-master-detail > [data-slot="master-list"] {
+  min-width: 0;
+  min-height: 12rem;
+}
+
+@media (min-width: 64rem) {
+  .hc-master-detail > [data-slot="master-list"] {
+    min-height: 0;
+    height: 100%;
+    max-height: none;
+  }
+}
+
+.hc-master-detail > [data-slot="detail-pane"] {
+  min-width: 0;
+  width: 100%;
 }
 
 .hc-detail-panel {
@@ -297,8 +328,8 @@ body {
   max-width: 85%;
   border-radius: var(--radius-lg-token);
   padding: var(--space-sm) var(--space-md);
-  font-size: var(--type-secondary-size);
-  line-height: var(--type-secondary-line);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
 }
 
 .hc-bubble-mine {

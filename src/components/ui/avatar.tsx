@@ -36,7 +36,7 @@ export function Avatar({
 }) {
   const px = SIZE_PX[size ?? "default"];
   const inner = (
-    <span className={cn(avatarVariants({ size }), className)}>
+    <span className={cn(avatarVariants({ size }), "shrink-0 self-center", className)}>
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={src} alt={alt ?? ""} className="aspect-square h-full w-full object-cover" />
@@ -46,7 +46,7 @@ export function Avatar({
     </span>
   );
   if (!ring) return inner;
-  return <span className="hc-avatar-ring inline-flex shrink-0">{inner}</span>;
+  return <span className="hc-avatar-ring shrink-0">{inner}</span>;
 }
 
 export function AvatarFallback({ seed, size = 40 }: { seed: string; size?: number }) {

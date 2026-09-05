@@ -35,7 +35,7 @@ export function Identicon({ seed, size }: { seed: string; size: number }) {
       viewBox="0 0 100 100"
       width={size}
       height={size}
-      className="h-full w-full"
+      className="block size-full max-w-full"
       aria-hidden="true"
     >
       <rect width="100" height="100" fill={`hsl(${hue} 62% 18%)`} />

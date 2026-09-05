@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Heading } from "@/components/ui/heading";
 import {
   IconHash,
   IconHome,
@@ -34,6 +33,8 @@ export function AppShell({
   rightRail,
   children,
   hideChrome = false,
+  fillViewport = false,
+  centerColumn = false,
 }: {
   title: string;
   active: ShellNavId;
@@ -42,18 +43,18 @@ export function AppShell({
   rightRail?: ReactNode;
   children: ReactNode;
   hideChrome?: boolean;
+  fillViewport?: boolean;
+  centerColumn?: boolean;
 }) {
   return (
     <div
-      className="min-h-screen bg-background text-foreground"
+      className={cn("min-h-svh bg-background text-foreground", fillViewport && "flex h-svh flex-col overflow-hidden")}
       style={{ fontFamily: "var(--font-inter-tight), 'Inter Tight', sans-serif" }}
     >
       {!hideChrome ? (
-        <header className="pointer-events-none sticky top-0 z-(--z-sticky-header) hidden w-full bg-linear-to-b from-(--background) from-50% to-transparent hc-header-iridescent p-0 sm:py-6 lg:block">
+        <header className="pointer-events-none sticky top-0 z-(--z-sticky-header) hidden w-full shrink-0 bg-linear-to-b from-(--background) from-50% to-transparent hc-header-iridescent p-0 sm:py-6 lg:block">
           <nav className="pointer-events-auto mx-auto flex h-24 w-full max-w-(--container-max-width) flex-row items-center justify-between gap-6 px-4 p-6 lg:px-6 xl:px-0">
-            <Heading level={2} size="lg" className="font-normal text-muted-foreground">
-              {title}
-            </Heading>
+            <p className="text-sm font-medium text-muted-foreground">{title}</p>
             <div className="flex items-center gap-3">
               {NAV.map((item) => {
                 const Icon = item.icon;
@@ -66,16 +67,13 @@ export function AppShell({
                     size="icon"
                     aria-label={item.label}
                     aria-current={isActive ? "page" : undefined}
-                    className={cn(
-                      "h-12 w-12 backdrop-blur-md",
-                      isActive ? "" : "border bg-white/5",
-                    )}
+                    className={cn("h-12 w-12 backdrop-blur-md", isActive ? "" : "border bg-white/5")}
                   >
                     <Icon className="size-6" />
                   </Button>
                 );
               })}
-              <span className="relative">
+              <span className="relative inline-flex shrink-0">
                 <Avatar seed={selfPubky} size="lg" ring />
                 <Badge className="absolute -right-1 -bottom-1 size-4 rounded-full p-0" />
               </span>
@@ -85,18 +83,20 @@ export function AppShell({
       ) : null}
 
       {!hideChrome ? (
-        <header className="sticky top-0 z-(--z-mobile-menu) flex h-16 items-center justify-between px-4 lg:hidden">
-          <Heading level={2} size="sm" className="font-normal text-muted-foreground">
-            {title}
-          </Heading>
-          <Avatar seed={selfPubky} size="lg" ring />
+        <header className="sticky top-0 z-(--z-mobile-menu) flex h-16 shrink-0 items-center justify-between bg-background px-4 lg:hidden">
+          <p className="text-sm font-medium text-muted-foreground">{title}</p>
+          <span className="inline-flex shrink-0">
+            <Avatar seed={selfPubky} size="lg" ring />
+          </span>
         </header>
       ) : null}
 
       <div
         className={cn(
-          "mx-auto flex w-full max-w-(--container-max-width) gap-6 px-4 lg:px-6 xl:px-0",
-          hideChrome ? "py-8" : "pb-28 lg:pb-10",
+          "mx-auto flex w-full min-w-0 max-w-(--container-max-width) px-4 lg:px-6 xl:px-0",
+          hideChrome && "min-h-svh w-full flex-col justify-center py-8",
+          fillViewport && !hideChrome && "flex min-h-0 flex-1 items-stretch gap-6 overflow-hidden pb-28 lg:pb-0",
+          !fillViewport && !hideChrome && "flex flex-1 gap-6 pb-28 lg:pb-10",
         )}
       >
         {leftRail ? (
@@ -107,7 +107,17 @@ export function AppShell({
             {leftRail}
           </aside>
         ) : null}
-        <main className="min-w-0 flex-1">{children}</main>
+        <main
+          className={cn(
+            "min-w-0",
+            hideChrome && "mx-auto w-full max-w-3xl flex-none",
+            !hideChrome && !centerColumn && "flex-1",
+            fillViewport && !centerColumn && "flex h-full min-h-0 flex-col overflow-y-auto",
+            centerColumn && "mx-auto flex h-full w-full max-w-3xl flex-col justify-center py-8",
+          )}
+        >
+          {children}
+        </main>
         {rightRail ? (
           <aside
             className="sticky top-(--header-offset-main) hidden w-(--filter-bar-width) max-w-(--filter-bar-width) min-w-(--filter-bar-width) shrink-0 flex-col gap-6 overflow-y-auto lg:flex"
@@ -123,7 +133,7 @@ export function AppShell({
           className="fixed inset-x-0 bottom-0 z-(--z-mobile-menu) bg-linear-to-t from-background via-background/95 to-transparent px-3 py-4 lg:hidden"
           aria-label="Primary"
         >
-          <div className="mx-auto flex max-w-[380px] items-center justify-between rounded-full p-3 sm:max-w-[600px] md:max-w-[720px]">
+          <div className="mx-auto flex w-full max-w-[380px] items-center justify-between rounded-full p-3 sm:max-w-[600px] md:max-w-[720px]">
             {NAV.map((item) => {
               const Icon = item.icon;
               const isActive = item.id === active;
@@ -135,7 +145,7 @@ export function AppShell({
                   variant="ghost"
                   aria-label={item.label}
                   className={cn(
-                    "h-12 w-12 rounded-full border-0 shadow-none",
+                    "h-12 w-12 shrink-0 rounded-full border-0 shadow-none",
                     isActive ? "bg-secondary" : "border border-border bg-white/5 backdrop-blur-sm",
                   )}
                 >

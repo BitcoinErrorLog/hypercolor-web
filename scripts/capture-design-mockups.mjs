@@ -17,10 +17,6 @@ const SURFACES = [
   "connect",
   "empty",
 ];
-const VIEWPORTS = [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "mobile", width: 390, height: 844 },
-];
 
 function serveOut(port) {
   const outRoot = path.join(ROOT, "out");
@@ -67,6 +63,52 @@ function serveOut(port) {
   });
 }
 
+async function labeledTile(file, label, width, height) {
+  const bar = 36;
+  const image = await sharp(file)
+    .resize(width, height - bar, { fit: "cover", position: "top" })
+    .png()
+    .toBuffer();
+  const svg = Buffer.from(
+    `<svg width="${width}" height="${bar}" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" fill="#111111"/>
+      <text x="16" y="24" fill="#f9fafb" font-size="16" font-family="ui-sans-serif, system-ui">${label}</text>
+    </svg>`,
+  );
+  return sharp({
+    create: { width, height, channels: 3, background: "#05050A" },
+  })
+    .composite([
+      { input: svg, top: 0, left: 0 },
+      { input: image, top: bar, left: 0 },
+    ])
+    .png()
+    .toBuffer();
+}
+
+async function contactSheet(tiles, cols, tileW, tileH, dest) {
+  const rows = Math.ceil(tiles.length / cols);
+  const composites = [];
+  for (let i = 0; i < tiles.length; i += 1) {
+    composites.push({
+      input: tiles[i],
+      left: (i % cols) * tileW,
+      top: Math.floor(i / cols) * tileH,
+    });
+  }
+  await sharp({
+    create: {
+      width: cols * tileW,
+      height: rows * tileH,
+      channels: 3,
+      background: "#05050A",
+    },
+  })
+    .composite(composites)
+    .png()
+    .toFile(dest);
+}
+
 async function main() {
   await mkdir(OUT_DIR, { recursive: true });
   const port = 3317;
@@ -74,52 +116,66 @@ async function main() {
   const browser = await chromium.launch();
   const paths = [];
   try {
-    for (const vp of VIEWPORTS) {
-      const page = await browser.newPage({
-        viewport: { width: vp.width, height: vp.height },
-        colorScheme: "dark",
-      });
-      for (const id of SURFACES) {
-        await page.goto(`http://127.0.0.1:${port}/design?surface=${id}`, {
-          waitUntil: "networkidle",
-        });
-        const target = page.locator(`[data-surface="design:${id}"]`);
-        await target.waitFor({ state: "visible" });
-        const dest = path.join(OUT_DIR, `${id}-${vp.name}.png`);
-        await page.screenshot({ path: dest, fullPage: false });
-        paths.push(dest);
-      }
-      await page.close();
-    }
-
-    const tiles = [];
+    const desktop = await browser.newPage({
+      viewport: { width: 1440, height: 900 },
+      colorScheme: "dark",
+      deviceScaleFactor: 1,
+    });
     for (const id of SURFACES) {
-      for (const vp of VIEWPORTS) {
-        tiles.push(path.join(OUT_DIR, `${id}-${vp.name}.png`));
-      }
+      await desktop.goto(`http://127.0.0.1:${port}/design?surface=${id}`, { waitUntil: "networkidle" });
+        await desktop.locator(`[data-surface="design:${id}"]`).waitFor({ state: "visible" });
+        const listBox = await desktop.locator("[data-slot=master-list]").boundingBox().catch(() => null);
+        console.log(`desktop ${id} list`, listBox);
+        if (["chats", "contacts", "channels", "requests"].includes(id)) {
+          if (!listBox || listBox.height < 200 || listBox.width < 300) {
+            throw new Error(
+              `desktop ${id} master-list must be ≥300×200, got ${JSON.stringify(listBox)}`,
+            );
+          }
+        }
+        const dest = path.join(OUT_DIR, `${id}-desktop.png`);
+        await desktop.screenshot({ path: dest, fullPage: false });
+      paths.push(dest);
     }
-    const resized = await Promise.all(
-      tiles.map((file) => sharp(file).resize(360, 225, { fit: "cover" }).png().toBuffer()),
+    await desktop.close();
+
+    const mobile = await browser.newPage({
+      viewport: { width: 390, height: 844 },
+      colorScheme: "dark",
+      deviceScaleFactor: 2,
+    });
+    for (const id of SURFACES) {
+      await mobile.goto(`http://127.0.0.1:${port}/design?surface=${id}`, { waitUntil: "networkidle" });
+      await mobile.locator(`[data-surface="design:${id}"]`).waitFor({ state: "visible" });
+      const dest = path.join(OUT_DIR, `${id}-mobile.png`);
+      await mobile.screenshot({ path: dest, fullPage: false });
+      paths.push(dest);
+    }
+    await mobile.close();
+
+    const mixed = [];
+    for (const id of SURFACES) {
+      mixed.push(
+        await labeledTile(path.join(OUT_DIR, `${id}-desktop.png`), `${id}-desktop`, 480, 320),
+      );
+      mixed.push(
+        await labeledTile(path.join(OUT_DIR, `${id}-mobile.png`), `${id}-mobile`, 480, 320),
+      );
+    }
+    await contactSheet(mixed, 4, 480, 320, path.join(OUT_DIR, "contact-sheet.png"));
+
+    const mobileTiles = [];
+    for (const id of SURFACES) {
+      mobileTiles.push(
+        await labeledTile(path.join(OUT_DIR, `${id}-mobile.png`), `${id}-mobile`, 960, 640),
+      );
+    }
+    await contactSheet(mobileTiles, 2, 960, 640, path.join(OUT_DIR, "contact-sheet-mobile.png"));
+
+    await writeFile(
+      path.join(OUT_DIR, "manifest.txt"),
+      `${paths.join("\n")}\n${path.join(OUT_DIR, "contact-sheet.png")}\n${path.join(OUT_DIR, "contact-sheet-mobile.png")}\n`,
     );
-    const cols = 4;
-    const rows = 4;
-    const composites = resized.map((input, i) => ({
-      input,
-      left: (i % cols) * 360,
-      top: Math.floor(i / cols) * 225,
-    }));
-    await sharp({
-      create: {
-        width: cols * 360,
-        height: rows * 225,
-        channels: 3,
-        background: "#05050A",
-      },
-    })
-      .composite(composites)
-      .png()
-      .toFile(path.join(OUT_DIR, "contact-sheet.png"));
-    await writeFile(path.join(OUT_DIR, "manifest.txt"), `${paths.join("\n")}\n${path.join(OUT_DIR, "contact-sheet.png")}\n`);
   } finally {
     await browser.close();
     server.close();
