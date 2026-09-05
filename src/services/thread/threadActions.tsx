@@ -4,6 +4,7 @@ import { AttachmentBubble } from "@/components/attachment-bubble";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { ThreadView } from "@/components/thread-view";
 import { useThread } from "@/hooks/useThread";
+import { LinkService } from "@/services/link/LinkService";
 import { useContactStore } from "@/stores/contactStore";
 import type { AttachmentRecord } from "@/types/attachment";
 
@@ -39,6 +40,13 @@ export function ThreadViewHost({ conversationId }: { conversationId: string | nu
       onAttach={(file) => void thread.sendAttachment(file)}
       onRetry={thread.retryFailed}
       onResolved={() => void thread.reload()}
+      receiverRole={thread.receiverRole}
+      linkStatus={thread.linkStatus}
+      onTakeoverReceive={async () => {
+        await LinkService.takeOverReceiver();
+        await thread.reload();
+        if (thread.draft.trim()) await thread.send();
+      }}
     />
   );
 }

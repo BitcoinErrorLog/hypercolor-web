@@ -31,12 +31,14 @@ export async function loadInboxRows(ownerPubky: string): Promise<{
   rows: InboxRow[];
   pendingRequests: number;
 }> {
-  const [dms, pendingRequests] = await Promise.all([
+  const [dms, pendingRequests, receiver] = await Promise.all([
     StorageService.listLinkConversations(ownerPubky),
     StorageService.countPendingMessageRequests(ownerPubky),
+    StorageService.getLinkReceiver(ownerPubky),
   ]);
+  const receiverRole = receiver?.receiverRole ?? null;
   return {
-    rows: dmInboxRows(dms),
+    rows: dmInboxRows(dms.map((row) => ({ ...row, receiverRole }))),
     pendingRequests,
   };
 }

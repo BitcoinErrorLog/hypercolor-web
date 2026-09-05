@@ -472,6 +472,15 @@ export async function signOut(): Promise<void> {
           zeroizeBytes(secret);
         }
       }
+      // Matching published pk → this device owns the inbox: delete the marker.
+      // GET throw / failure: do not delete. An active receiver whose GET fails
+      // must not wipe a live marker (offline ≠ absent). Standby is unchanged:
+      // a foreign pk is not ours, so we never delete it.
+      //
+      // Orphan markers exist when a session published receiver.json then signed
+      // out while standby siblings never published. The published pk belongs to
+      // a signed-out session. Recovery is takeover (PUT this device's current
+      // receiver pk), not deleting blindly on GET failure.
       if (localPk) {
         const marker = await PaykitLinkWeb.getReceiverMarker(owner, markerPath);
         if (marker && marker.noisePublicKey === localPk) {

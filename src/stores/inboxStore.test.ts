@@ -10,6 +10,7 @@ vi.mock("@/services/StorageService", () => ({
     listLinkConversations: (...args: unknown[]) => listLinkConversations(...args),
     countPendingMessageRequests: (...args: unknown[]) =>
       countPendingMessageRequests(...args),
+    getLinkReceiver: vi.fn(async () => null),
     listGroupChannels: (...args: unknown[]) => listGroupChannels(...args),
   },
 }));

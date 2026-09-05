@@ -49,6 +49,8 @@ export function Composer({
   draft,
   sending,
   disabled,
+  sendBlocked,
+  sendBlockedReason,
   placeholder,
   onChangeDraft,
   onSend,
@@ -61,6 +63,8 @@ export function Composer({
   draft: string;
   sending: boolean;
   disabled?: boolean;
+  sendBlocked?: boolean;
+  sendBlockedReason?: string;
   placeholder: string;
   onChangeDraft: (value: string) => void;
   onSend: () => void;
@@ -75,7 +79,8 @@ export function Composer({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [accept, setAccept] = useState<string | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(initialMenuOpen);
-  const blocked = Boolean(disabled) || sending;
+  const fieldBlocked = Boolean(disabled) || sending;
+  const blocked = fieldBlocked || Boolean(sendBlocked);
   const menuId = `${testIdPrefix}AttachMenu`;
 
   function closeMenu() {
@@ -89,11 +94,14 @@ export function Composer({
     window.setTimeout(() => fileRef.current?.click(), 0);
   }
 
+  const sendReasonId = `${testIdPrefix}SendBlockedReason`;
   const sendButton = (
     <Button
       type="submit"
       variant="brand"
       disabled={blocked || draft.trim().length === 0}
+      title={sendBlocked ? sendBlockedReason : undefined}
+      aria-describedby={sendBlocked && sendBlockedReason ? sendReasonId : undefined}
       data-testid={`${testIdPrefix}Send`}
     >
       {sending ? "Sending…" : "Send"}
@@ -189,7 +197,7 @@ export function Composer({
       ) : null}
       <Textarea
         value={draft}
-        disabled={blocked}
+        disabled={fieldBlocked}
         placeholder={placeholder}
         data-testid={`${testIdPrefix}Draft`}
         className="min-h-12 min-w-0 flex-1 text-base"

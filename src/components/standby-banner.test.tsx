@@ -10,15 +10,11 @@ import {
 } from "@/services/link/provisionReceiver";
 import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
 
-vi.mock("@/services/link/provisionReceiver", async () => {
-  const actual = await vi.importActual<typeof import("@/services/link/provisionReceiver")>(
-    "@/services/link/provisionReceiver",
-  );
-  return {
-    ...actual,
-    takeoverLiveReceiver: vi.fn(),
-  };
-});
+vi.mock("@/services/link/LinkService", () => ({
+  LinkService: {
+    takeOverReceiver: vi.fn(),
+  },
+}));
 
 let host: HTMLDivElement;
 let root: Root;

@@ -53,6 +53,7 @@ import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
 import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver } from "./provisionReceiver";
+import { isStandbyNewChatBlocked, STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
 import {
   adoptApprovedSession,
   adoptLiveHandle,
@@ -226,7 +227,13 @@ export const LinkService = {
     receiverRole: "active" | "standby";
   }> {
     const active = requireActiveSession();
-    return takeoverReceiver(active.handle, active.pubky);
+    const result = await takeoverReceiver(active.handle, active.pubky);
+    await restartQueuedUnestablishedHandshakes();
+    return result;
+  },
+
+  async restartQueuedUnestablishedHandshakes(): Promise<void> {
+    await restartQueuedUnestablishedHandshakes();
   },
 
   async establishedLinkId(peerPubky: PubkyKey): Promise<string> {
@@ -288,6 +295,7 @@ export const LinkService = {
 
   async sendDm(peerPubky: PubkyKey, body: string): Promise<LinkMessage> {
     return withQueue(peerPubky, async () => {
+      await assertCanSendOnStandby(peerPubky);
       const outcome = await ensureLinkLocked(peerPubky, true, false, "user");
       if (
         outcome !== "ready" &&
@@ -336,6 +344,7 @@ export const LinkService = {
     sentAt: number;
   }): Promise<LinkMessage> {
     return withQueue(input.peerPubky, async () => {
+      await assertCanSendOnStandby(input.peerPubky);
       const outcome = await ensureLinkLocked(input.peerPubky, true, false, "user");
       if (
         outcome !== "ready" &&
@@ -793,6 +802,13 @@ async function ensureLinkLocked(
   if (live?.status === "established") return "ready";
   if (stored?.status === "established") {
     return restoreEstablished(activeSession, receiver, stored, alreadyRecovered, allowInitiate, intent);
+  }
+
+  // Standby: this device's published marker is not live (foreign or orphan).
+  // Established links already returned above. Do not start or advance a
+  // handshake — the peer would answer the published (dead) key.
+  if (receiver.receiverRole === "standby") {
+    return "idle";
   }
 
   if (await isHandshakeBudgetExhausted(ownerPubky, peerPubky)) {
@@ -1486,6 +1502,42 @@ async function wipeLinkState(stored: LinkRecord): Promise<void> {
     }
   }
   await StorageService.deleteLink(stored.ownerPubky, stored.peerPubky);
+}
+
+async function assertCanSendOnStandby(peerPubky: PubkyKey): Promise<void> {
+  const ownerPubky = await requireOwner();
+  const receiver = await StorageService.getLinkReceiver(ownerPubky);
+  const stored = await StorageService.getLink(ownerPubky, peerPubky);
+  if (isStandbyNewChatBlocked(receiver?.receiverRole, stored?.status ?? null)) {
+    throw new Error(STANDBY_COMPOSER_NOTICE);
+  }
+}
+
+/**
+ * After this device takes over the receiver marker, in-flight initiator
+ * handshakes that targeted the previous (dead) published key cannot complete:
+ * the peer already answered msg1 against that key. Wipe the unestablished
+ * local handshake + outbox slot and re-initiate once (budget charged once).
+ */
+async function restartQueuedUnestablishedHandshakes(): Promise<void> {
+  const ownerPubky = await requireOwner();
+  const [links, owed] = await Promise.all([
+    StorageService.getAllLinks(ownerPubky),
+    StorageService.listOwedOutboundLinkMessages(ownerPubky),
+  ]);
+  const owedPeers = new Set(owed.map((message) => message.peerPubky));
+  for (const link of links) {
+    if (link.status === "established") continue;
+    if (!owedPeers.has(link.peerPubky)) continue;
+    await withQueue(link.peerPubky, async () => {
+      const current = await StorageService.getLink(ownerPubky, link.peerPubky);
+      if (!current || current.status === "established") return;
+      const budget = await chargeHandshakeBudget(ownerPubky, current.peerPubky);
+      if (budget.exhausted) return;
+      await wipeLinkState(current);
+      await ensureLinkLocked(current.peerPubky, true, true, "auto");
+    });
+  }
 }
 
 async function collectInboxCandidates(ownerPubky: PubkyKey): Promise<PubkyKey[]> {

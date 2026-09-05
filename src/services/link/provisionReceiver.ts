@@ -276,5 +276,8 @@ export async function takeoverLiveReceiver(): Promise<ProvisionedReceiver> {
   if (!live) {
     throw new Error("takeoverReceiver: no live session");
   }
-  return takeoverReceiver(live.handle, live.pubky);
+  const result = await takeoverReceiver(live.handle, live.pubky);
+  const { LinkService } = await import("./LinkService");
+  await LinkService.restartQueuedUnestablishedHandshakes();
+  return result;
 }

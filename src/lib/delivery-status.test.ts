@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { LinkDeliveryState } from "@/types/link";
-import { formatDeliveryStatus, isFailedDelivery, queuedThreadSubtitle, QUEUED_HANDSHAKE_SUBTITLE } from "./delivery-status";
+import {
+  formatDeliveryStatus,
+  isStandbyNewChatBlocked,
+  queuedThreadSubtitle,
+  QUEUED_HANDSHAKE_SUBTITLE,
+  QUEUED_STANDBY_SUBTITLE,
+} from "./delivery-status";
 
 describe("formatDeliveryStatus", () => {
   const cases: Array<[LinkDeliveryState, string]> = [
@@ -29,5 +35,19 @@ describe("formatDeliveryStatus", () => {
       QUEUED_HANDSHAKE_SUBTITLE,
     );
     expect(queuedThreadSubtitle({ linkStatus: "established", lastDeliveryState: "sent" })).toBeNull();
+    expect(
+      queuedThreadSubtitle({
+        linkStatus: "handshaking",
+        lastDeliveryState: "sending",
+        receiverRole: "standby",
+      }),
+    ).toBe(QUEUED_STANDBY_SUBTITLE);
+  });
+
+  it("blocks new chats on standby unless the link is already established", () => {
+    expect(isStandbyNewChatBlocked("standby", null)).toBe(true);
+    expect(isStandbyNewChatBlocked("standby", "handshaking")).toBe(true);
+    expect(isStandbyNewChatBlocked("standby", "established")).toBe(false);
+    expect(isStandbyNewChatBlocked("active", null)).toBe(false);
   });
 });

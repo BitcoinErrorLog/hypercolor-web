@@ -295,3 +295,126 @@ describe("ThreadView payment status text", () => {
     expect(paymentDisplayStatusText(status)).toBe(expected);
   });
 });
+
+describe("ThreadView standby composer", () => {
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    stubMatchMedia(false);
+    sessionStorage.clear();
+    takeThreadOrigin();
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    host.remove();
+    sessionStorage.clear();
+    takeThreadOrigin();
+  });
+
+  it("blocks send and shows receive CTA when standby with no established link", async () => {
+    const onSend = vi.fn();
+    const onTakeoverReceive = vi.fn(async () => undefined);
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      draft: "hello",
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: null,
+      onSend,
+      onTakeoverReceive,
+    });
+    expect(host.querySelector("[data-testid=standbyComposerNotice]")?.textContent).toContain(
+      "This device isn't receiving new chats. Receive on this device to start this conversation.",
+    );
+    expect(host.querySelector("[data-testid=threadStandbyTakeover]")?.textContent).toContain(
+      "Receive on this device",
+    );
+    const send = host.querySelector("[data-testid=threadSend]");
+    expect(send).toHaveProperty("disabled", true);
+    await act(async () => {
+      host.querySelector("form")?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("allows send on standby when the link is established", async () => {
+    const onSend = vi.fn();
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      draft: "hello",
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: "established",
+      onSend,
+    });
+    expect(host.querySelector("[data-testid=standbyComposerNotice]")).toBeNull();
+    expect(host.querySelector("[data-testid=threadSend]")).toHaveProperty("disabled", false);
+  });
+
+  it("keeps the draft and sends after takeover", async () => {
+    const onSend = vi.fn();
+    const onTakeoverReceive = vi.fn(async () => {
+      onSend();
+    });
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      draft: "keep me",
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: "handshaking",
+      onSend,
+      onTakeoverReceive,
+    });
+    expect(host.querySelector("[data-testid=threadDraft]")).toHaveProperty("value", "keep me");
+    await act(async () => {
+      document.querySelector("[data-testid=threadStandbyTakeover]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await act(async () => {
+      document.querySelector("[data-testid=standbyTakeoverConfirm]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(onTakeoverReceive).toHaveBeenCalled();
+    });
+  });
+
+  it("uses standby queued subtitle copy", async () => {
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      status: { kind: "enabled", pubky: OWNER },
+      receiverRole: "standby",
+      linkStatus: "handshaking",
+      messages: [
+        {
+          ownerPubky: OWNER,
+          eventId: "11111111-1111-4111-8111-111111111111",
+          conversationId: `dm:${PEER}`,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          direction: "sent",
+          kind: "chat.message.v0",
+          rawJson: "{}",
+          body: "queued",
+          sentAt: NOW,
+          receivedAt: null,
+          deliveryState: "sending",
+        },
+      ],
+    });
+    expect(host.querySelector("[data-testid=queuedHandshakeSubtitle]")?.textContent).toBe(
+      "Not receiving on this device — tap Receive on this device to continue.",
+    );
+  });
+});

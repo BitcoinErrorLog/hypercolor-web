@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Composer } from "@/components/composer";
+import { StandbyReceiveButton } from "@/components/standby-takeover-dialog";
+import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";
 import { DetailBackLink } from "@/components/detail-back";
 import { DetailHeading } from "@/components/detail-heading";
 import { DmMessageBubble } from "@/components/message-bubble";
@@ -10,7 +12,7 @@ import { ErrorDetails } from "@/components/error-details";
 import { PaymentNotice } from "@/components/payment-notice";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
-import { QUEUED_HANDSHAKE_SUBTITLE } from "@/lib/delivery-status";
+import { queuedThreadSubtitle, STANDBY_COMPOSER_NOTICE, isStandbyNewChatBlocked } from "@/lib/delivery-status";
 import { canComposeMessages } from "@/lib/session-ui";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import {
@@ -22,7 +24,7 @@ import {
   threadBackLabel,
 } from "@/lib/list-detail-focus";
 import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
-import type { LinkMessage } from "@/types/link";
+import type { LinkMessage, ReceiverRole, StoredLinkStatus } from "@/types/link";
 import {
   decodePaymentEnvelope,
   displayPaymentStatus,
@@ -111,7 +113,10 @@ export function ThreadView({
   onAttach,
   onRetry,
   onResolved,
+  onTakeoverReceive,
   now,
+  receiverRole = null,
+  linkStatus = null,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -131,6 +136,9 @@ export function ThreadView({
   onAttach: (file: File) => void;
   onRetry: () => void;
   onResolved: () => void;
+  onTakeoverReceive?: () => Promise<void>;
+  receiverRole?: ReceiverRole | null;
+  linkStatus?: StoredLinkStatus | null;
   now?: number;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -176,6 +184,16 @@ export function ThreadView({
 
   const title = displayName ? sanitizeDisplayName(displayName) : null;
   const mayCompose = canComposeMessages(status);
+  const standbyBlocked = isStandbyNewChatBlocked(receiverRole, linkStatus);
+  const queuedSubtitle = queuedThreadSubtitle({
+    linkStatus,
+    lastDeliveryState: messages.some(
+      (message) => message.direction === "sent" && message.deliveryState === "sending",
+    )
+      ? "sending"
+      : null,
+    receiverRole,
+  });
 
   return (
     <article className="flex h-full hc-detail-panel flex-col" data-testid="threadScreen" data-surface="thread-view">
@@ -195,11 +213,9 @@ export function ThreadView({
           >
             {title ?? <TruncatedPubky pubky={participantPubky} />}
           </DetailHeading>
-          {messages.some(
-            (message) => message.direction === "sent" && message.deliveryState === "sending",
-          ) ? (
+          {queuedSubtitle ? (
             <p className="text-sm font-light hc-brand-muted" data-testid="queuedHandshakeSubtitle">
-              {QUEUED_HANDSHAKE_SUBTITLE}
+              {queuedSubtitle}
             </p>
           ) : null}
         </div>
@@ -257,16 +273,32 @@ export function ThreadView({
       ) : null}
 
       {mayCompose ? (
-        <Composer
-          draft={draft}
-          sending={sending}
-          placeholder="Message"
-          onChangeDraft={onChangeDraft}
-          onSend={onSend}
-          onAttach={onAttach}
-          testIdPrefix="thread"
-          liveStatus={sending ? "Message sending" : null}
-        />
+        <>
+          {standbyBlocked ? (
+            <div className="space-y-2 border-t border-border px-4 py-3" data-testid="standbyComposerNotice">
+              <p id="threadSendBlockedReason" className="text-sm text-muted-foreground">
+                {STANDBY_COMPOSER_NOTICE}
+              </p>
+              {onTakeoverReceive ? (
+                <StandbyReceiveButton testId="threadStandbyTakeover" onTakeover={onTakeoverReceive}>
+                  {STANDBY_PRIMARY}
+                </StandbyReceiveButton>
+              ) : null}
+            </div>
+          ) : null}
+          <Composer
+            draft={draft}
+            sending={sending}
+            sendBlocked={standbyBlocked}
+            sendBlockedReason={standbyBlocked ? STANDBY_COMPOSER_NOTICE : undefined}
+            placeholder="Message"
+            onChangeDraft={onChangeDraft}
+            onSend={onSend}
+            onAttach={onAttach}
+            testIdPrefix="thread"
+            liveStatus={sending ? "Message sending" : null}
+          />
+        </>
       ) : null}
     </article>
   );

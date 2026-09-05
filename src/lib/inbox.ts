@@ -57,6 +57,7 @@ export function inboxRowFromDm(row: LinkConversationSummary): InboxRow {
   const waiting = queuedThreadSubtitle({
     linkStatus: row.linkStatus,
     lastDeliveryState: row.lastDeliveryState,
+    receiverRole: row.receiverRole,
   });
   const preview = waiting
     ? waiting

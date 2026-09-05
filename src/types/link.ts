@@ -286,6 +286,7 @@ export interface LinkConversationSummary {
   lastDeliveryState: LinkDeliveryState | null;
   linkStatus: StoredLinkStatus | null;
   unreadCount: number;
+  receiverRole?: ReceiverRole | null;
 }
 
 /** Splits a `dm:{counterpartyPubky}` conversation id; `null` when the shape does not match. */

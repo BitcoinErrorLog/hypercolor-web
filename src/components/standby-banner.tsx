@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ModalSheet } from "@/components/ui/sheet";
+import { StandbyTakeoverDialog } from "@/components/standby-takeover-dialog";
 import {
   REENABLE_BANNER_BODY,
   REENABLE_BANNER_TITLE,
@@ -12,8 +12,8 @@ import {
   STANDBY_BANNER_TITLE,
   STANDBY_PRIMARY,
   STANDBY_SECONDARY,
-  takeoverLiveReceiver,
 } from "@/services/link/provisionReceiver";
+import { LinkService } from "@/services/link/LinkService";
 import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
 
 const bannerFrame =
@@ -32,7 +32,6 @@ export function StandbyBanner() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
 
   const showStandby = role === "standby" && !snoozedStandby;
   const showReenable = !showStandby && needsReenable && role === "active" && !snoozedReenable;
@@ -58,7 +57,7 @@ export function StandbyBanner() {
     setBusy(true);
     setError(null);
     try {
-      await takeoverLiveReceiver();
+      await LinkService.takeOverReceiver();
       setConfirmOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not take over this device.");
@@ -122,46 +121,19 @@ export function StandbyBanner() {
           </div>
         </div>
       </div>
-      <ModalSheet
+      <StandbyTakeoverDialog
         open={confirmOpen}
+        busy={busy}
+        error={error}
+        title={copy.title}
+        body={copy.body}
+        primary={copy.primary}
+        secondary={copy.secondary}
         onClose={() => setConfirmOpen(false)}
-        role="alertdialog"
-        titleId="standby-takeover-title"
-        descriptionId="standby-takeover-body"
-        initialFocusRef={cancelRef}
-        testId="standbyTakeoverDialog"
-        surface="standby-takeover-confirm"
-      >
-        <h2 id="standby-takeover-title" className="text-lg font-semibold text-foreground">
-          {copy.title}
-        </h2>
-        <p id="standby-takeover-body" className="text-sm text-muted-foreground">
-          {copy.body}
-        </p>
-        {error ? <p className="text-sm hc-danger-text">{error}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            ref={cancelRef}
-            variant="outline"
-            data-testid="standbyTakeoverCancel"
-            onClick={() => setConfirmOpen(false)}
-          >
-            {copy.secondary}
-          </Button>
-          <Button
-            type="button"
-            variant="brand"
-            data-testid="standbyTakeoverConfirm"
-            disabled={busy}
-            onClick={() => {
-              void onTakeover();
-            }}
-          >
-            {busy ? "Taking over…" : copy.primary}
-          </Button>
-        </div>
-      </ModalSheet>
+        onConfirm={() => {
+          void onTakeover();
+        }}
+      />
     </>
   );
 }

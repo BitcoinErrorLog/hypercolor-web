@@ -275,4 +275,19 @@ describe("session restore classification", () => {
     await signOut();
     expect(removeReceiverMarker).toHaveBeenCalledTimes(1);
   });
+
+  it("sign-out on active does not delete when own-marker GET fails", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    resume.mockResolvedValue(handle);
+    await restoreSessionOnLoad();
+    vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockRejectedValue(new Error("homeserver unreachable"));
+    await signOut();
+    expect(removeReceiverMarker).not.toHaveBeenCalled();
+    expect(signOutSession).toHaveBeenCalled();
+  });
 });

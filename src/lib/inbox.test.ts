@@ -111,6 +111,20 @@ describe("inbox", () => {
     expect(rows.find((row) => row.id === "dm:text")?.preview).toBe("hello");
   });
 
+  it("uses standby queued copy for a non-established link", () => {
+    const row = inboxRowFromDm(
+      dm({
+        conversationId: "dm:queued-standby",
+        linkStatus: "handshaking",
+        lastDeliveryState: "sending",
+        receiverRole: "standby",
+      }),
+    );
+    expect(row.preview).toBe(
+      "Not receiving on this device — tap Receive on this device to continue.",
+    );
+  });
+
   it("builds channel list rows from private groups", () => {
     const rows = channelListRows([
       {
