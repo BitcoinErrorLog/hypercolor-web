@@ -756,7 +756,10 @@ export function UxCatalog() {
       );
       if (
         url.origin === window.location.origin &&
-        (url.pathname.startsWith("/_next/") || url.pathname === "/sqlite3.wasm")
+        (url.pathname.startsWith("/_next/") ||
+          url.pathname === "/sqlite3.wasm" ||
+          url.pathname.startsWith("/e2e/") ||
+          url.searchParams.has("_rsc"))
       ) {
         return originalFetch(input, init);
       }
