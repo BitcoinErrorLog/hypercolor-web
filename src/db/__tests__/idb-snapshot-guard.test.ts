@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   IDB_KEY,
   IDB_META_KEY,
@@ -9,11 +9,13 @@ import {
   currentPersistGeneration,
   currentPersistNonce,
   currentSqliteIdbName,
+  preparePersistGenerationForOpen,
   putIdbSnapshot,
   resetPersistGenerationForTests,
   sealPersistGenerationInIdb,
 } from "../openWebSqlite";
-import { resetTabLockForTests, setTabLockOwner } from "@/services/tabLock";
+import { SQLITE_PERSIST_FAILED_EVENT, SqlitePersistError } from "../errors";
+import { resetTabLockForTests, setTabLockModeForTests, setTabLockOwner } from "@/services/tabLock";
 
 const BUNDLE = "test-bundle";
 
@@ -64,9 +66,17 @@ async function readBlob(name: string): Promise<Uint8Array | null> {
 }
 
 describe("idb snapshot generation guard", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    const name = currentSqliteIdbName();
     resetTabLockForTests();
     resetPersistGenerationForTests();
+    vi.unstubAllGlobals();
+    await new Promise<void>((resolve) => {
+      const req = indexedDB.deleteDatabase(name);
+      req.onsuccess = () => resolve();
+      req.onerror = () => resolve();
+      req.onblocked = () => resolve();
+    });
   });
 
   it("writes blob and meta in one transaction and refuses older generation puts", async () => {
@@ -83,12 +93,14 @@ describe("idb snapshot generation guard", () => {
     expect(meta?.generation).toBe(1);
 
     bumpPersistGeneration();
-    await putIdbSnapshot(new Uint8Array([9]), {
-      userVersion: 1,
-      bundleId: BUNDLE,
-      generation: 1,
-      nonce: "old",
-    });
+    await expect(
+      putIdbSnapshot(new Uint8Array([9]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: 1,
+        nonce: "old",
+      }),
+    ).rejects.toBeInstanceOf(SqlitePersistError);
     expect(await readBlob(name)).toEqual(bytes);
   });
 
@@ -115,14 +127,94 @@ describe("idb snapshot generation guard", () => {
         nonce: currentPersistNonce(),
       });
       expect(await readBlob(name)).toEqual(new Uint8Array([9, storedGen]));
-      await putIdbSnapshot(new Uint8Array([1]), {
-        userVersion: 1,
-        bundleId: BUNDLE,
-        generation: storedGen,
-        nonce: "zzzz-old-nonce",
-      });
+      await expect(
+        putIdbSnapshot(new Uint8Array([1]), {
+          userVersion: 1,
+          bundleId: BUNDLE,
+          generation: storedGen,
+          nonce: "zzzz-old-nonce",
+        }),
+      ).rejects.toBeInstanceOf(SqlitePersistError);
       expect(await readBlob(name)).toEqual(new Uint8Array([9, storedGen]));
     }
+  });
+
+  it("cold-open writer adopts then bumps so a first put against zzzz nonce lands", async () => {
+    const storedGen = 7;
+    const name = currentSqliteIdbName();
+    await putIdbSnapshot(new Uint8Array([1]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    resetPersistGenerationForTests();
+    setTabLockModeForTests("writer");
+    preparePersistGenerationForOpen({
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    expect(currentPersistGeneration()).toBe(storedGen + 1);
+    await putIdbSnapshot(new Uint8Array([9, 9]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: currentPersistGeneration(),
+      nonce: currentPersistNonce(),
+    });
+    expect(await readBlob(name)).toEqual(new Uint8Array([9, 9]));
+  });
+
+  it("cold-open reader adopts without bumping and does not put", async () => {
+    const storedGen = 7;
+    const name = currentSqliteIdbName();
+    const original = new Uint8Array([4, 4]);
+    await putIdbSnapshot(original, {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    resetPersistGenerationForTests();
+    setTabLockModeForTests("readonly");
+    preparePersistGenerationForOpen({
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    expect(currentPersistGeneration()).toBe(storedGen);
+    expect(await readBlob(name)).toEqual(original);
+    expect(await readMeta(name)).toMatchObject({ generation: storedGen, nonce: "zzzzzzzzzzzz" });
+  });
+
+  it("refused stale put sets persist error and SQLITE_PERSIST_FAILED_EVENT", async () => {
+    await putIdbSnapshot(new Uint8Array([3]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: 10,
+      nonce: "zzzzzzzzzzzz",
+    });
+    resetPersistGenerationForTests();
+    const events: string[] = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (event: Event) => {
+        if (event instanceof CustomEvent && event.type === SQLITE_PERSIST_FAILED_EVENT) {
+          events.push(String(event.detail));
+        }
+        return true;
+      },
+    });
+    await expect(
+      putIdbSnapshot(new Uint8Array([9]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: 1,
+        nonce: "aaaa",
+      }),
+    ).rejects.toBeInstanceOf(SqlitePersistError);
+    expect(events.some((detail) => detail.includes("stale snapshot generation"))).toBe(true);
   });
 
   it("tie-breaks equal generation with nonce", () => {

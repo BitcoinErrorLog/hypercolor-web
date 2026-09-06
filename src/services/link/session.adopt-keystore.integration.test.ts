@@ -167,4 +167,27 @@ describe("adoptApprovedSession real KeyStore↔tabLock wiring", () => {
     expect(useAuthStore.getState().isAuthenticated).toBe(true);
     expect(useAuthStore.getState().pubky).toBe(OWNER);
   });
+
+  it("losing tab does not clear a later committed same-pubky adoption", async () => {
+    const { adoptApprovedSession } = await import("./session");
+    const { KeyStore } = await import("@/services/KeyStore");
+    const origSetPubky = KeyStore.setPubky.bind(KeyStore);
+    vi.spyOn(KeyStore, "setPubky").mockImplementation(async (pubky: string) => {
+      const nonceA = await origSetPubky(pubky);
+      await origSetPubky(pubky);
+      const { resetTabLockForTests: reset } = await import("@/services/tabLock");
+      reset();
+      return nonceA;
+    });
+
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    await expect(adoptApprovedSession(handle as never)).rejects.toMatchObject({
+      name: "TabLockWriterError",
+    });
+    expect(await KeyStore.getPubky()).toBe(OWNER);
+    vi.mocked(KeyStore.setPubky).mockRestore();
+  });
 });

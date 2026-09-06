@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, describe, expect, it } from "vitest";
 import { SQLITE_BUNDLE_ID } from "../bundleId";
+import { SqlitePersistError } from "../errors";
 import {
   bumpPersistGeneration,
   currentPersistGeneration,
@@ -54,11 +55,13 @@ describe("F2/F5/F6 snapshot generation", () => {
 
     const staleGen = repairedGen - 1;
     const resurrected = new TextEncoder().encode("OLD-WRITER-ROWS");
-    await putIdbSnapshot(resurrected, {
-      userVersion: 13,
-      bundleId: SQLITE_BUNDLE_ID,
-      generation: staleGen,
-    });
+    await expect(
+      putIdbSnapshot(resurrected, {
+        userVersion: 13,
+        bundleId: SQLITE_BUNDLE_ID,
+        generation: staleGen,
+      }),
+    ).rejects.toBeInstanceOf(SqlitePersistError);
 
     const bytes = await getIdbSnapshot();
     expect(bytes ? new TextDecoder().decode(bytes) : null).toBe("REPAIRED-EMPTY");
@@ -93,11 +96,13 @@ describe("F2/F5/F6 snapshot generation", () => {
       generation: takeoverGen,
     });
 
-    await putIdbSnapshot(new TextEncoder().encode("LATE-OLD-PUT"), {
-      userVersion: 13,
-      bundleId: SQLITE_BUNDLE_ID,
-      generation: oldGen,
-    });
+    await expect(
+      putIdbSnapshot(new TextEncoder().encode("LATE-OLD-PUT"), {
+        userVersion: 13,
+        bundleId: SQLITE_BUNDLE_ID,
+        generation: oldGen,
+      }),
+    ).rejects.toBeInstanceOf(SqlitePersistError);
 
     const bytes = await getIdbSnapshot();
     expect(bytes ? new TextDecoder().decode(bytes) : null).toBe("NEW-WRITER");

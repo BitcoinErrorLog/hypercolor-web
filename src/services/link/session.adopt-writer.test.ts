@@ -9,7 +9,7 @@ vi.mock("./PaykitLinkWeb", () => ({
   },
 }));
 
-const setPubky = vi.fn(async () => undefined);
+const setPubky = vi.fn(async () => "adopt-a");
 const clear = vi.fn(async () => undefined);
 const clearPubkyIfMatches = vi.fn();
 
@@ -19,7 +19,7 @@ vi.mock("@/services/KeyStore", () => ({
     getPubky: vi.fn(async () => null),
     getReceiverNoiseSecret: vi.fn(async () => null),
     clear: () => clear(),
-    clearPubkyIfMatches: (expected: string) => clearPubkyIfMatches(expected),
+    clearPubkyIfMatches: (expected: string, nonce: string) => clearPubkyIfMatches(expected, nonce),
   },
 }));
 
@@ -87,11 +87,12 @@ describe("adoptApprovedSession writer critical section", () => {
     setPubky.mockImplementation(async () => {
       const { resetTabLockForTests: reset } = await import("@/services/tabLock");
       reset();
+      return "adopt-a";
     });
     await expect(adoptApprovedSession(handle as never)).rejects.toMatchObject({
       name: "TabLockWriterError",
     });
-    expect(clearPubkyIfMatches).toHaveBeenCalledWith(OWNER);
+    expect(clearPubkyIfMatches).toHaveBeenCalledWith(OWNER, "adopt-a");
     expect(clear).not.toHaveBeenCalled();
   });
 

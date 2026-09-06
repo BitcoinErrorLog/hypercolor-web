@@ -25,6 +25,7 @@ const STORE_WRAPPING_KEY = "wrappingKey";
 const WRAPPING_KEY_ID = "wrapping-key";
 
 const KEY_PUBKY = "pubky";
+const KEY_PUBKY_ADOPTION = "pubky-adoption";
 const KEY_HOMESERVER = "homeserver";
 const KEY_LINK_SESSION = "link_session";
 
@@ -450,21 +451,56 @@ export async function getAppCert(): Promise<AppCert | null> {
 
 // ─── Pubky public key (plaintext metadata — not sensitive) ────────────────────
 
-export async function setPubky(pubky: string): Promise<void> {
+function randomAdoptionNonce(): string {
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+export async function setPubky(pubky: string): Promise<string> {
   const { setTabLockOwner } = await import("@/services/tabLock");
   setTabLockOwner(pubky);
-  await setMetadata(KEY_PUBKY, pubky);
+  const adoptionNonce = randomAdoptionNonce();
+  const db = ensureInitialized();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_METADATA, "readwrite");
+    const store = tx.objectStore(STORE_METADATA);
+    store.put(pubky, KEY_PUBKY);
+    store.put(adoptionNonce, KEY_PUBKY_ADOPTION);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("KeyStore: failed to write pubky"));
+  });
+  return adoptionNonce;
 }
 
 export async function getPubky(): Promise<string | null> {
   return getMetadata(KEY_PUBKY);
 }
 
-/** Un-set the signed-in pubky only if it still equals `expected`. Does not wipe secrets. */
-export async function clearPubkyIfMatches(expected: string): Promise<void> {
-  const current = await getPubky();
-  if (current !== expected) return;
-  await deleteMetadata(KEY_PUBKY);
+/** Un-set the signed-in pubky only if it still equals `expected` with this tab's adoption nonce. */
+export async function clearPubkyIfMatches(expected: string, adoptionNonce: string): Promise<void> {
+  const db = ensureInitialized();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_METADATA, "readwrite");
+    const store = tx.objectStore(STORE_METADATA);
+    const pubkyReq = store.get(KEY_PUBKY);
+    const nonceReq = store.get(KEY_PUBKY_ADOPTION);
+    const maybeClear = () => {
+      if (pubkyReq.readyState !== "done" || nonceReq.readyState !== "done") return;
+      const current = typeof pubkyReq.result === "string" ? pubkyReq.result : null;
+      const storedNonce = typeof nonceReq.result === "string" ? nonceReq.result : null;
+      if (current !== expected || storedNonce !== adoptionNonce) return;
+      store.delete(KEY_PUBKY);
+      store.delete(KEY_PUBKY_ADOPTION);
+    };
+    pubkyReq.onsuccess = maybeClear;
+    nonceReq.onsuccess = maybeClear;
+    pubkyReq.onerror = () =>
+      reject(pubkyReq.error ?? new Error("KeyStore: failed to read pubky"));
+    nonceReq.onerror = () =>
+      reject(nonceReq.error ?? new Error("KeyStore: failed to read pubky adoption"));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("KeyStore: failed to clear matching pubky"));
+  });
 }
 
 // ─── Homeserver (plaintext metadata) ──────────────────────────────────────────

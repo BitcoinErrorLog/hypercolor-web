@@ -291,6 +291,7 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
   await acquireScopedWriter(pubky);
   let keyStoreAdvanced = false;
   let adoptionCommitted = false;
+  let adoptionNonce = "";
   try {
     assertWriter("adoptApprovedSession:start");
     const exported = handle.exportSession();
@@ -318,7 +319,7 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
       await metadataWithPreservedReceiver(pubky, exported, previous),
     );
     assertWriter("adoptApprovedSession:after-sqlite");
-    await KeyStore.setPubky(pubky);
+    adoptionNonce = await KeyStore.setPubky(pubky);
     keyStoreAdvanced = true;
     assertWriter("adoptApprovedSession:after-keystore");
     useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
@@ -327,7 +328,7 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
   } catch (err) {
     if (keyStoreAdvanced && !adoptionCommitted && !hasWriterLock()) {
       try {
-        await KeyStore.clearPubkyIfMatches(pubky);
+        await KeyStore.clearPubkyIfMatches(pubky, adoptionNonce);
       } catch {
         /* rollback best-effort */
       }

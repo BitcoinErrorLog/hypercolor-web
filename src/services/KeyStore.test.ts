@@ -303,4 +303,13 @@ describe("KeyStore", () => {
       await KeyStore.getAttachmentSecret(owner, "sender1", "event1"),
     ).toBeNull();
   });
+
+  it("clearPubkyIfMatches only clears this tab's adoption nonce", async () => {
+    const nonceA = await KeyStore.setPubky(owner);
+    const nonceB = await KeyStore.setPubky(owner);
+    await KeyStore.clearPubkyIfMatches(owner, nonceA);
+    expect(await KeyStore.getPubky()).toBe(owner);
+    await KeyStore.clearPubkyIfMatches(owner, nonceB);
+    expect(await KeyStore.getPubky()).toBeNull();
+  });
 });

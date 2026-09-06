@@ -80,6 +80,14 @@ export function adoptPersistGenerationFromMeta(meta: SqliteSnapshotMeta | null):
   if (meta.generation > persistGeneration) persistGeneration = meta.generation;
 }
 
+/** Adopt stored generation, then bump so a cold-start writer cannot lose the nonce tie-break. */
+export function preparePersistGenerationForOpen(meta: SqliteSnapshotMeta | null): void {
+  adoptPersistGenerationFromMeta(meta);
+  if (getTabLock().mode === "writer" && !isYieldingTab()) {
+    bumpPersistGeneration();
+  }
+}
+
 export function resetPersistGenerationForTests(): void {
   persistGeneration = 1;
   persistNonce = randomPersistNonce();
@@ -163,8 +171,10 @@ function wrapIdbSnapshot(
         lastPersistError = null;
       })
       .catch((err: unknown) => {
-        lastPersistError = new SqlitePersistError(err);
-        emitPersistFailed(lastPersistError);
+        lastPersistError = err instanceof SqlitePersistError ? err : new SqlitePersistError(err);
+        if (!(err instanceof SqlitePersistError)) {
+          emitPersistFailed(lastPersistError);
+        }
       });
     void reason;
     return persistChain;
@@ -543,17 +553,36 @@ export async function putIdbSnapshot(
       const tx = db.transaction(IDB_STORE, "readwrite");
       const store = tx.objectStore(IDB_STORE);
       const existingReq = store.get(IDB_META_KEY);
+      let settled = false;
+      const fail = (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
       existingReq.onsuccess = () => {
         const existing = existingReq.result as SqliteSnapshotMeta | undefined;
         if (isStalePut(meta, existing)) {
+          const stale = new SqlitePersistError("stale snapshot generation");
+          emitPersistFailed(stale);
+          fail(stale);
+          try {
+            tx.abort();
+          } catch {
+            /* abort is best-effort after refuse */
+          }
           return;
         }
         store.put(bytes, IDB_KEY);
         store.put(meta, IDB_META_KEY);
       };
-      tx.oncomplete = () => resolve();
-      tx.onerror = () =>
-        reject(tx.error ?? new Error("indexedDB put failed"));
+      existingReq.onerror = () =>
+        fail(existingReq.error ?? new Error("indexedDB get meta failed"));
+      tx.oncomplete = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      tx.onerror = () => fail(tx.error ?? new Error("indexedDB put failed"));
     });
   } finally {
     db.close();
@@ -640,7 +669,7 @@ async function openIdbSnapshotVfs(
 ): Promise<PersistableSqlExecutor> {
   await migrateLegacySqliteSnapshotIfNeeded();
   const { bytes, meta } = await getIdbSnapshotAndMeta();
-  adoptPersistGenerationFromMeta(meta);
+  preparePersistGenerationForOpen(meta);
   const db = hydrateMemoryDb(sqlite3, bytes);
   if (bytes && bytes.byteLength > 0 && meta) {
     const blobVersion = pragmaUserVersion(db);
