@@ -9,6 +9,8 @@ const LOCK_NAME = "hypercolor-writer";
 export const TAB_LOCK_ACQUIRE_DEBOUNCE_MS = 1000;
 const YIELD_WAIT_MS = 1500;
 const YIELD_CHANNEL = "hypercolor-writer-yield";
+const YIELD_REQUEST_CHANNEL = "hypercolor-writer-yield-request";
+const tabId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
 let startPromise: Promise<TabLock> | null = null;
 let mode: TabLockMode = "readonly";
@@ -19,6 +21,7 @@ let stealInFlight = false;
 let takeoverRefreshPending = false;
 let acquireTimer: ReturnType<typeof setTimeout> | null = null;
 let acquireGeneration = 0;
+let yieldReqChannel: BroadcastChannel | null = null;
 
 function snapshot(): TabLock {
   return {
@@ -27,17 +30,32 @@ function snapshot(): TabLock {
   };
 }
 
+function installE2eHooks(): void {
+  if (
+    typeof window === "undefined" ||
+    typeof __HYPERCOLOR_E2E_HARNESS__ === "undefined" ||
+    !__HYPERCOLOR_E2E_HARNESS__
+  ) {
+    return;
+  }
+  const host = window as Window & {
+    __hypercolorTabLockMode?: () => string;
+    __hypercolorEnsureWriter?: () => Promise<TabLock>;
+    __hypercolorRequestTakeover?: () => void;
+    __hypercolorAbortWriterLock?: () => void;
+  };
+  host.__hypercolorTabLockMode = () => mode;
+  host.__hypercolorEnsureWriter = () => ensureWriter();
+  host.__hypercolorRequestTakeover = () => requestTakeover();
+  host.__hypercolorAbortWriterLock = () => {
+    currentAbort?.abort();
+  };
+}
+
 function emit(): void {
   const lock = snapshot();
   for (const listener of listeners) listener(lock);
-  if (
-    typeof window !== "undefined" &&
-    typeof __HYPERCOLOR_E2E_HARNESS__ !== "undefined" &&
-    __HYPERCOLOR_E2E_HARNESS__
-  ) {
-    (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode = () =>
-      mode;
-  }
+  installE2eHooks();
 }
 
 function hasWebLocks(): boolean {
@@ -62,15 +80,48 @@ function postYielded(): void {
   if (typeof BroadcastChannel === "undefined") return;
   try {
     const channel = new BroadcastChannel(YIELD_CHANNEL);
-    channel.postMessage({ type: "yielded" });
+    channel.postMessage({ type: "yielded", from: tabId });
     channel.close();
   } catch {
     /* ignore */
   }
 }
 
+function postYieldRequest(): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const channel = new BroadcastChannel(YIELD_REQUEST_CHANNEL);
+    channel.postMessage({ type: "yield", from: tabId });
+    channel.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+function installYieldRequestListener(): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    yieldReqChannel?.close();
+  } catch {
+    /* ignore */
+  }
+  try {
+    const channel = new BroadcastChannel(YIELD_REQUEST_CHANNEL);
+    yieldReqChannel = channel;
+    channel.onmessage = (event: MessageEvent<{ from?: string }>) => {
+      if (event.data?.from === tabId) return;
+      if (mode === "writer") currentAbort?.abort();
+    };
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function waitForPeerWriterYield(timeoutMs = YIELD_WAIT_MS): Promise<void> {
-  if (!stealInFlight || typeof BroadcastChannel === "undefined") return;
+  if (mode === "writer" || !stealInFlight || typeof BroadcastChannel === "undefined") {
+    stealInFlight = false;
+    return;
+  }
   stealInFlight = false;
   await new Promise<void>((resolve) => {
     let settled = false;
@@ -192,14 +243,8 @@ function installAutoAcquire(): void {
 
 export async function initTabLock(): Promise<TabLock> {
   installAutoAcquire();
-  if (
-    typeof window !== "undefined" &&
-    typeof __HYPERCOLOR_E2E_HARNESS__ !== "undefined" &&
-    __HYPERCOLOR_E2E_HARNESS__
-  ) {
-    (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode = () =>
-      mode;
-  }
+  installYieldRequestListener();
+  installE2eHooks();
   if (startPromise) return startPromise;
 
   startPromise = (async () => {
@@ -233,15 +278,30 @@ export function subscribeTabLock(listener: (lock: TabLock) => void): () => void 
   };
 }
 
-export function requestTakeover(): void {
+function isWriterNow(): boolean {
+  return mode === "writer";
+}
+
+async function runTakeover(): Promise<void> {
   if (!hasWebLocks()) {
     mode = "writer";
     emit();
     return;
   }
+  if (isWriterNow()) return;
+  await tryAcquire({ ifAvailable: true });
+  if (isWriterNow()) return;
   stealInFlight = true;
   takeoverRefreshPending = true;
+  postYieldRequest();
   void tryAcquire({ steal: true });
+  await waitForPeerWriterYield();
+  if (isWriterNow()) return;
+  await tryAcquire({ ifAvailable: true });
+}
+
+export function requestTakeover(): void {
+  void runTakeover();
 }
 
 export function consumeTakeoverRefresh(): boolean {
@@ -250,16 +310,10 @@ export function consumeTakeoverRefresh(): boolean {
   return pending;
 }
 
-export function requestTakeoverAndWait(): Promise<TabLock> {
-  if (mode === "writer") return Promise.resolve(snapshot());
-  return new Promise((resolve) => {
-    const unsub = subscribeTabLock((lock) => {
-      if (lock.mode !== "writer") return;
-      unsub();
-      resolve(lock);
-    });
-    requestTakeover();
-  });
+export async function requestTakeoverAndWait(): Promise<TabLock> {
+  if (mode === "writer") return snapshot();
+  await runTakeover();
+  return snapshot();
 }
 
 export async function ensureWriter(): Promise<TabLock> {
@@ -284,5 +338,11 @@ export function resetTabLockForTests(): void {
     acquireTimer = null;
   }
   acquireGeneration += 1;
+  try {
+    yieldReqChannel?.close();
+  } catch {
+    /* ignore */
+  }
+  yieldReqChannel = null;
   emit();
 }

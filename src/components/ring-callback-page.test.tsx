@@ -22,14 +22,6 @@ vi.mock("@/services/KeyStore", () => ({
   },
 }));
 
-vi.mock("@/services/tabLock", () => ({
-  initTabLock: vi.fn().mockResolvedValue(undefined),
-  getTabLock: vi.fn().mockReturnValue({ mode: "writer" }),
-  requestTakeoverAndWait: vi.fn(),
-  subscribeTabLock: vi.fn(() => () => undefined),
-  ensureWriter: vi.fn(async () => ({ mode: "writer", requestTakeover: vi.fn() })),
-}));
-
 vi.mock("@/services/RingConnect", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/services/RingConnect")>();
   return {
@@ -65,6 +57,7 @@ vi.mock("@/services/tabLock", async (importOriginal) => {
     getTabLock: vi.fn(() => ({ mode: "readonly", requestTakeover: vi.fn() })),
     initTabLock: vi.fn(async () => ({ mode: "readonly", requestTakeover: vi.fn() })),
     requestTakeoverAndWait: vi.fn(async () => undefined),
+    ensureWriter: vi.fn(async () => ({ mode: "writer", requestTakeover: vi.fn() })),
   };
 });
 

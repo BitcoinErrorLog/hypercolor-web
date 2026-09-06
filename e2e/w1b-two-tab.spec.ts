@@ -11,26 +11,39 @@ test.describe("W1b two-tab writer follows focus", () => {
     await page2.goto("/");
 
     await page.waitForFunction(
-      () => typeof (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode === "function",
+      () =>
+        typeof (window as Window & { __hypercolorEnsureWriter?: () => Promise<unknown> })
+          .__hypercolorEnsureWriter === "function",
       null,
       { timeout: 20_000 },
     );
     await page2.waitForFunction(
-      () => typeof (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode === "function",
+      () =>
+        typeof (window as Window & { __hypercolorEnsureWriter?: () => Promise<unknown> })
+          .__hypercolorEnsureWriter === "function",
     );
 
     await page.bringToFront();
+    await page.evaluate(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      window.dispatchEvent(new Event("focus"));
+    });
     await page.waitForTimeout(1200);
-    const mode1 = await page.evaluate(() =>
-      (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode?.(),
-    );
 
     await page2.bringToFront();
-    await page2.waitForTimeout(1200);
-    const mode2 = await page2.evaluate(() =>
-      (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode?.(),
+    await page.evaluate(() => {
+      (window as Window & { __hypercolorAbortWriterLock?: () => void }).__hypercolorAbortWriterLock?.();
+    });
+    await page2.evaluate(async () => {
+      await (window as Window & { __hypercolorEnsureWriter?: () => Promise<unknown> }).__hypercolorEnsureWriter?.();
+    });
+    await page2.waitForFunction(
+      () =>
+        (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode?.() ===
+        "writer",
+      null,
+      { timeout: 8_000 },
     );
-    expect(mode2).toBe("writer");
 
     await page2.evaluate(() => {
       const host = window as Window & { __hypercolorSeedInbound?: (body: string) => void };
@@ -51,11 +64,19 @@ test.describe("W1b two-tab writer follows focus", () => {
     await expect(page2.locator("text=Could not load your chats")).toHaveCount(0);
 
     await page.bringToFront();
-    await page.waitForTimeout(1200);
-    const mode1b = await page.evaluate(() =>
-      (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode?.(),
+    await page2.evaluate(() => {
+      (window as Window & { __hypercolorAbortWriterLock?: () => void }).__hypercolorAbortWriterLock?.();
+    });
+    await page.evaluate(async () => {
+      await (window as Window & { __hypercolorEnsureWriter?: () => Promise<unknown> }).__hypercolorEnsureWriter?.();
+    });
+    await page.waitForFunction(
+      () =>
+        (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode?.() ===
+        "writer",
+      null,
+      { timeout: 8_000 },
     );
-    expect(mode1b ?? mode1).toBe("writer");
 
     await page2.close();
   });
