@@ -1001,8 +1001,18 @@ async function ensureLinkLocked(
   );
 }
 
-function recordedEstablishedPeerPk(stored: LinkRecord): string {
-  return stored.lastSeenPeerMarkerPk || stored.remoteNoisePublicKey || "";
+/**
+ * Re-key compare key is the established link's remote static, not last GET.
+ * Preferring `lastSeenPeerMarkerPk` skipped a live re-key once a GET of the
+ * new pk was recorded, and probed the old DH slot when a later GET was stale.
+ */
+function establishedRemotePk(stored: LinkRecord): string {
+  return stored.remoteNoisePublicKey || "";
+}
+
+function pkPrefix8(pk: string | null | undefined): string {
+  const raw = (pk ?? "").replace(/^pubky/i, "");
+  return raw.length === 0 ? "empty" : raw.slice(0, 8);
 }
 
 function peerMarkerRefreshDue(ownerPubky: PubkyKey, peerPubky: PubkyKey): boolean {
@@ -1059,8 +1069,11 @@ async function maybeAdoptEstablishedRekey(
   if (!marker) return null;
   if (!(await isCurrentOwner(ownerPubky))) return null;
 
-  const recorded = recordedEstablishedPeerPk(stored);
-  if (!recorded || marker.noisePublicKey === recorded) {
+  const establishedPk = establishedRemotePk(stored);
+  console.warn(
+    `[LinkService] rekey-marker peer=${pkPrefix8(peerPubky)} stored=${pkPrefix8(establishedPk)} lastSeen=${pkPrefix8(stored.lastSeenPeerMarkerPk)} fetched=${pkPrefix8(marker.noisePublicKey)}`,
+  );
+  if (establishedPk !== "" && marker.noisePublicKey === establishedPk) {
     await StorageService.recordLastSeenPeerMarkerPk(ownerPubky, peerPubky, marker.noisePublicKey);
     return null;
   }
@@ -1467,6 +1480,9 @@ async function probeInbound(
   localPath: string,
 ): Promise<Extract<LinkProbeResult, { result: "pending" | "established" }> | null> {
   try {
+    console.warn(
+      `[LinkService] inbound-probe begin peer=${pkPrefix8(peerPubky)} probePk=${pkPrefix8(marker.noisePublicKey)} slotFrom=fetched-marker`,
+    );
     const probed = await PaykitLinkWeb.probeInboundLink(
       activeSession.handle,
       receiver.receiverAlias,

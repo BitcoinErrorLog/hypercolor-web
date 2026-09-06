@@ -1559,3 +1559,113 @@ describe("LinkService inbound accept gate", () => {
     expect(receivePrivate).toHaveBeenCalledWith("handle-1");
   });
 });
+
+describe("LinkService established re-key marker compare", () => {
+  beforeEach(async () => {
+    resetLinkServiceHarnessState();
+    receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "est-old" });
+    restoreLink.mockReset().mockResolvedValue({ linkId: "est-live" });
+    probeInbound.mockReset().mockResolvedValue({
+      result: "pending",
+      linkId: "rekey-hs",
+      snapshot: "rekey-snap",
+    });
+    getMarker.mockReset();
+    getMessageRequest.mockReset().mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      createdAt: NOW,
+      updatedAt: NOW,
+      status: "accepted",
+    });
+    getPubky.mockReset().mockResolvedValue(OWNER);
+    getReceiver.mockReset().mockResolvedValue({
+      ownerPubky: OWNER,
+      receiverAlias: "recv",
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: true,
+    });
+    vi.mocked(StorageService.recordLastSeenPeerMarkerPk).mockReset();
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockReset().mockResolvedValue([]);
+    vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
+    vi.mocked(isRetired).mockReset().mockReturnValue(false);
+    vi.mocked(StorageService.listDeliveryQueue).mockReset().mockResolvedValue([]);
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
+    await LinkService.adoptHarnessSession(handle() as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetLinkServiceHarnessState();
+  });
+
+  it("probes with the fetched marker pk when last_seen already matches GET but the established remote pk is old", async () => {
+    getLink.mockResolvedValue({
+      ...establishedLink,
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: "new-peer-pk",
+    });
+    getMarker.mockResolvedValue({
+      noisePublicKey: "new-peer-pk",
+      capabilitiesJson: "{}",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(probeInbound).toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "new-peer-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+    );
+  });
+
+  it("does not probe the established remote pk when a stale GET matches it and last_seen is already the new pk", async () => {
+    getLink.mockResolvedValue({
+      ...establishedLink,
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: "new-peer-pk",
+    });
+    getMarker.mockResolvedValue({
+      noisePublicKey: "old-peer-pk",
+      capabilitiesJson: "{}",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(probeInbound).not.toHaveBeenCalled();
+  });
+
+  it("probes a fetched re-key pk when last_seen differs from GET", async () => {
+    getLink.mockResolvedValue({
+      ...establishedLink,
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: "stale-last-seen-pk",
+    });
+    getMarker.mockResolvedValue({
+      noisePublicKey: "new-peer-pk",
+      capabilitiesJson: "{}",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(probeInbound).toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "new-peer-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+    );
+    expect(probeInbound).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "stale-last-seen-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+    );
+  });
+});
