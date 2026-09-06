@@ -24,7 +24,9 @@ import {
 import { sanitizePublicBio, sanitizePublicName } from "@/lib/public-text";
 import { shortPubky } from "@/lib/format";
 import { contactRowDomId, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
+import { ContactQrScanner, type ContactScannerFixture } from "@/components/contact-qr-scanner";
 import { addManualContact } from "@/services/contacts/addManualContact";
+import { parsePubkyPayload } from "@/lib/pubkyPayload";
 import {
   isFollowsImportEnabled,
 } from "@/services/contacts/followsImportPreference";
@@ -38,7 +40,6 @@ import { useContactStore } from "@/stores/contactStore";
 import type { Contact } from "@/types";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
-import { parsePubky } from "@/utils/pubkyId";
 
 const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
 
@@ -51,6 +52,7 @@ export type ContactsPageFixture = {
   searchBusy: boolean;
   error: string | null;
   hits: UsernameSearchHit[] | null;
+  scanner?: ContactScannerFixture;
 };
 
 export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}) {
@@ -66,6 +68,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
   const [searchBusy, setSearchBusy] = useState(fixture?.searchBusy ?? false);
   const [error, setError] = useState<string | null>(fixture?.error ?? null);
   const [hits, setHits] = useState<UsernameSearchHit[] | null>(fixture?.hits ?? null);
+  const [scannerOpen, setScannerOpen] = useState(Boolean(fixture?.scanner));
 
   const reload = useCallback(async () => {
     if (fixture) {
@@ -168,7 +171,7 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
           className="mt-4 space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            const asPubky = parsePubky(draft);
+            const asPubky = parsePubkyPayload(draft);
             if (asPubky) {
               void addPeer(draft);
               return;
@@ -216,7 +219,16 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
             and paste a pubky if you do not want that query. Adding by pubky does not ask the index.
           </p>
           <div className="flex flex-wrap gap-2">
-            {parsePubky(draft) ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="contactsScanQr"
+              onClick={() => setScannerOpen(true)}
+            >
+              Scan QR
+            </Button>
+            {parsePubkyPayload(draft) ? (
               <Button type="submit" size="sm" disabled={busy} data-testid="contactSearchAdd">
                 {busy ? "Adding…" : "Add contact"}
               </Button>
@@ -254,6 +266,16 @@ export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}
             />
           ) : null}
         </form>
+        <ContactQrScanner
+          key={scannerOpen ? "open" : "closed"}
+          open={scannerOpen}
+          fixture={fixture?.scanner}
+          onClose={() => setScannerOpen(false)}
+          onDecoded={(raw) => {
+            setScannerOpen(false);
+            void addPeer(raw);
+          }}
+        />
 
         {hits && hits.length > 0 ? (
           <ul className="mt-3 divide-y divide-border rounded-md border border-border" data-testid="contactSearchResults">

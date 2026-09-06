@@ -242,6 +242,7 @@ function contactsFixture(state: string): ContactsPageFixture {
     hits: state === "search-results"
       ? [{ pubky: ASTER, name: "Aster Example", bio: "Design reviewer", lookalike: false }]
       : null,
+    scanner: state === "unsupported" || state === "denied" ? state : undefined,
   };
 }
 
@@ -651,9 +652,12 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
   if (scene.surface.startsWith("channels") || scene.surface === "channel" || scene.surface === "public-topic") {
     return <ChannelsPage fixture={channelsFixture(scene)} now={NOW} />;
   }
-  if (scene.surface === "contacts") return <ContactsPage fixture={contactsFixture(scene.state)} />;
+  if (scene.surface === "contacts" || scene.surface === "contacts-scan") {
+    return <ContactsPage fixture={contactsFixture(scene.state)} />;
+  }
   if (scene.surface === "contact-detail") return <ContactDetail ownerPubky={OWNER} pubky={ASTER} fixture={contactDetailFixture(scene.state)} />;
   if (scene.surface === "profile") return <ProfilePage />;
+  if (scene.surface === "profile-qr") return <ProfilePage fixture={{ qrOpen: true }} />;
   if (scene.surface === "sign-out") {
     return (
       <SurfaceShell surface="sign-out-confirm">

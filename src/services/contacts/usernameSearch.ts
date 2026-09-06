@@ -5,7 +5,7 @@ import { PUBLIC_BIO_DISPLAY_MAX_CHARS, PUBLIC_NAME_DISPLAY_MAX_CHARS } from "@/l
 import type { NexusDiscoveryApi } from "@/services/nexus/NexusDiscoveryClient";
 import { NexusDiscoveryClient } from "@/services/nexus/NexusDiscoveryClient";
 import type { PubkyKey } from "@/types";
-import { parsePubky } from "@/utils/pubkyId";
+import { parsePubkyPayload } from "@/lib/pubkyPayload";
 
 export const USERNAME_SEARCH_MIN_CHARS = 2;
 export const USERNAME_SEARCH_MAX_CHARS = 32;
@@ -46,7 +46,7 @@ export function createUsernameSearch(deps: UsernameSearchDeps) {
       if (trimmed.length === 0) {
         return { ok: false, reason: "empty", message: "Enter a username or paste a pubky." };
       }
-      const asPubky = parsePubky(trimmed);
+      const asPubky = parsePubkyPayload(trimmed);
       if (asPubky) return { ok: true, kind: "pubky", pubky: asPubky };
       if (trimmed.length < USERNAME_SEARCH_MIN_CHARS) {
         return {

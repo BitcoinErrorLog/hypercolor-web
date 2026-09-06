@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useRef, useState } from "react";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
+import { ProfileQrSheet } from "@/components/profile-qr-sheet";
 import { Avatar } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
 import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { useSignOut } from "@/hooks/useSignOut";
@@ -12,11 +15,18 @@ import { CUSTODY_LINE, sessionStatusLabel } from "@/lib/session-ui";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-export function ProfilePage() {
+export type ProfilePageFixture = {
+  qrOpen?: boolean;
+};
+
+export function ProfilePage({ fixture }: { fixture?: ProfilePageFixture } = {}) {
   const pubky = useAuthStore((s) => s.pubky);
   const profile = useAuthStore((s) => s.profile);
   const status = useSessionStatusStore((s) => s.status);
   const { signOut, busy } = useSignOut();
+  const [qrOpen, setQrOpen] = useState(fixture?.qrOpen ?? false);
+  const showQrRef = useRef<HTMLButtonElement>(null);
+  const restoreShowQr = useCallback(() => showQrRef.current, []);
 
   return (
     <article className="space-y-6" data-testid="profileScreen" data-surface="profile-page">
@@ -32,7 +42,25 @@ export function ProfilePage() {
           {profile?.displayName ? sanitizeDisplayName(profile.displayName) : "Unnamed"}
         </p>
         {pubky ? (
-          <TruncatedPubky pubky={pubky} testId="profilePubky" full />
+          <>
+            <TruncatedPubky pubky={pubky} testId="profilePubky" full />
+            <Button
+              type="button"
+              size="sm"
+              variant="brand"
+              ref={showQrRef}
+              data-testid="profileShowQr"
+              onClick={() => setQrOpen(true)}
+            >
+              Show QR
+            </Button>
+            <ProfileQrSheet
+              pubky={pubky}
+              open={qrOpen}
+              onClose={() => setQrOpen(false)}
+              restoreFocus={restoreShowQr}
+            />
+          </>
         ) : (
           <p className="text-sm text-muted-foreground">Not connected</p>
         )}

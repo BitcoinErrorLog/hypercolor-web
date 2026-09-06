@@ -6,9 +6,11 @@ import { AUTH_QR_SIZE_PT, generateAuthQrDataUri } from "@/lib/auth-qr";
 export function AuthQr({
   value,
   testID = "authQr",
+  alt = "Authorization QR code",
 }: {
   value: string;
   testID?: string;
+  alt?: string;
 }) {
   const dataUri = useMemo(
     () => (value ? generateAuthQrDataUri(value) : null),
@@ -22,7 +24,7 @@ export function AuthQr({
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={dataUri}
-        alt="Authorization QR code"
+        alt={alt}
         width={AUTH_QR_SIZE_PT}
         height={AUTH_QR_SIZE_PT}
         className="block"

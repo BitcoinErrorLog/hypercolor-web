@@ -1,7 +1,7 @@
 import { PUBLIC_NAME_DISPLAY_MAX_CHARS } from "@/lib/public-text";
 import { StorageService } from "@/services/StorageService";
 import type { Contact, PubkyKey } from "@/types";
-import { parsePubky } from "@/utils/pubkyId";
+import { parsePubkyPayload } from "@/lib/pubkyPayload";
 
 export type AddManualContactResult =
   | { ok: true; contact: Contact }
@@ -25,7 +25,7 @@ export async function addManualContact(
   rawPeer: string,
   options: AddManualContactOptions = {},
 ): Promise<AddManualContactResult> {
-  const peerPubky = parsePubky(rawPeer);
+  const peerPubky = parsePubkyPayload(rawPeer);
   if (!peerPubky) {
     return {
       ok: false,
@@ -34,7 +34,7 @@ export async function addManualContact(
     };
   }
   if (peerPubky === ownerPubky) {
-    return { ok: false, reason: "self", message: "You cannot add your own pubky." };
+    return { ok: false, reason: "self", message: "That's your own pubky." };
   }
 
   const existing = await StorageService.getContact(peerPubky, ownerPubky);
