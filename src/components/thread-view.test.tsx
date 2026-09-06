@@ -464,4 +464,31 @@ describe("ThreadView standby composer", () => {
     expect(host.querySelector("[data-testid=standbyComposerNotice]")).not.toBeNull();
     expect(host.querySelector("[data-testid=threadSend]")).toHaveProperty("disabled", true);
   });
+
+  it("renders snapshot messages without a read-only error box", async () => {
+    await renderThread({
+      participantPubky: PEER,
+      localPubky: OWNER,
+      status: { kind: "enabled", pubky: OWNER },
+      error: "This tab cannot write. Reads still work. Take over writing here to send or save.",
+      messages: [
+        {
+          ownerPubky: OWNER,
+          eventId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          conversationId: `dm:${PEER}`,
+          peerPubky: PEER,
+          senderPubky: PEER,
+          direction: "received",
+          kind: "chat.message.v0",
+          rawJson: "{}",
+          body: "from phone",
+          sentAt: NOW,
+          receivedAt: NOW,
+          deliveryState: "delivered",
+        },
+      ],
+    });
+    expect(host.textContent).toContain("from phone");
+    expect(host.textContent).not.toContain("Could not load this thread.");
+  });
 });

@@ -9,9 +9,12 @@ import {
 } from "./openWebSqlite";
 import type { SqlExecutor } from "./sql";
 import {
+  consumeTakeoverRefresh,
   getTabLock,
   initTabLock,
+  setBeforeWriterYield,
   subscribeTabLock,
+  waitForPeerWriterYield,
 } from "@/services/tabLock";
 
 export type { SqlExecutor, SqlExecuteResult, SqlParams, SqlValue } from "./sql";
@@ -42,13 +45,22 @@ if (typeof window !== "undefined") {
   window.addEventListener("focus", refreshIfReadonly);
 }
 
+setBeforeWriterYield(async () => {
+  const persistable = _db as PersistableSqlExecutor | null;
+  if (!persistable || _injected) return;
+  persistable.rollbackOpenTransaction?.();
+  await persistable.persistForYield?.();
+});
+
 subscribeTabLock((lock) => {
   if (!_db || _injected) return;
   if (lock.mode === "writer") {
-    // Takeover: bump generation so a previous writer's in-flight IDB put is
-    // strictly older, then reload the snapshot they persisted.
-    bumpPersistGeneration();
-    void refreshReadonlySnapshot();
+    if (!consumeTakeoverRefresh()) return;
+    void (async () => {
+      await waitForPeerWriterYield();
+      bumpPersistGeneration();
+      await refreshReadonlySnapshot();
+    })();
     return;
   }
   const persistable = _db as PersistableSqlExecutor;
@@ -98,6 +110,9 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
     },
     flushPersist: async () => {
       await persistable.flushPersist?.();
+    },
+    persistForYield: async () => {
+      await persistable.persistForYield?.();
     },
   };
 }

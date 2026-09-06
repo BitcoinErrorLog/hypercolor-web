@@ -8,6 +8,7 @@ import { isMessagingEnabled } from "@/lib/session-ui";
 import { createInboxRefresher } from "@/lib/inbox-refresh";
 import { LinkService } from "@/services/link/LinkService";
 import { emitCoarseError } from "@/services/vibeware/coarse";
+import { isReadOnlyTabError } from "@/db/errors";
 
 export function useInbox() {
   const ownerPubky = useAuthStore((s) => s.pubky);
@@ -26,6 +27,10 @@ export function useInbox() {
       onRows: (snapshot) =>
         useInboxStore.getState().setRows(snapshot.rows, snapshot.pendingRequests),
       onError: (err) => {
+        if (isReadOnlyTabError(err)) {
+          useInboxStore.getState().setError(null);
+          return;
+        }
         useInboxStore
           .getState()
           .setError(err instanceof Error ? err.message : "Could not load conversations");

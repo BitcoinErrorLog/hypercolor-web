@@ -25,6 +25,7 @@ import { emitCoarseError, onboardingStateFromKind } from "@/services/vibeware/co
 import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { ensureWriter } from "@/services/tabLock";
 
 function buildAuthPanel(url: string, title: string): ReactNode {
   return (
@@ -129,6 +130,7 @@ export function WelcomePageHost() {
                 return;
               }
               try {
+                await ensureWriter();
                 const done = await finishLegacyChainedGrant({
                   params: result.params,
                   payload: result.payload,
@@ -166,6 +168,7 @@ export function WelcomePageHost() {
 
       setFinishing(true);
       try {
+        await ensureWriter();
         const done = await finishSingleApproval({
           params: result.params,
           payload: result.payload,
@@ -290,6 +293,7 @@ export function WelcomePageHost() {
                   return;
                 }
                 try {
+                  await ensureWriter();
                   await provisionReceiver(session.handle, session.pubky);
                   goToChats(session.pubky);
                 } catch (err) {

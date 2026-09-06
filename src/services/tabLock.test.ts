@@ -1,3 +1,5 @@
+/** @vitest-environment jsdom */
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type LockInfo = { name: string; mode: "exclusive" | "shared" } | null;
@@ -71,6 +73,7 @@ describe("tabLock", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.resetModules();
+    vi.useRealTimers();
   });
 
   it("is the writer when Web Locks is missing (single-tab fallback)", async () => {
@@ -126,5 +129,90 @@ describe("tabLock", () => {
     await vi.waitFor(() => {
       expect(tabA.getTabLock().mode).toBe("readonly");
     });
+  });
+
+  it("flushes pending persist before the previous writer becomes readonly", async () => {
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    const order: string[] = [];
+    const tabA = await loadTabLock();
+    tabA.setBeforeWriterYield(async () => {
+      order.push("flush");
+    });
+    tabA.subscribeTabLock((lock) => {
+      if (lock.mode === "readonly" && order.includes("flush")) order.push("readonly");
+    });
+    await tabA.initTabLock();
+    vi.resetModules();
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    await tabB.requestTakeoverAndWait();
+    await vi.waitFor(() => {
+      expect(order[0]).toBe("flush");
+      expect(order.indexOf("flush")).toBeLessThan(order.indexOf("readonly"));
+    });
+  });
+
+  it("debounces focus auto-acquire by at least 1s", async () => {
+    vi.useFakeTimers();
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    vi.resetModules();
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    expect(tabB.getTabLock().mode).toBe("readonly");
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(tabB.getTabLock().mode).toBe("readonly");
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(tabB.getTabLock().mode).toBe("writer"));
+    vi.useRealTimers();
+  });
+
+  it("does not steal from a hidden tab on a spurious focus event", async () => {
+    vi.useFakeTimers();
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    vi.resetModules();
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    window.dispatchEvent(new Event("focus"));
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(tabB.getTabLock().mode).toBe("readonly");
+    expect(tabA.getTabLock().mode).toBe("writer");
+    vi.useRealTimers();
+  });
+
+  it("acquires the writer when a hidden tab becomes visible", async () => {
+    vi.useFakeTimers();
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    let visible = "hidden";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visible,
+    });
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    vi.resetModules();
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    visible = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.waitFor(() => expect(tabB.getTabLock().mode).toBe("writer"));
+    vi.useRealTimers();
   });
 });

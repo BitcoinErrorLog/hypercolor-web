@@ -91,6 +91,20 @@ describe("WelcomePage QR visibility", () => {
     expect(host.textContent).toContain("Try again");
   });
 
+  it("keeps protocol error in ErrorDetails, not as the only headline", async () => {
+    await render(
+      <WelcomePage
+        {...pageProps({
+          finishing: false,
+          linkLive: false,
+          error: "protocol error",
+        })}
+      />,
+    );
+    expect(host.textContent).toContain("Could not finish sign-in.");
+    expect(host.textContent).toContain("protocol error");
+  });
+
   it("offers Show QR again and Reload page when the link is expired", async () => {
     await render(<WelcomePage {...pageProps({ isExpired: true, linkLive: false, authPanel: null })} />);
     expect(getByTestId("welcomeShowQrAgain")).toBeTruthy();

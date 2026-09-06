@@ -9,6 +9,7 @@ import { DetailBackLink } from "@/components/detail-back";
 import { DetailHeading } from "@/components/detail-heading";
 import { DmMessageBubble } from "@/components/message-bubble";
 import { ErrorDetails } from "@/components/error-details";
+import { isReadOnlyTabError } from "@/db/errors";
 import { PaymentNotice } from "@/components/payment-notice";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
@@ -275,7 +276,7 @@ export function ThreadView({
         )}
       </div>
 
-      {error ? (
+      {error && !isReadOnlyTabError(new Error(error)) ? (
         <ErrorDetails fallback="Could not load this thread." details={error} live="status" />
       ) : null}
 

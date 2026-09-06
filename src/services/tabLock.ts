@@ -6,11 +6,19 @@ export interface TabLock {
 }
 
 const LOCK_NAME = "hypercolor-writer";
+export const TAB_LOCK_ACQUIRE_DEBOUNCE_MS = 1000;
+const YIELD_WAIT_MS = 1500;
+const YIELD_CHANNEL = "hypercolor-writer-yield";
 
 let startPromise: Promise<TabLock> | null = null;
 let mode: TabLockMode = "readonly";
 let currentAbort: AbortController | null = null;
 const listeners = new Set<(lock: TabLock) => void>();
+let beforeYield: () => Promise<void> = async () => undefined;
+let stealInFlight = false;
+let takeoverRefreshPending = false;
+let acquireTimer: ReturnType<typeof setTimeout> | null = null;
+let acquireGeneration = 0;
 
 function snapshot(): TabLock {
   return {
@@ -22,6 +30,14 @@ function snapshot(): TabLock {
 function emit(): void {
   const lock = snapshot();
   for (const listener of listeners) listener(lock);
+  if (
+    typeof window !== "undefined" &&
+    typeof __HYPERCOLOR_E2E_HARNESS__ !== "undefined" &&
+    __HYPERCOLOR_E2E_HARNESS__
+  ) {
+    (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode = () =>
+      mode;
+  }
 }
 
 function hasWebLocks(): boolean {
@@ -42,10 +58,53 @@ function holdUntil(signal: AbortSignal): Promise<void> {
   });
 }
 
+function postYielded(): void {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const channel = new BroadcastChannel(YIELD_CHANNEL);
+    channel.postMessage({ type: "yielded" });
+    channel.close();
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function waitForPeerWriterYield(timeoutMs = YIELD_WAIT_MS): Promise<void> {
+  if (!stealInFlight || typeof BroadcastChannel === "undefined") return;
+  stealInFlight = false;
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        channel.close();
+      } catch {
+        /* ignore */
+      }
+      resolve();
+    };
+    const channel = new BroadcastChannel(YIELD_CHANNEL);
+    const timer = setTimeout(done, timeoutMs);
+    channel.onmessage = () => done();
+  });
+}
+
 function becomeReadonly(): void {
   if (mode === "readonly") return;
   mode = "readonly";
   emit();
+}
+
+async function flushThenReadonly(): Promise<void> {
+  try {
+    await beforeYield();
+  } catch {
+    /* generation guard refuses a late stale put */
+  }
+  becomeReadonly();
+  postYielded();
 }
 
 function tryAcquire(options: { ifAvailable?: boolean; steal?: boolean }): Promise<void> {
@@ -67,7 +126,6 @@ function tryAcquire(options: { ifAvailable?: boolean; steal?: boolean }): Promis
       resolve();
     };
 
-    // Chromium rejects ifAvailable + signal together (NotSupportedError).
     const requestOptions: LockOptions = options.ifAvailable
       ? { mode: "exclusive", ifAvailable: true }
       : { mode: "exclusive", steal: options.steal, signal: ac.signal };
@@ -87,25 +145,61 @@ function tryAcquire(options: { ifAvailable?: boolean; steal?: boolean }): Promis
           emit();
           done();
           await holdUntil(ac.signal);
-          becomeReadonly();
+          await flushThenReadonly();
         },
       )
       .catch(() => {
-        becomeReadonly();
-        done();
+        void flushThenReadonly().finally(done);
       });
   });
 }
 
-/**
- * First caller tries to become the writer (`ifAvailable`). Later tabs stay
- * readonly until `requestTakeover()` steals the lock.
- *
- * If `navigator.locks` is missing, this tab is the writer (single-tab
- * fallback). A second tab in that browser cannot coordinate; both would
- * believe they are writers. Documented in README.
- */
+function isVisibleDocument(): boolean {
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
+function scheduleAutoAcquire(): void {
+  if (acquireTimer !== null) clearTimeout(acquireTimer);
+  const gen = ++acquireGeneration;
+  acquireTimer = setTimeout(() => {
+    acquireTimer = null;
+    if (gen !== acquireGeneration) return;
+    if (!isVisibleDocument()) return;
+    if (mode === "writer") return;
+    void requestTakeoverAndWait();
+  }, TAB_LOCK_ACQUIRE_DEBOUNCE_MS);
+}
+
+function onVisibilityOrFocus(event: Event): void {
+  if (event.type === "visibilitychange" && !isVisibleDocument()) {
+    if (mode === "writer") currentAbort?.abort();
+    return;
+  }
+  if (!isVisibleDocument()) return;
+  if (mode === "writer") return;
+  scheduleAutoAcquire();
+}
+
+function installAutoAcquire(): void {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const host = window as Window & { __hcTabLockAuto?: AbortController };
+  host.__hcTabLockAuto?.abort();
+  const ac = new AbortController();
+  host.__hcTabLockAuto = ac;
+  document.addEventListener("visibilitychange", onVisibilityOrFocus, { signal: ac.signal });
+  window.addEventListener("focus", onVisibilityOrFocus, { signal: ac.signal });
+}
+
 export async function initTabLock(): Promise<TabLock> {
+  installAutoAcquire();
+  if (
+    typeof window !== "undefined" &&
+    typeof __HYPERCOLOR_E2E_HARNESS__ !== "undefined" &&
+    __HYPERCOLOR_E2E_HARNESS__
+  ) {
+    (window as Window & { __hypercolorTabLockMode?: () => string }).__hypercolorTabLockMode = () =>
+      mode;
+  }
   if (startPromise) return startPromise;
 
   startPromise = (async () => {
@@ -125,6 +219,12 @@ export function getTabLock(): TabLock {
   return snapshot();
 }
 
+export function shouldPersistWrites(): boolean {
+  if (!hasWebLocks()) return true;
+  if (!startPromise) return true;
+  return mode === "writer";
+}
+
 export function subscribeTabLock(listener: (lock: TabLock) => void): () => void {
   listeners.add(listener);
   listener(snapshot());
@@ -139,10 +239,17 @@ export function requestTakeover(): void {
     emit();
     return;
   }
+  stealInFlight = true;
+  takeoverRefreshPending = true;
   void tryAcquire({ steal: true });
 }
 
-/** Steal the writer lock and resolve once this tab is the writer. */
+export function consumeTakeoverRefresh(): boolean {
+  const pending = takeoverRefreshPending;
+  takeoverRefreshPending = false;
+  return pending;
+}
+
 export function requestTakeoverAndWait(): Promise<TabLock> {
   if (mode === "writer") return Promise.resolve(snapshot());
   return new Promise((resolve) => {
@@ -155,11 +262,27 @@ export function requestTakeoverAndWait(): Promise<TabLock> {
   });
 }
 
-/** Test helper: drop lock state between vitest cases. Listeners stay. */
+export async function ensureWriter(): Promise<TabLock> {
+  await initTabLock();
+  if (mode === "writer") return snapshot();
+  return requestTakeoverAndWait();
+}
+
+export function setBeforeWriterYield(fn: () => Promise<void>): void {
+  beforeYield = fn;
+}
+
 export function resetTabLockForTests(): void {
   currentAbort?.abort();
   currentAbort = null;
   startPromise = null;
   mode = "readonly";
+  stealInFlight = false;
+  takeoverRefreshPending = false;
+  if (acquireTimer !== null) {
+    clearTimeout(acquireTimer);
+    acquireTimer = null;
+  }
+  acquireGeneration += 1;
   emit();
 }

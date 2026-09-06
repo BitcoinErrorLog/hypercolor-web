@@ -12,6 +12,7 @@ export function AppShell({
   hideChrome = false,
   fillViewport = false,
   centerColumn = false,
+  headerAccessory,
 }: {
   title: string;
   leftRail?: ReactNode;
@@ -20,6 +21,7 @@ export function AppShell({
   hideChrome?: boolean;
   fillViewport?: boolean;
   centerColumn?: boolean;
+  headerAccessory?: ReactNode;
 }) {
   return (
     <div
@@ -31,7 +33,10 @@ export function AppShell({
       {!hideChrome ? (
         <header className="pointer-events-none sticky top-0 z-(--z-sticky-header) w-full shrink-0 bg-linear-to-b from-(--background) from-50% to-transparent hc-header-iridescent">
           <div className="pointer-events-auto mx-auto flex h-16 w-full max-w-(--container-max-width) flex-row items-center justify-between gap-6 px-4 lg:h-24 lg:px-6 xl:px-0">
-            <p className="text-sm font-medium text-muted-foreground">{title}</p>
+            <div className="flex min-w-0 items-center gap-3">
+              <p className="text-sm font-medium text-muted-foreground">{title}</p>
+              {headerAccessory}
+            </div>
             <SiteNav />
           </div>
         </header>

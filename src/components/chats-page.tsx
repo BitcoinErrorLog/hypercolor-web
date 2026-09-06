@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar } from "@/components/ui/avatar";
 import { MasterDetail } from "@/components/shell/master-detail";
 import { ErrorDetails } from "@/components/error-details";
+import { isReadOnlyTabError } from "@/db/errors";
 import { rememberAndOpen } from "@/components/detail-back";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import { displayPubkyShort } from "@/components/truncated-pubky";
@@ -136,14 +137,8 @@ export function ChatsPage({
           >
             {starting ? "Starting…" : "New chat"}
           </Button>
-          {startError ? (
-            <ErrorDetails
-              fallback="Could not start this chat."
-              details={startError}
-              onTakeOver={() => {
-                void import("@/services/tabLock").then((m) => m.requestTakeover());
-              }}
-            />
+          {startError && !isReadOnlyTabError(new Error(startError)) ? (
+            <ErrorDetails fallback="Could not start this chat." details={startError} />
           ) : null}
         </form>
 
@@ -209,16 +204,13 @@ export function ChatsPage({
             })}
           </ul>
         )}
-        {inboxError ? (
+        {inboxError && !isReadOnlyTabError(new Error(inboxError)) ? (
           <div className="mt-3">
             <ErrorDetails
               fallback="Could not load your chats."
               details={inboxError}
               onRetry={onRetryInbox}
               live="status"
-              onTakeOver={() => {
-                void import("@/services/tabLock").then((m) => m.requestTakeover());
-              }}
               repairHref="/settings#repair-local-data"
             />
           </div>

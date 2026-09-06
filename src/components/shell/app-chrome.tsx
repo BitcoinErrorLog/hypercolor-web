@@ -7,7 +7,7 @@ import { PwaRegister } from "@/components/pwa-register";
 import { SessionBanner } from "@/components/session-banner";
 import { StandbyBanner } from "@/components/standby-banner";
 import { SessionBootstrap } from "@/components/session-bootstrap";
-import { TabLockBanner } from "@/components/tab-lock-banner";
+import { TabLockBanner, TabLockReadonlyChip } from "@/components/tab-lock-banner";
 import { AppShell } from "@/components/shell/app-shell";
 import { FilterHeader, FilterRoot } from "@/components/ui/filter";
 import { Toaster } from "@/components/ui/toast";
@@ -69,6 +69,13 @@ export function AppChrome({ children }: { children: ReactNode }) {
           <SessionBanner />
           <StandbyBanner />
           <TabLockBanner />
+          {hideChrome ? (
+            <div className="pointer-events-none fixed right-4 top-4 z-50">
+              <div className="pointer-events-auto">
+                <TabLockReadonlyChip />
+              </div>
+            </div>
+          ) : null}
           <PwaRegister />
           <Toaster />
           <AppShell
@@ -77,6 +84,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
             fillViewport={fillViewport}
             centerColumn={centerColumn}
             leftRail={hideChrome ? undefined : leftRail}
+            headerAccessory={hideChrome ? undefined : <TabLockReadonlyChip />}
           >
             {children}
           </AppShell>

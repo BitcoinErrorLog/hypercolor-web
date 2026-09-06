@@ -29,6 +29,7 @@ describe("readonly tab getDb", () => {
     vi.mocked(openWebSqlite).mockResolvedValue({
       ...db,
       flushPersist: async () => undefined,
+      persistForYield: async () => undefined,
     });
 
     vi.stubGlobal("navigator", {
@@ -56,6 +57,7 @@ describe("readonly tab getDb", () => {
     vi.mocked(openWebSqlite).mockResolvedValue({
       ...mem,
       flushPersist: async () => undefined,
+      persistForYield: async () => undefined,
     });
     vi.stubGlobal("navigator", {
       locks: {

@@ -68,7 +68,7 @@ async function loadOfficialSqlite3(): Promise<Sqlite3Static> {
 
 export type PersistableSqlExecutor = ClosableSqlExecutor & {
   flushPersist?: () => Promise<void>;
-  /** Close without writing the in-memory snapshot to IDB. */
+  persistForYield?: () => Promise<void>;
   discardClose?: () => void;
   rollbackOpenTransaction?: () => void;
 };
@@ -165,6 +165,12 @@ function wrapIdbSnapshot(
       inner.close();
     },
     flushPersist() {
+      return persistChain.then(() => {
+        if (lastPersistError) throw lastPersistError;
+      });
+    },
+    persistForYield() {
+      void persistNow("close");
       return persistChain.then(() => {
         if (lastPersistError) throw lastPersistError;
       });
@@ -354,6 +360,7 @@ function openKvvfs(sqlite3: Sqlite3Static): PersistableSqlExecutor {
   return {
     ...inner,
     flushPersist: async () => undefined,
+    persistForYield: async () => undefined,
     discardClose() {
       inner.close();
     },

@@ -81,6 +81,7 @@ describe("F1 takeover discard-close", () => {
         mem.close();
       },
       flushPersist: async () => undefined,
+      persistForYield: async () => undefined,
     };
     vi.stubGlobal("navigator", {
       locks: {
@@ -113,6 +114,7 @@ describe("F1 takeover discard-close", () => {
           mem.close();
         },
         flushPersist: async () => undefined,
+        persistForYield: async () => undefined,
       };
     };
     vi.stubGlobal("navigator", {

@@ -50,6 +50,7 @@ describe("welcome awaiting states", () => {
     expect(source).toContain("Show QR again");
     expect(actions).toContain("setFinishing(true)");
     expect(actions).toContain("finishSingleApproval");
+    expect(actions).toContain("ensureWriter");
     expect(actions).not.toContain("setNeedsEnable");
     expect(actions).not.toContain('router.push("/enable")');
     expect(actions).toContain('router.push("/chats")');

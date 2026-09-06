@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
 import { SQLITE_PERSIST_FAILED_EVENT } from "@/db/errors";
 import {
   getTabLock,
@@ -10,10 +9,11 @@ import {
   type TabLock,
 } from "@/services/tabLock";
 
-export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
+export function TabLockReadonlyChip({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
   const [lock, setLock] = useState<TabLock | null>(null);
-  const [persistError, setPersistError] = useState<string | null>(null);
-  const [writeDenied, setWriteDenied] = useState<string | null>(null);
+  const [visible, setVisible] = useState(
+    typeof document === "undefined" ? true : document.visibilityState === "visible",
+  );
 
   useEffect(() => {
     let unsubscribe = () => {};
@@ -21,16 +21,43 @@ export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
       setLock(initial);
       unsubscribe = subscribeTabLock(setLock);
     });
+    const onVis = () => setVisible(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  const current = fixtureLock ?? lock ?? getTabLock();
+  if (current.mode === "writer" || !visible) return null;
+
+  return (
+    <button
+      type="button"
+      data-testid="tabLockReadonlyChip"
+      data-surface="tab-lock-chip"
+      className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent/40"
+      onClick={() => current.requestTakeover()}
+    >
+      Reading only — click to use this tab
+    </button>
+  );
+}
+
+export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
+  const [persistError, setPersistError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let unsubscribe = () => {};
+    void initTabLock().then(() => {
+      unsubscribe = subscribeTabLock(() => undefined);
+    });
     const onPersist = (event: Event) => {
       const detail = (event as CustomEvent<string>).detail;
       setPersistError(detail || "Could not save the local database snapshot.");
     };
-    const onWriteDenied = (event: Event) => {
-      const detail = (event as CustomEvent<string>).detail;
-      setWriteDenied(detail);
-    };
     window.addEventListener(SQLITE_PERSIST_FAILED_EVENT, onPersist);
-    window.addEventListener("hypercolor-readonly-write", onWriteDenied);
     if (__HYPERCOLOR_E2E_HARNESS__) {
       const host = window as Window & {
         __hypercolorTryDbWrite?: () => Promise<{ ok: boolean; message: string }>;
@@ -48,15 +75,21 @@ export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
     return () => {
       unsubscribe();
       window.removeEventListener(SQLITE_PERSIST_FAILED_EVENT, onPersist);
-      window.removeEventListener("hypercolor-readonly-write", onWriteDenied);
       if (__HYPERCOLOR_E2E_HARNESS__) {
         delete (window as Window & { __hypercolorTryDbWrite?: unknown }).__hypercolorTryDbWrite;
       }
     };
-  }, []);
+  }, [fixtureLock]);
 
-  const current = fixtureLock ?? lock ?? getTabLock();
-  if (current.mode === "writer" && !persistError) return null;
+  if (fixtureLock && fixtureLock.mode !== "writer") {
+    return (
+      <div data-surface="tab-lock-banner">
+        <TabLockReadonlyChip fixtureLock={fixtureLock} />
+      </div>
+    );
+  }
+
+  if (!persistError) return null;
 
   return (
     <div
@@ -65,23 +98,7 @@ export function TabLockBanner({ fixtureLock }: { fixtureLock?: TabLock } = {}) {
       data-surface="tab-lock-banner"
     >
       <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-3">
-        {current.mode !== "writer" ? (
-          <>
-            <p>
-              This tab cannot write. Reads still work. Hypercolor is also open in
-              another tab.
-            </p>
-            <Button type="button" size="sm" onClick={() => current.requestTakeover()}>
-              Take over writing here
-            </Button>
-          </>
-        ) : null}
-        {writeDenied ? (
-          <p className="w-full" data-testid="readonlyWriteError">
-            {writeDenied}
-          </p>
-        ) : null}
-        {persistError ? <p className="w-full break-words">{persistError}</p> : null}
+        <p className="w-full break-words">{persistError}</p>
       </div>
     </div>
   );

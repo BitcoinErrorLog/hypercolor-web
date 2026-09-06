@@ -258,8 +258,8 @@ export function WelcomePage({
       {phase === "failed" ? (
         <div className="w-full space-y-3" data-testid="welcomeFailed">
           <ErrorDetails
-            fallback={error || "Could not finish sign-in."}
-            details={null}
+            fallback="Could not finish sign-in."
+            details={error}
             onRetry={retry}
             retryLabel="Try again"
           />

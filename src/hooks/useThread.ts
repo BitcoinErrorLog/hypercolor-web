@@ -10,6 +10,8 @@ import { isMessagingEnabled } from "@/lib/session-ui";
 import { createThreadInboxPoller, type ThreadInboxPoller } from "@/lib/thread-inbox-poll";
 import { StorageService } from "@/services/StorageService";
 import { LinkService } from "@/services/link/LinkService";
+import { getTabLock, ensureWriter, subscribeTabLock } from "@/services/tabLock";
+import { isReadOnlyTabError } from "@/db/errors";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
@@ -44,24 +46,33 @@ export function useThread(conversationId: string | null) {
       setLoading(false);
       return;
     }
-    const [msgs, atts, link, serviceStatus] = await Promise.all([
-      StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
-      StorageService.listAttachmentsForConversation(localPubky, conversationId),
-      StorageService.getLink(localPubky, participantPubky),
-      LinkService.getLinkStatus(participantPubky).catch(() => null),
-    ]);
-    setLinkStatus(serviceStatus ?? link?.status ?? null);
-    setLinkSnapshot(link?.snapshot ?? null);
-    setLinkReady(serviceStatus === "ready");
-    useThreadStore.getState().setSnapshot(conversationId, msgs, atts);
-    setLoading(false);
-    const latest = msgs.reduce((max, message) => Math.max(max, message.sentAt), 0);
-    await LinkService.markRead(conversationId, latest > 0 ? latest : Date.now());
     try {
-      const snapshot = await loadInboxRows(localPubky);
-      useInboxStore.getState().setRows(snapshot.rows, snapshot.pendingRequests);
-    } catch {
-      // Thread rows still render.
+      const [msgs, atts, link, serviceStatus] = await Promise.all([
+        StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
+        StorageService.listAttachmentsForConversation(localPubky, conversationId),
+        StorageService.getLink(localPubky, participantPubky),
+        LinkService.getLinkStatus(participantPubky).catch(() => null),
+      ]);
+      setLinkStatus(serviceStatus ?? link?.status ?? null);
+      setLinkSnapshot(link?.snapshot ?? null);
+      setLinkReady(serviceStatus === "ready");
+      useThreadStore.getState().setSnapshot(conversationId, msgs, atts);
+      setLoading(false);
+      if (getTabLock().mode === "writer") {
+        const latest = msgs.reduce((max, message) => Math.max(max, message.sentAt), 0);
+        await LinkService.markRead(conversationId, latest > 0 ? latest : Date.now());
+      }
+      try {
+        const snapshot = await loadInboxRows(localPubky);
+        useInboxStore.getState().setRows(snapshot.rows, snapshot.pendingRequests);
+      } catch {
+        // Thread rows still render.
+      }
+    } catch (err) {
+      setLoading(false);
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Could not load this thread.");
+      }
     }
   }, [conversationId, localPubky, participantPubky]);
 
@@ -99,6 +110,12 @@ export function useThread(conversationId: string | null) {
     };
   }, [participantPubky, status]);
 
+  useEffect(() => {
+    return subscribeTabLock((lock) => {
+      if (lock.mode === "writer") void pollerRef.current?.kick();
+    });
+  }, []);
+
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text || sending || !participantPubky) return;
@@ -107,6 +124,7 @@ export function useThread(conversationId: string | null) {
     setSending(true);
     setError(null);
     try {
+      await ensureWriter();
       const sent = await LinkService.sendDm(participantPubky, text);
       const outcome = sendOutcomeFromDelivery(sent.deliveryState);
       if (outcome) {
@@ -115,7 +133,9 @@ export function useThread(conversationId: string | null) {
       await pollerRef.current?.kick();
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send this message.");
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Could not send this message.");
+      }
       setDraft(text);
       void emit("app.thread.send_settled", { channel: "dm", outcome: "failed", kind: "text" });
       emitCoarseError("thread", err);
@@ -130,8 +150,10 @@ export function useThread(conversationId: string | null) {
       await LinkService.retryPendingSends();
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Retry failed.");
-      emitCoarseError("thread", err);
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Retry failed.");
+        emitCoarseError("thread", err);
+      }
     }
   }, [reload]);
 
@@ -142,6 +164,7 @@ export function useThread(conversationId: string | null) {
       setSending(true);
       setError(null);
       try {
+        await ensureWriter();
         const bytes = new Uint8Array(await file.arrayBuffer());
         const record = await sendAttachmentFromBytes(
           { type: "conversation", peerPubky: participantPubky },
@@ -155,7 +178,9 @@ export function useThread(conversationId: string | null) {
         await pollerRef.current?.kick();
         await reload();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Attachment failed.");
+        if (!isReadOnlyTabError(err)) {
+          setError(err instanceof Error ? err.message : "Attachment failed.");
+        }
         void emit("app.thread.send_settled", {
           channel: "dm",
           outcome: "failed",

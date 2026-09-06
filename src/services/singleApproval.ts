@@ -210,6 +210,8 @@ export async function finishSingleApproval(input: {
   session: SessionHandle;
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
+  const { ensureWriter } = await import("@/services/tabLock");
+  await ensureWriter();
   const { params, payload, session, ch } = input;
   const handlePubky = session.pubky();
   if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
@@ -238,6 +240,8 @@ export async function finishLegacyChainedGrant(input: {
   session: SessionHandle;
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
+  const { ensureWriter } = await import("@/services/tabLock");
+  await ensureWriter();
   const { params, payload, session, ch } = input;
   const handlePubky = session.pubky();
   if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {

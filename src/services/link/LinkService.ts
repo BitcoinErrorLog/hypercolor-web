@@ -55,6 +55,7 @@ import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
 import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver } from "./provisionReceiver";
 import { STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
 import { LinkSendError } from "./LinkSendError";
+import { shouldPersistWrites } from "@/services/tabLock";
 import {
   adoptApprovedSession,
   adoptLiveHandle,
@@ -599,6 +600,7 @@ export const LinkService = {
 
   async syncInbox(peers?: PubkyKey[]): Promise<LinkMessage[]> {
     const ownerPubky = await requireOwner();
+    const persist = shouldPersistWrites();
     try {
       await syncOwnReceiverRole(ownerPubky);
     } catch {
@@ -608,16 +610,19 @@ export const LinkService = {
     const received: LinkMessage[] = [];
     for (const peerPubky of new Set(candidates)) {
       try {
+        if (!persist) continue;
         const batch = await withQueue(peerPubky, () => syncPeerLocked(peerPubky));
         received.push(...batch);
       } catch (err) {
         console.warn(`[LinkService] Inbox sync failed for ${peerPubky}:`, errorMessage(err));
       }
     }
-    try {
-      await LinkService.drainRetries();
-    } catch (err) {
-      console.warn("[LinkService] drainRetries after syncInbox failed:", errorMessage(err));
+    if (persist) {
+      try {
+        await LinkService.drainRetries();
+      } catch (err) {
+        console.warn("[LinkService] drainRetries after syncInbox failed:", errorMessage(err));
+      }
     }
     notifyInboxSynced(ownerPubky);
     return received;
