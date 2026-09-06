@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Composer } from "@/components/composer";
+import { withDaySeparators } from "@/lib/day-separators";
+import { dataTransferFiles } from "@/lib/attach-file";
+import { fetchGifAsFile, usePendingAttach } from "@/hooks/usePendingAttach";
+import { useGifConfigured } from "@/hooks/useGifConfigured";
 import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { AttachmentBubble } from "@/components/attachment-bubble";
 import { DetailBackLink } from "@/components/detail-back";
@@ -31,6 +35,8 @@ export function ChannelView({
   const [showMembers, setShowMembers] = useState(initialShowMembers);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const effectiveChannelId = channelId ?? fixture?.channel?.channelId ?? null;
+  const gifConfigured = useGifConfigured();
+  const pending = usePendingAttach(channel.sendAttachment);
 
   useEffect(() => {
     if (!effectiveChannelId) return;
@@ -162,15 +168,35 @@ export function ChannelView({
         </section>
       ) : null}
 
-      <div className="flex-1 space-y-3 overflow-y-auto py-4">
+      <div
+        className="flex-1 space-y-3 overflow-y-auto py-4"
+        onDragOver={(event) => {
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          for (const file of dataTransferFiles(event.dataTransfer)) pending.offer(file);
+        }}
+      >
         {channel.messages.length === 0 ? (
           <p className="text-sm text-muted-foreground">No messages yet.</p>
         ) : (
-          channel.messages.map((message) => {
+          withDaySeparators(channel.messages).map((bucket) => {
+            if (bucket.kind === "separator") {
+              return (
+                <p key={bucket.key} className="text-center text-xs text-muted-foreground" data-testid="daySeparator">
+                  {bucket.label}
+                </p>
+              );
+            }
+            const message = bucket.item;
             const attachment =
               message.kind === CHAT_ATTACHMENT_KIND
                 ? channel.attachments.find((row) => row.eventId === message.eventId)
                 : undefined;
+            const quoted = message.replyToEventId
+              ? channel.messages.find((row) => row.eventId === message.replyToEventId)
+              : undefined;
             return (
               <GroupMessageBubble
                 key={`${message.senderPubky}:${message.kind}:${message.eventId}`}
@@ -180,6 +206,7 @@ export function ChannelView({
                     <AttachmentBubble record={attachment} onResolved={() => void channel.reload()} />
                   ) : undefined
                 }
+                quotedBody={quoted?.body ?? null}
                 mine={message.senderPubky === channel.localPubky}
                 localPubky={channel.localPubky}
                 onRetry={channel.retryFailed}
@@ -196,6 +223,16 @@ export function ChannelView({
                   channel.setDraft(message.body);
                 }}
                 onDelete={() => void channel.deleteMessage(message.eventId)}
+                onReply={() => {
+                  channel.setReplyTo({
+                    eventId: message.eventId,
+                    authorPubky: message.senderPubky,
+                    body: message.body,
+                  });
+                }}
+                onCopy={() => {
+                  void navigator.clipboard.writeText(message.body);
+                }}
               />
             );
           })
@@ -211,8 +248,27 @@ export function ChannelView({
         placeholder={channel.editingEventId ? "Edit message" : "Message the group"}
         onChangeDraft={channel.setDraft}
         onSend={() => void channel.send()}
-        onAttach={(file) => void channel.sendAttachment(file)}
+        onAttach={(file) => pending.offer(file)}
         testIdPrefix="channel"
+        quote={
+          channel.replyTo
+            ? {
+                eventId: channel.replyTo.eventId,
+                authorPubky: channel.replyTo.authorPubky,
+                body: channel.replyTo.body,
+              }
+            : null
+        }
+        onClearQuote={() => channel.setReplyTo(null)}
+        pendingFile={pending.pendingFile}
+        pendingPreviewUrl={pending.pendingPreviewUrl}
+        pendingError={pending.pendingError}
+        onConfirmPending={() => void pending.confirm()}
+        onCancelPending={pending.cancel}
+        gifConfigured={gifConfigured}
+        onPickGif={(hit) => {
+          void fetchGifAsFile(hit).then((file) => pending.offer(file));
+        }}
       />
     </article>
   );

@@ -30,6 +30,7 @@ export function useChannel(channelId: string | null) {
   const [establishedPeers, setEstablishedPeers] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<{ eventId: string; authorPubky: string; body: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(Boolean(channelId));
   const [error, setError] = useState<string | null>(null);
@@ -105,12 +106,18 @@ export function useChannel(channelId: string | null) {
     setDraft("");
     const editId = editingEventId;
     setEditingEventId(null);
+    const reply = replyTo;
+    setReplyTo(null);
     setSending(true);
     setError(null);
     try {
       if (editId) await GroupService.editMessage(channelId, editId, text);
       else {
-        const sent = await GroupService.sendGroupMessage(channelId, text);
+        const sent = await GroupService.sendGroupMessage(
+          channelId,
+          text,
+          reply ? { eventId: reply.eventId, authorPubky: reply.authorPubky } : undefined,
+        );
         const outcome = sendOutcomeFromDelivery(sent.deliveryState);
         if (outcome) {
           void emit("app.thread.send_settled", { channel: "group", outcome, kind: "text" });
@@ -127,7 +134,7 @@ export function useChannel(channelId: string | null) {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, channelId, editingEventId, reload]);
+  }, [draft, sending, channelId, editingEventId, replyTo, reload]);
 
   const sendAttachment = useCallback(
     async (file: File) => {
@@ -267,6 +274,8 @@ export function useChannel(channelId: string | null) {
     setDraft,
     editingEventId,
     setEditingEventId,
+    replyTo,
+    setReplyTo,
     sending,
     loading,
     error,

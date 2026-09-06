@@ -26,6 +26,7 @@ import type {
   LinkStreamItemInput,
   StoredLinkStatus,
 } from '../types/link';
+import { CHAT_MESSAGE_KIND } from '../types/link';
 import type {
   GroupChannel,
   GroupDeferredEvent,
@@ -33,7 +34,7 @@ import type {
   GroupMemberStatus,
   GroupMessage,
 } from '../types/group';
-import { peekEnvelopeKind } from '../types/group';
+import { peekEnvelopeKind, GROUP_MESSAGE_KIND, PUBLIC_CHANNEL_MESSAGE_KIND } from '../types/group';
 import { GROUP_DEFERRED_QUOTA_PER_SENDER, GROUP_DEFERRED_TTL_MS } from '../flags/config';
 import type { AttachmentRecord, AttachmentResolveState } from '../types/attachment';
 import {
@@ -50,6 +51,8 @@ import type {
 } from '../types/payment';
 import { isPaykitPaymentKind } from '../types/payment';
 import { KeyStore } from './KeyStore';
+import { indexDecryptedMessage, removeSearchMessage } from './localChatState';
+import { dmThreadKey, groupThreadKey } from '../lib/contact-label';
 import { cachePathsForAttachment, deleteCacheFiles } from './attachments/fileIo';
 import { OWNER_BACKUP_VERSION, type OwnerBackupSnapshot } from './backup/snapshot';
 
@@ -1934,6 +1937,14 @@ export const StorageService = {
        WHERE owner_pubky = ? AND channel_id = ? AND sender_pubky = ? AND event_id = ?`,
       [body, editedAt, now(), ownerPubky, channelId, senderPubky, eventId],
     );
+    indexDecryptedMessage(db, {
+      ownerPubky,
+      threadKey: groupThreadKey(channelId),
+      eventId,
+      senderPubky,
+      body,
+      sentAt: editedAt,
+    });
   },
 
   async tombstoneGroupMessage(
@@ -1949,6 +1960,7 @@ export const StorageService = {
        WHERE owner_pubky = ? AND channel_id = ? AND sender_pubky = ? AND event_id = ?`,
       [now(), ownerPubky, channelId, senderPubky, eventId],
     );
+    removeSearchMessage(db, ownerPubky, groupThreadKey(channelId), eventId);
   },
 
   /**
@@ -2393,6 +2405,16 @@ function insertLinkMessage(db: SqlExecutor, message: LinkMessage): void {
       ts,
     ],
   );
+  if (message.kind === CHAT_MESSAGE_KIND) {
+    indexDecryptedMessage(db, {
+      ownerPubky: message.ownerPubky,
+      threadKey: dmThreadKey(message.conversationId),
+      eventId: message.eventId,
+      senderPubky: message.senderPubky,
+      body: message.body,
+      sentAt: message.sentAt,
+    });
+  }
   db.executeSync(
     `UPDATE contacts
      SET last_interaction_at = ?, updated_at = ?
@@ -2544,6 +2566,16 @@ function insertGroupMessage(db: SqlExecutor, message: GroupMessage): void {
       ts,
     ],
   );
+  if (message.kind === GROUP_MESSAGE_KIND || message.kind === PUBLIC_CHANNEL_MESSAGE_KIND) {
+    indexDecryptedMessage(db, {
+      ownerPubky: message.ownerPubky,
+      threadKey: groupThreadKey(message.channelId),
+      eventId: message.eventId,
+      senderPubky: message.senderPubky,
+      body: message.body,
+      sentAt: message.sentAt,
+    });
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

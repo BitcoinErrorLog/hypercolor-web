@@ -91,6 +91,7 @@ function shouldExcludeFromE2eCopy(rel) {
   if (top === OUT_NAME || top === OUT_E2E_NAME || top.startsWith(`${OUT_E2E_NAME}.`)) {
     return true;
   }
+  if (rel.replace(/\\/g, "/").startsWith("app/api/")) return true;
   if (isDotEnvFile(rel)) return true;
   return false;
 }

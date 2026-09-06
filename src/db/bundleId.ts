@@ -4,4 +4,4 @@
  */
 export const SQLITE_BUNDLE_ID =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SQLITE_BUNDLE_ID) ||
-  "hypercolor-web-schema-v15";
+  "hypercolor-web-schema-v16";

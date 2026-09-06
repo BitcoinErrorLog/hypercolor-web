@@ -1,6 +1,42 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/schema.ts
 // pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
+ * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
+ * decrypted message search index. No wire kinds. FTS5 is created when the
+ * engine supports it; LIKE + body_norm index is the always-on path.
+ */
+export const SCHEMA_V16_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS contact_nicknames (
+    owner_pubky TEXT NOT NULL,
+    peer_pubky  TEXT NOT NULL,
+    nickname    TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+  `CREATE TABLE IF NOT EXISTS thread_local_state (
+    owner_pubky TEXT NOT NULL,
+    thread_key  TEXT NOT NULL,
+    muted       INTEGER NOT NULL DEFAULT 0,
+    archived    INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, thread_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS message_search (
+    owner_pubky  TEXT NOT NULL,
+    thread_key   TEXT NOT NULL,
+    event_id     TEXT NOT NULL,
+    sender_pubky TEXT NOT NULL,
+    body_norm    TEXT NOT NULL,
+    sent_at      INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, thread_key, event_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_message_search_norm
+    ON message_search(owner_pubky, body_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_message_search_sent
+    ON message_search(owner_pubky, sent_at DESC)`,
+];
+
+/**
  * Schema v14 — W1e single-active receiver + durable handshake budget.
  *
  * `link_receivers.receiver_role` is this device's inbox role (`active` |

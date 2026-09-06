@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
-import { Composer } from "@/components/composer";
+import { Composer, type ComposerQuote } from "@/components/composer";
 import { StandbyReceiveButton } from "@/components/standby-takeover-dialog";
 import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";
+import { Button } from "@/components/ui/button";
 import { DetailBackLink } from "@/components/detail-back";
 import { DetailHeading } from "@/components/detail-heading";
 import { DmMessageBubble } from "@/components/message-bubble";
@@ -15,6 +16,8 @@ import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
 import { queuedThreadSubtitle, STANDBY_COMPOSER_NOTICE, isStandbyNewChatBlocked } from "@/lib/delivery-status";
 import { canComposeMessages } from "@/lib/session-ui";
+import { withDaySeparators } from "@/lib/day-separators";
+import { dataTransferFiles } from "@/lib/attach-file";
 import { sanitizeDisplayName } from "@/lib/display-name";
 import {
   getServerThreadOrigin,
@@ -120,6 +123,21 @@ export function ThreadView({
   linkStatus = null,
   linkSnapshot = null,
   linkReady,
+  nickname = null,
+  muted = false,
+  archived = false,
+  onToggleMute,
+  onToggleArchive,
+  quote = null,
+  onClearQuote,
+  pendingFile = null,
+  pendingPreviewUrl = null,
+  pendingError = null,
+  onConfirmPending,
+  onCancelPending,
+  gifConfigured = false,
+  onPickGif,
+  onOfferAttach,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -145,6 +163,21 @@ export function ThreadView({
   linkSnapshot?: string | null;
   linkReady?: boolean;
   now?: number;
+  nickname?: string | null;
+  muted?: boolean;
+  archived?: boolean;
+  onToggleMute?: () => void;
+  onToggleArchive?: () => void;
+  quote?: ComposerQuote | null;
+  onClearQuote?: () => void;
+  pendingFile?: File | null;
+  pendingPreviewUrl?: string | null;
+  pendingError?: string | null;
+  onConfirmPending?: () => void;
+  onCancelPending?: () => void;
+  gifConfigured?: boolean;
+  onPickGif?: (hit: { id: string; width: number; height: number }) => void;
+  onOfferAttach?: (file: File) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const origin = useSyncExternalStore(
@@ -219,25 +252,52 @@ export function ThreadView({
             className="text-lg font-semibold"
             testId="threadPeer"
           >
-            {title ?? <TruncatedPubky pubky={participantPubky} />}
+            {nickname ? sanitizeDisplayName(nickname) : title ?? <TruncatedPubky pubky={participantPubky} />}
           </DetailHeading>
+          {nickname && title ? (
+            <p className="text-sm text-muted-foreground">{title}</p>
+          ) : null}
           {queuedSubtitle ? (
             <p className="text-sm font-light hc-brand-muted" data-testid="queuedHandshakeSubtitle">
               {queuedSubtitle}
             </p>
           ) : null}
         </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {onToggleMute ? (
+            <Button type="button" size="sm" variant="outline" onClick={onToggleMute} data-testid="threadMute">
+              {muted ? "Unmute" : "Mute"}
+            </Button>
+          ) : null}
+          {onToggleArchive ? (
+            <Button type="button" size="sm" variant="outline" onClick={onToggleArchive} data-testid="threadArchive">
+              {archived ? "Unarchive" : "Archive"}
+            </Button>
+          ) : null}
         <Link
           href={`/contacts/${encodeURIComponent(participantPubky)}`}
           className="inline-flex min-h-11 items-center text-sm hc-brand-text underline-offset-4 hover:underline"
         >
           Contact
         </Link>
+        </div>
       </header>
 
       {!mayCompose ? enableCta : null}
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4" aria-busy={loading || undefined}>
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4"
+        aria-busy={loading || undefined}
+        onDragOver={(event) => {
+          if (!onOfferAttach) return;
+          event.preventDefault();
+        }}
+        onDrop={(event) => {
+          if (!onOfferAttach) return;
+          event.preventDefault();
+          for (const file of dataTransferFiles(event.dataTransfer)) onOfferAttach(file);
+        }}
+      >
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading messages…</p>
         ) : messages.length === 0 ? (
@@ -246,7 +306,15 @@ export function ThreadView({
             <p>Say something. Only the two of you can read this.</p>
           </div>
         ) : (
-          messages.map((message) => {
+          withDaySeparators(messages, now).map((bucket) => {
+            if (bucket.kind === "separator") {
+              return (
+                <p key={bucket.key} className="text-center text-xs text-muted-foreground" data-testid="daySeparator">
+                  {bucket.label}
+                </p>
+              );
+            }
+            const message = bucket.item;
             if (isPaymentMessageKind(message.kind)) {
               return (
                 <PaymentNotice
@@ -270,6 +338,9 @@ export function ThreadView({
                 }
                 mine={message.senderPubky === localPubky}
                 onRetry={onRetry}
+                onCopy={() => {
+                  void navigator.clipboard.writeText(message.body);
+                }}
               />
             );
           })
@@ -302,9 +373,18 @@ export function ThreadView({
             placeholder="Message"
             onChangeDraft={onChangeDraft}
             onSend={onSend}
-            onAttach={onAttach}
+            onAttach={onOfferAttach ?? onAttach}
             testIdPrefix="thread"
             liveStatus={sending ? "Message sending" : null}
+            quote={quote}
+            onClearQuote={onClearQuote}
+            pendingFile={pendingFile}
+            pendingPreviewUrl={pendingPreviewUrl}
+            pendingError={pendingError}
+            onConfirmPending={onConfirmPending}
+            onCancelPending={onCancelPending}
+            gifConfigured={gifConfigured}
+            onPickGif={onPickGif}
           />
         </>
       ) : null}

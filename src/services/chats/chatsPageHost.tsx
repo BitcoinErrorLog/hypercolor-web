@@ -15,19 +15,32 @@ import type { InboxRow } from "@/lib/inbox";
 import { buildDmConversationId } from "@/types/link";
 import { rememberThreadOrigin } from "@/lib/list-detail-focus";
 import { parsePubky } from "@/utils/pubkyId";
+import { dmThreadKey } from "@/lib/contact-label";
+import { LocalChatState } from "@/services/localChatState";
 
-export function mapInboxRowsToChatsPageRows(rows: InboxRow[]): ChatsPageRow[] {
+export function mapInboxRowsToChatsPageRows(
+  rows: InboxRow[],
+  extras?: { nicknames?: Record<string, string>; flags?: Record<string, { muted: boolean; archived: boolean }> },
+): ChatsPageRow[] {
   return rows
     .filter((row) => row.kind === "dm")
-    .map((row) => ({
-      key: row.id,
-      href: row.href,
-      title: row.title,
-      kind: "dm" as const,
-      preview: row.preview,
-      lastMessageAt: row.lastMessageAt,
-      unreadCount: row.unreadCount,
-    }));
+    .map((row) => {
+      const pubky = row.id.startsWith("dm:") ? row.id.slice(3) : row.title;
+      const flags = extras?.flags?.[dmThreadKey(row.id)];
+      return {
+        key: row.id,
+        href: row.href,
+        title: row.title,
+        kind: "dm" as const,
+        preview: row.preview,
+        lastMessageAt: row.lastMessageAt,
+        unreadCount: row.unreadCount,
+        nickname: extras?.nicknames?.[pubky] ?? null,
+        pubky,
+        muted: flags?.muted,
+        archived: flags?.archived,
+      };
+    });
 }
 
 export function ChatsPageHost() {
@@ -40,6 +53,35 @@ export function ChatsPageHost() {
   const [startError, setStartError] = useState<string | null>(null);
   const [emptyStateHint, setEmptyStateHint] = useState<string | undefined>(undefined);
   const emptyEmitted = useRef(false);
+  const [listFilter, setListFilter] = useState<"inbox" | "archived" | "muted">("inbox");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<{ threadKey: string; eventId: string; snippet: string }[]>([]);
+  const [nicknames, setNicknames] = useState<Record<string, string>>({});
+  const [flags, setFlags] = useState<Record<string, { muted: boolean; archived: boolean }>>({});
+
+  useEffect(() => {
+    if (!inbox.ownerPubky) return;
+    void LocalChatState.getNicknames(inbox.ownerPubky).then(setNicknames);
+    void LocalChatState.listThreadFlags(inbox.ownerPubky).then((map) => {
+      const next: Record<string, { muted: boolean; archived: boolean }> = {};
+      for (const [key, value] of Object.entries(map)) {
+        next[key] = { muted: value.muted, archived: value.archived };
+      }
+      setFlags(next);
+    });
+  }, [inbox.ownerPubky, inbox.rows]);
+
+  useEffect(() => {
+    if (!inbox.ownerPubky || !searchQuery.trim()) {
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void LocalChatState.searchMessages(inbox.ownerPubky!, searchQuery).then((hits) => {
+        setSearchHits(hits.map((hit) => ({ threadKey: hit.threadKey, eventId: hit.eventId, snippet: hit.bodyNorm })));
+      });
+    }, 150);
+    return () => window.clearTimeout(handle);
+  }, [inbox.ownerPubky, searchQuery]);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,7 +143,12 @@ export function ChatsPageHost() {
       conversationId={conversationId}
       enableCta={<EnableMessagingCta testId="chatsEnableMessaging" />}
       thread={<ThreadViewHost conversationId={conversationId} />}
-      rows={mapInboxRowsToChatsPageRows(inbox.rows)}
+      rows={mapInboxRowsToChatsPageRows(inbox.rows, { nicknames, flags })}
+      listFilter={listFilter}
+      onChangeListFilter={setListFilter}
+      searchQuery={searchQuery}
+      onChangeSearchQuery={setSearchQuery}
+      searchHits={searchQuery.trim() ? searchHits : []}
       pendingRequests={inbox.pendingRequests}
       inboxError={inbox.error}
       inboxLoading={inbox.loading}

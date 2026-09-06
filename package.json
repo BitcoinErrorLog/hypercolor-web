@@ -6,7 +6,7 @@
     "dev": "next dev --webpack",
     "prebuild": "node scripts/copy-sqlite-wasm.mjs",
     "postinstall": "node scripts/copy-sqlite-wasm.mjs",
-    "build": "next build --webpack",
+    "build": "HC_STATIC_EXPORT=1 next build --webpack",
     "postbuild": "node scripts/mark-e2e-export.mjs",
     "build:e2e:static": "node scripts/build-e2e-static.mjs",
     "preview": "node scripts/static-preview.mjs",

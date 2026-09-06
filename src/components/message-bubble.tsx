@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { MessageBody } from "@/components/message-body";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "@/lib/format";
 import { TruncatedPubky } from "@/components/truncated-pubky";
@@ -31,11 +32,13 @@ export function DmMessageBubble({
   attachmentSlot,
   mine,
   onRetry,
+  onCopy,
 }: {
   message: LinkMessage;
   attachmentSlot?: ReactNode;
   mine: boolean;
   onRetry?: () => void;
+  onCopy?: () => void;
 }) {
   const failed = mine && isFailedDelivery(message.deliveryState);
   return (
@@ -46,12 +49,19 @@ export function DmMessageBubble({
         }`}
       >
         {attachmentSlot ?? (
-          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+          <MessageBody text={message.body} />
         )}
         <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
         </p>
+        <div className="flex flex-wrap gap-1">
+          {onCopy ? (
+            <button type="button" className="inline-flex min-h-11 items-center text-sm underline" onClick={onCopy}>
+              Copy
+            </button>
+          ) : null}
+        </div>
         {failed && onRetry ? (
           <Button type="button" size="sm" variant="outline" onClick={onRetry}>
             Retry
@@ -71,7 +81,10 @@ export function GroupMessageBubble({
   onReact,
   onEdit,
   onDelete,
+  onReply,
+  onCopy,
   pressedEmojis,
+  quotedBody,
 }: {
   message: GroupMessage;
   attachmentSlot?: ReactNode;
@@ -81,7 +94,10 @@ export function GroupMessageBubble({
   onReact?: (emoji: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onReply?: () => void;
+  onCopy?: () => void;
   pressedEmojis?: readonly string[];
+  quotedBody?: string | null;
 }) {
   if (message.kind === GROUP_MEMBERSHIP_KIND) {
     return (
@@ -109,11 +125,16 @@ export function GroupMessageBubble({
         }`}
       >
         {!mine ? <TruncatedPubky pubky={message.senderPubky} className="font-mono text-xs opacity-80" /> : null}
+        {quotedBody ? (
+          <blockquote className="border-l-2 border-border pl-2 text-xs opacity-80" data-testid="groupQuote">
+            {quotedBody}
+          </blockquote>
+        ) : null}
         {message.deleted ? (
           <p className="italic opacity-70">Message deleted</p>
         ) : (
           attachmentSlot ?? (
-            <p className="whitespace-pre-wrap break-words">{message.body}</p>
+            <MessageBody text={message.body} />
           )
         )}
         <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
@@ -154,6 +175,25 @@ export function GroupMessageBubble({
                 onClick={onDelete}
               >
                 Delete
+              </button>
+            ) : null}
+            {onReply ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline"
+                data-testid="groupReply"
+                onClick={onReply}
+              >
+                Reply
+              </button>
+            ) : null}
+            {onCopy ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline"
+                onClick={onCopy}
+              >
+                Copy
               </button>
             ) : null}
           </div>

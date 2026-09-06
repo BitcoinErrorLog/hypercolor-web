@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { LocalChatState } from "@/services/localChatState";
 import { DetailBackLink } from "@/components/detail-back";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { DetailHeading } from "@/components/detail-heading";
@@ -21,6 +23,7 @@ export type ContactDetailFixture = {
   link: LinkRecord | null;
   trust: TrustExplanation | null;
   loading?: boolean;
+  nickname?: string | null;
 };
 
 export function ContactDetail({
@@ -37,6 +40,12 @@ export function ContactDetail({
   const [link, setLink] = useState<LinkRecord | null>(fixture?.link ?? null);
   const [trust, setTrust] = useState<TrustExplanation | null>(fixture?.trust ?? null);
   const [loading, setLoading] = useState(fixture?.loading ?? true);
+  const [nickname, setNickname] = useState(fixture?.nickname ?? "");
+
+  useEffect(() => {
+    if (fixture || !ownerPubky) return;
+    void LocalChatState.getNickname(ownerPubky, pubky).then((value) => setNickname(value ?? ""));
+  }, [fixture, ownerPubky, pubky]);
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -92,6 +101,28 @@ export function ContactDetail({
           )}
         </DetailHeading>
         <p className="mt-2 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
+        <form
+          className="mt-3 space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (fixture || !ownerPubky) return;
+            void LocalChatState.setNickname(ownerPubky, pubky, nickname);
+          }}
+        >
+          <label className="block text-sm font-medium" htmlFor="contactNickname">
+            Nickname
+          </label>
+          <Input
+            id="contactNickname"
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder="Only on this device"
+            data-testid="contactNickname"
+          />
+          <Button type="submit" size="sm" variant="outline">
+            Save nickname
+          </Button>
+        </form>
         <Button
           type="button"
           variant="outline"

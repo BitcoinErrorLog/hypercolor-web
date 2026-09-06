@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
+const staticExport = process.env.HC_STATIC_EXPORT === "1";
+
 const nextConfig: NextConfig = {
-  output: "export",
+  ...(staticExport ? { output: "export" as const } : {}),
   allowedDevOrigins: ["127.0.0.1"],
   images: {
     unoptimized: true,

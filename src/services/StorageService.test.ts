@@ -6,7 +6,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setDbForTests } from "../db";
 import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
-import { runMigrations } from "../db/migrations";
+import { CURRENT_VERSION, runMigrations } from "../db/migrations";
 import { CHAT_MESSAGE_KIND } from "../types/link";
 import { GROUP_MESSAGE_KIND } from "../types/group";
 import { KeyStore } from "./KeyStore";
@@ -43,7 +43,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      15,
+      CURRENT_VERSION,
     );
 
     await StorageService.upsertContact({

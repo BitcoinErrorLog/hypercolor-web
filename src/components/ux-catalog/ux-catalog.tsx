@@ -124,10 +124,10 @@ function attachment(partial: Partial<AttachmentRecord>): AttachmentRecord {
   return { ...base, ...partial };
 }
 
-function rows(): ChatsPageRow[] {
+function rows(state?: string): ChatsPageRow[] {
   return [
-    { key: ASTER, href: `/chats/${encodeURIComponent(DM_ID)}`, title: "Aster Example", kind: "dm", preview: "See you in the thread", lastMessageAt: NOW, unreadCount: 3 },
-    { key: BRAMBLE, href: `/chats/${encodeURIComponent(buildDmConversationId(BRAMBLE))}`, title: "Bramble Example", kind: "dm", preview: "Queued", lastMessageAt: NOW - 60_000, unreadCount: 0 },
+    { key: ASTER, href: `/chats/${encodeURIComponent(DM_ID)}`, title: "Aster Example", kind: "dm", preview: "See you in the thread", lastMessageAt: NOW, unreadCount: 3, nickname: state === "nickname" ? "Star" : null, displayName: "Aster Example", pubky: ASTER },
+    { key: BRAMBLE, href: `/chats/${encodeURIComponent(buildDmConversationId(BRAMBLE))}`, title: "Bramble Example", kind: "dm", preview: "Queued", lastMessageAt: NOW - 60_000, unreadCount: 0, archived: state === "archived", displayName: "Bramble Example", pubky: BRAMBLE },
     { key: `${ASTER.slice(0, 48)}aaaa`, href: "/chats/dm:fixture-alpha", title: "Cedar Example", kind: "dm", preview: "Attachment ready", lastMessageAt: NOW - 120_000, unreadCount: 1 },
     { key: `${ASTER.slice(0, 48)}bbbb`, href: "/chats/dm:fixture-beta", title: "Dahlia Example", kind: "dm", preview: "Payment request", lastMessageAt: NOW - 180_000, unreadCount: 0 },
     { key: `${ASTER.slice(0, 48)}cccc`, href: "/chats/dm:fixture-gamma", title: "Elm Example", kind: "dm", preview: "Encrypted Link established", lastMessageAt: NOW - 240_000, unreadCount: 0 },
@@ -348,6 +348,8 @@ function channelFixture(state: string): ChannelsPageFixture["channelDetail"] {
     setDraft: noop,
     editingEventId: state === "editing" ? "33333333-3333-4333-8333-333333333333" : null,
     setEditingEventId: noop,
+    replyTo: state === "editing" ? { eventId: "33333333-3333-4333-8333-333333333333", authorPubky: ASTER, body: "Private group message." } : null,
+    setReplyTo: noop,
     sending: false,
     loading: state === "loading",
     error: state === "error" ? "Could not load channel." : null,
@@ -521,6 +523,15 @@ function ThreadFixture({ state }: { state: string }) {
           ...(state === "delivery-labels" ? [message({ eventId: "99999999-9999-4999-8999-999999999999", senderPubky: OWNER, direction: "sent", body: "Delivered state.", deliveryState: "delivered", sentAt: NOW + 120_000 })] : []),
           ...(payment ? [message({ eventId: "55555555-5555-4555-8555-555555555555", ...payment, sentAt: NOW + 120_000 })] : []),
           ...(state === "populated" ? [message({ eventId: "44444444-4444-4444-8444-444444444444", kind: CHAT_ATTACHMENT_KIND, body: "Attachment", sentAt: NOW + 180_000 })] : []),
+          ...(state === "day-separators"
+            ? [
+                message({ eventId: "aaaaaaa1-1111-4111-8111-111111111111", body: "Yesterday note.", sentAt: NOW - 86_400_000 }),
+                message({ eventId: "aaaaaaa2-1111-4111-8111-111111111111", body: "Today note.", sentAt: NOW }),
+              ]
+            : []),
+          ...(state === "markdown"
+            ? [message({ eventId: "bbbbbbb1-1111-4111-8111-111111111111", body: "**Bold** and *italic* and `code` and [link](https://example.com)" })]
+            : []),
         ];
   return (
     <ThreadView
@@ -553,7 +564,7 @@ function ChatsFixture({ state }: { state: string }) {
       conversationId={null}
       enableCta={<EnableCtaFixture />}
       thread={<ThreadView conversationId={null} participantPubky={null} localPubky={OWNER} messages={[]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} now={NOW} />}
-      rows={state === "populated" || state === "error" ? rows() : []}
+      rows={state === "populated" || state === "error" || state === "nickname" || state === "archived" ? rows(state) : []}
       pendingRequests={state === "populated" ? 2 : 0}
       inboxError={state === "error" ? "Could not load inbox." : null}
       inboxLoading={state === "loading"}
@@ -565,6 +576,7 @@ function ChatsFixture({ state }: { state: string }) {
       onChangePeerDraft={noop}
       onStartChat={noop}
       emptyStateHint={state === "empty-candidate" ? CHATS_EMPTY_STATE_CANDIDATE_HINT : undefined}
+      listFilter={state === "archived" ? "archived" : "inbox"}
       now={NOW}
     />
   );
@@ -668,6 +680,48 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
   if (scene.surface === "settings") return <SettingsPage fixture={settingsFixture(scene.state)} />;
   if (scene.surface === "ring-callback") return <RingCallbackPage fixturePhase={ringPhase(scene.state)} />;
   if (scene.surface === "composer-menu") return <ComposerMenuFixture />;
+  if (scene.surface === "composer-emoji") {
+    return (
+      <Composer
+        draft=""
+        sending={false}
+        placeholder="Message"
+        onChangeDraft={noop}
+        onSend={noop}
+        testIdPrefix="uxCatalogComposer"
+        initialEmojiOpen
+      />
+    );
+  }
+  if (scene.surface === "composer-gif") {
+    return (
+      <Composer
+        draft=""
+        sending={false}
+        placeholder="Message"
+        onChangeDraft={noop}
+        onSend={noop}
+        testIdPrefix="uxCatalogComposer"
+        gifConfigured={false}
+        onPickGif={noop}
+        initialGifOpen
+      />
+    );
+  }
+  if (scene.surface === "composer-quote") {
+    return (
+      <Composer
+        draft=""
+        sending={false}
+        placeholder="Message"
+        onChangeDraft={noop}
+        onSend={noop}
+        testIdPrefix="uxCatalogComposer"
+        quote={{ eventId: "33333333-3333-4333-8333-333333333333", authorPubky: ASTER, body: "Private group message." }}
+        onClearQuote={noop}
+      />
+    );
+  }
   if (scene.surface === "attachment") return <AttachmentBubble record={attachment({ deliveryState: scene.state === "failed" ? "failed" : "delivered", resolveState: scene.state === "unavailable" ? "unavailable-from-backup" : "ready" })} />;
   throw new Error(`Unknown catalog surface: ${scene.id}`);
 }

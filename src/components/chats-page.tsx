@@ -13,8 +13,7 @@ import { MasterDetail } from "@/components/shell/master-detail";
 import { ErrorDetails } from "@/components/error-details";
 import { isReadOnlyTabError } from "@/db/errors";
 import { rememberAndOpen } from "@/components/detail-back";
-import { sanitizeDisplayName } from "@/lib/display-name";
-import { displayPubkyShort } from "@/components/truncated-pubky";
+import { contactPrimaryLabel } from "@/lib/contact-label";
 import { formatRelativeTime, unreadLabel } from "@/lib/format";
 import { chatRowDomId, rememberThreadOrigin, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
 import { canComposeMessages } from "@/lib/session-ui";
@@ -28,6 +27,11 @@ export type ChatsPageRow = {
   preview: string;
   lastMessageAt: number;
   unreadCount: number;
+  nickname?: string | null;
+  displayName?: string | null;
+  pubky?: string;
+  muted?: boolean;
+  archived?: boolean;
 };
 
 export const CHATS_EMPTY_STATE_CONTROL_HINT =
@@ -53,6 +57,11 @@ export function ChatsPage({
   onStartChat,
   emptyStateHint = CHATS_EMPTY_STATE_BODY,
   now,
+  listFilter = "inbox",
+  onChangeListFilter,
+  searchQuery = "",
+  searchHits,
+  onChangeSearchQuery,
 }: {
   conversationId: string | null;
   enableCta: ReactNode;
@@ -70,6 +79,11 @@ export function ChatsPage({
   onStartChat: () => void;
   emptyStateHint?: string;
   now?: number;
+  listFilter?: "inbox" | "archived" | "muted";
+  onChangeListFilter?: (filter: "inbox" | "archived" | "muted") => void;
+  searchQuery?: string;
+  searchHits?: { threadKey: string; eventId: string; snippet: string }[];
+  onChangeSearchQuery?: (value: string) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const composeEnabled = canComposeMessages(status);
@@ -91,6 +105,42 @@ export function ChatsPage({
           Chats
         </h1>
         <PageSubtitle>Encrypted threads on this device.</PageSubtitle>
+        <form
+          className="mt-3"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <Input
+            value={searchQuery}
+            onChange={(event) => onChangeSearchQuery?.(event.target.value)}
+            placeholder="Search messages"
+            data-testid="chatsSearch"
+            aria-label="Search messages"
+          />
+        </form>
+        {searchHits && searchHits.length > 0 ? (
+          <ul className="mt-2 space-y-1 text-sm" data-testid="chatsSearchHits">
+            {searchHits.map((hit) => (
+              <li key={`${hit.threadKey}:${hit.eventId}`} className="truncate text-muted-foreground">
+                {hit.snippet}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="mt-3 flex gap-2" role="tablist" aria-label="Chat filters">
+          {(["inbox", "archived", "muted"] as const).map((filter) => (
+            <Button
+              key={filter}
+              type="button"
+              size="sm"
+              variant={listFilter === filter ? "brand" : "outline"}
+              aria-pressed={listFilter === filter}
+              data-testid={`chatsFilter-${filter}`}
+              onClick={() => onChangeListFilter?.(filter)}
+            >
+              {filter === "inbox" ? "Inbox" : filter === "archived" ? "Archived" : "Muted"}
+            </Button>
+          ))}
+        </div>
       </PageHeader>
       <MasterDetail
         listClassName={conversationId ? "hidden md:block" : undefined}
@@ -162,9 +212,20 @@ export function ChatsPage({
           </div>
         ) : (
           <ul className="mt-4">
-            {rows.map((row) => {
+            {rows
+              .filter((row) => {
+                if (listFilter === "archived") return Boolean(row.archived);
+                if (listFilter === "muted") return Boolean(row.muted);
+                return !row.archived;
+              })
+              .map((row) => {
               const rowId = chatRowDomId(row.key);
-              const labelName = sanitizeDisplayName(displayPubkyShort(row.title));
+              const labels = contactPrimaryLabel({
+                nickname: row.nickname,
+                displayName: row.displayName ?? (row.pubky ? null : row.title),
+                pubky: row.pubky ?? row.title,
+              });
+              const labelName = labels.primary;
               const selected = conversationId !== null && row.href.endsWith(conversationId);
               return (
                 <li key={row.key} className={selected ? "rounded-lg hc-wash px-2" : "px-2"}>
@@ -179,16 +240,19 @@ export function ChatsPage({
                       rememberThreadOrigin({ kind: "chats" });
                     }}
                   >
-                    <Avatar seed={row.title} size="md" />
+                    <Avatar seed={row.pubky ?? row.title} size="md" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center justify-between gap-2">
-                        <span className="truncate text-sm font-bold">{displayPubkyShort(row.title)}</span>
+                        <span className="truncate text-sm font-bold">{labelName}</span>
                         {row.lastMessageAt ? (
                           <span className="text-xs text-muted-foreground">
                             {formatRelativeTime(row.lastMessageAt, now)}
                           </span>
                         ) : null}
                       </span>
+                      {labels.secondary ? (
+                        <span className="block truncate text-xs text-muted-foreground">{labels.secondary}</span>
+                      ) : null}
                       <span className="mt-1 flex items-center justify-between gap-2">
                         <span className="truncate text-base text-muted-foreground">{row.preview}</span>
                         {row.unreadCount > 0 ? (
