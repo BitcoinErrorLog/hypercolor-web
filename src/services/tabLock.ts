@@ -587,6 +587,12 @@ export function setTabLockOwner(pubky: string | null): void {
   emit();
 }
 
+export function setTabLockModeForTests(next: TabLockMode): void {
+  mode = next;
+  yielding = false;
+  emit();
+}
+
 export function resetTabLockForTests(): void {
   abortPendingSteal();
   currentAbort?.abort();

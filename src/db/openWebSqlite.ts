@@ -11,6 +11,7 @@ import {
 } from "./errors";
 import { isMutatingSql } from "./mutatingSql";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
+import { getPubky } from "@/services/KeyStore";
 import {
   getTabLock,
   getTabLockOwnerScope,
@@ -45,7 +46,13 @@ export type SqliteSnapshotMeta = {
   bundleId: string;
   generation: number;
   nonce?: string;
+  ownerPubky?: string;
 };
+
+export const LEGACY_MIGRATE_READER_ATTEMPTS = 15;
+export const LEGACY_MIGRATE_READER_DELAY_MS = 40;
+
+const migrateChains = new Map<string, Promise<void>>();
 
 let persistGeneration = 1;
 let persistNonce = randomPersistNonce();
@@ -151,12 +158,7 @@ function wrapIdbSnapshot(
     const userVersion = Number(versionRows?.[0]?.user_version ?? 0);
     persistChain = persistChain
       .then(() =>
-        putIdbSnapshot(bytes, {
-          userVersion,
-          bundleId: SQLITE_BUNDLE_ID,
-          generation,
-          nonce,
-        }),
+        putIdbSnapshot(bytes, snapshotMetaForPersist(userVersion, generation, nonce)),
       )
       .then(() => {
         lastPersistError = null;
@@ -240,10 +242,300 @@ function openIdb(name = currentSqliteIdbName()): Promise<IDBDatabase> {
   });
 }
 
+function snapshotMetaForPersist(
+  userVersion: number,
+  generation: number,
+  nonce: string,
+): SqliteSnapshotMeta {
+  const owner = getTabLockOwnerScope();
+  return {
+    userVersion,
+    bundleId: SQLITE_BUNDLE_ID,
+    generation,
+    nonce,
+    ...(owner && owner !== TAB_LOCK_UNSIGNED_SCOPE ? { ownerPubky: owner } : {}),
+  };
+}
+
 function decodeSnapshotBytes(value: unknown): Uint8Array | null {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   return null;
+}
+
+function parseSnapshotMeta(raw: unknown): SqliteSnapshotMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const rec = raw as SqliteSnapshotMeta;
+  if (typeof rec.bundleId !== "string" || typeof rec.userVersion !== "number") return null;
+  return {
+    userVersion: Number(rec.userVersion),
+    bundleId: String(rec.bundleId),
+    generation: Number(rec.generation ?? 0),
+    nonce: typeof rec.nonce === "string" ? rec.nonce : undefined,
+    ownerPubky: typeof rec.ownerPubky === "string" && rec.ownerPubky.length > 0 ? rec.ownerPubky : undefined,
+  };
+}
+
+function snapshotBytesPresent(bytes: Uint8Array | null): boolean {
+  return !!bytes && bytes.byteLength > 0;
+}
+
+async function listIdbDatabaseNames(): Promise<string[] | null> {
+  if (typeof indexedDB.databases !== "function") return null;
+  try {
+    const dbs = await indexedDB.databases();
+    return dbs
+      .map((entry) => entry.name)
+      .filter((name): name is string => typeof name === "string" && name.length > 0);
+  } catch {
+    return null;
+  }
+}
+
+async function idbDatabaseExists(name: string): Promise<boolean> {
+  const names = await listIdbDatabaseNames();
+  if (names) return names.includes(name);
+  return false;
+}
+
+async function readNamedSnapshot(name: string): Promise<{
+  bytes: Uint8Array | null;
+  meta: SqliteSnapshotMeta | null;
+}> {
+  if (!(await idbDatabaseExists(name))) {
+    const names = await listIdbDatabaseNames();
+    if (names) return { bytes: null, meta: null };
+  }
+  const db = await openIdb(name);
+  try {
+    if (!db.objectStoreNames.contains(IDB_STORE)) {
+      return { bytes: null, meta: null };
+    }
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readonly");
+      const store = tx.objectStore(IDB_STORE);
+      const blobReq = store.get(IDB_KEY);
+      const metaReq = store.get(IDB_META_KEY);
+      tx.oncomplete = () => {
+        resolve({
+          bytes: decodeSnapshotBytes(blobReq.result),
+          meta: parseSnapshotMeta(metaReq.result),
+        });
+      };
+      tx.onerror = () => reject(tx.error ?? new Error("indexedDB get failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function namedIdbHasSnapshot(name: string): Promise<boolean> {
+  const { bytes } = await readNamedSnapshot(name);
+  return snapshotBytesPresent(bytes);
+}
+
+async function writeNamespacedIfEmpty(
+  name: string,
+  bytes: Uint8Array,
+  meta: SqliteSnapshotMeta,
+): Promise<boolean> {
+  const db = await openIdb(name);
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      const store = tx.objectStore(IDB_STORE);
+      const blobReq = store.get(IDB_KEY);
+      const metaReq = store.get(IDB_META_KEY);
+      let alreadyPresent = false;
+      let pending = 2;
+      const onGet = () => {
+        pending -= 1;
+        if (pending !== 0) return;
+        alreadyPresent = snapshotBytesPresent(decodeSnapshotBytes(blobReq.result));
+        if (alreadyPresent) return;
+        store.put(bytes, IDB_KEY);
+        store.put(meta, IDB_META_KEY);
+      };
+      blobReq.onsuccess = onGet;
+      metaReq.onsuccess = onGet;
+      tx.oncomplete = () => resolve(alreadyPresent);
+      tx.onerror = () => reject(tx.error ?? new Error("indexedDB migrate put failed"));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function otherNamespacedSqliteDbs(owner: string): Promise<string[]> {
+  const names = await listIdbDatabaseNames();
+  if (!names) return [];
+  const self = `${IDB_NAME}:${owner}`;
+  return names.filter((name) => name.startsWith(`${IDB_NAME}:`) && name !== self);
+}
+
+async function mayAdoptLegacySnapshot(
+  owner: string,
+  meta: SqliteSnapshotMeta | null,
+): Promise<boolean> {
+  const metaOwner = meta?.ownerPubky;
+  if (typeof metaOwner === "string" && metaOwner.length > 0) {
+    if (metaOwner === owner) return true;
+    console.info("[hypercolor-sqlite] leaving legacy snapshot owned by another identity", {
+      metaOwner,
+      owner,
+    });
+    return false;
+  }
+  let keyStorePubky: string | null = null;
+  try {
+    keyStorePubky = await getPubky();
+  } catch {
+    keyStorePubky = null;
+  }
+  if (keyStorePubky !== owner) {
+    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot", {
+      owner,
+      keyStorePubky,
+    });
+    return false;
+  }
+  const names = await listIdbDatabaseNames();
+  if (!names) {
+    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot; cannot list IndexedDB names", {
+      owner,
+    });
+    return false;
+  }
+  const others = await otherNamespacedSqliteDbs(owner);
+  if (others.length > 0) {
+    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot; other namespaced DBs exist", {
+      owner,
+      others,
+    });
+    return false;
+  }
+  return true;
+}
+
+async function withExclusiveMigrateLock(owner: string, fn: () => Promise<void>): Promise<void> {
+  const run = async () => {
+    const prev = migrateChains.get(owner) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    migrateChains.set(owner, next.then(
+      () => undefined,
+      () => undefined,
+    ));
+    await next;
+  };
+  if (
+    typeof navigator !== "undefined" &&
+    navigator.locks &&
+    typeof navigator.locks.request === "function"
+  ) {
+    await navigator.locks.request(`hypercolor-sqlite-migrate:${owner}`, { mode: "exclusive" }, async () => {
+      await run();
+    });
+    return;
+  }
+  await run();
+}
+
+async function waitForNamespacedSnapshot(namespaced: string): Promise<void> {
+  for (let attempt = 0; attempt < LEGACY_MIGRATE_READER_ATTEMPTS; attempt += 1) {
+    if (await namedIdbHasSnapshot(namespaced)) return;
+    if (!(await namedIdbHasSnapshot(IDB_NAME))) return;
+    await delay(LEGACY_MIGRATE_READER_DELAY_MS);
+  }
+}
+
+function snapshotBytesEqual(left: Uint8Array | null, right: Uint8Array | null): boolean {
+  if (!left || !right || left.byteLength !== right.byteLength) return false;
+  for (let i = 0; i < left.byteLength; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
+async function maybeDeleteLeftoverLegacy(owner: string): Promise<void> {
+  if (getTabLock().mode !== "writer" || isYieldingTab()) return;
+  if (!(await namedIdbHasSnapshot(IDB_NAME))) return;
+  const namespaced = `${IDB_NAME}:${owner}`;
+  const [legacy, current] = await Promise.all([
+    readNamedSnapshot(IDB_NAME),
+    readNamedSnapshot(namespaced),
+  ]);
+  if (!snapshotBytesPresent(legacy.bytes) || !snapshotBytesPresent(current.bytes)) return;
+  if (!snapshotBytesEqual(legacy.bytes, current.bytes)) return;
+  if (!(await mayAdoptLegacySnapshot(owner, legacy.meta))) return;
+  try {
+    await deleteIdbDatabaseOnce(IDB_NAME);
+  } catch (err) {
+    if (err instanceof SqliteDeleteBlockedError) {
+      console.info("[hypercolor-sqlite] legacy IDB delete blocked; will retry on next open");
+      return;
+    }
+    throw err;
+  }
+}
+
+/**
+ * One-time copy of the pre-namespace IndexedDB (`hypercolor-sqlite`) into
+ * `hypercolor-sqlite:<owner>`. Writer-only. Unsigned tabs never run this.
+ */
+export async function migrateLegacySqliteSnapshotIfNeeded(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  const owner = getTabLockOwnerScope();
+  if (!owner || owner === TAB_LOCK_UNSIGNED_SCOPE) return;
+  const namespaced = `${IDB_NAME}:${owner}`;
+  if (await namedIdbHasSnapshot(namespaced)) {
+    await maybeDeleteLeftoverLegacy(owner);
+    return;
+  }
+
+  const writer = getTabLock().mode === "writer" && !isYieldingTab();
+  if (!writer) {
+    await waitForNamespacedSnapshot(namespaced);
+    return;
+  }
+
+  await withExclusiveMigrateLock(owner, async () => {
+    if (await namedIdbHasSnapshot(namespaced)) {
+      await maybeDeleteLeftoverLegacy(owner);
+      return;
+    }
+    const legacy = await readNamedSnapshot(IDB_NAME);
+    if (!snapshotBytesPresent(legacy.bytes) || !legacy.bytes) return;
+    if (!(await mayAdoptLegacySnapshot(owner, legacy.meta))) return;
+
+    bumpPersistGeneration();
+    const meta: SqliteSnapshotMeta = {
+      userVersion: legacy.meta?.userVersion ?? 0,
+      bundleId: legacy.meta?.bundleId ?? SQLITE_BUNDLE_ID,
+      generation: persistGeneration,
+      nonce: persistNonce,
+      ownerPubky: owner,
+    };
+    const alreadyPresent = await writeNamespacedIfEmpty(namespaced, legacy.bytes, meta);
+    if (alreadyPresent) {
+      await maybeDeleteLeftoverLegacy(owner);
+      return;
+    }
+
+    const verify = await readNamedSnapshot(namespaced);
+    if (
+      !snapshotBytesPresent(verify.bytes) ||
+      !verify.meta ||
+      verify.bytes?.byteLength !== legacy.bytes.byteLength ||
+      verify.meta.generation !== meta.generation ||
+      verify.meta.bundleId !== meta.bundleId ||
+      verify.meta.userVersion !== meta.userVersion
+    ) {
+      console.error("[hypercolor-sqlite] legacy migrate verify failed; leaving legacy in place");
+      return;
+    }
+
+    await maybeDeleteLeftoverLegacy(owner);
+  });
 }
 
 export async function getIdbSnapshot(): Promise<Uint8Array | null> {
@@ -255,38 +547,7 @@ async function getIdbSnapshotAndMeta(): Promise<{
   bytes: Uint8Array | null;
   meta: SqliteSnapshotMeta | null;
 }> {
-  const db = await openIdb();
-  try {
-    return await new Promise((resolve, reject) => {
-      const tx = db.transaction(IDB_STORE, "readonly");
-      const store = tx.objectStore(IDB_STORE);
-      const blobReq = store.get(IDB_KEY);
-      const metaReq = store.get(IDB_META_KEY);
-      tx.oncomplete = () => {
-        const raw = metaReq.result;
-        const meta =
-          raw &&
-          typeof raw === "object" &&
-          typeof (raw as SqliteSnapshotMeta).bundleId === "string" &&
-          typeof (raw as SqliteSnapshotMeta).userVersion === "number"
-            ? {
-                userVersion: Number((raw as SqliteSnapshotMeta).userVersion),
-                bundleId: String((raw as SqliteSnapshotMeta).bundleId),
-                generation: Number((raw as SqliteSnapshotMeta).generation ?? 0),
-                nonce:
-                  typeof (raw as SqliteSnapshotMeta).nonce === "string"
-                    ? (raw as SqliteSnapshotMeta).nonce
-                    : undefined,
-              }
-            : null;
-        resolve({ bytes: decodeSnapshotBytes(blobReq.result), meta });
-      };
-      tx.onerror = () =>
-        reject(tx.error ?? new Error("indexedDB get failed"));
-    });
-  } finally {
-    db.close();
-  }
+  return readNamedSnapshot(currentSqliteIdbName());
 }
 
 function isStalePut(meta: SqliteSnapshotMeta, existing: SqliteSnapshotMeta | undefined): boolean {
@@ -330,12 +591,10 @@ export async function putIdbSnapshot(
 export async function sealPersistGenerationInIdb(): Promise<void> {
   bumpPersistGeneration();
   const { bytes, meta } = await getIdbSnapshotAndMeta();
-  await putIdbSnapshot(bytes ?? new Uint8Array(0), {
-    userVersion: meta?.userVersion ?? 0,
-    bundleId: meta?.bundleId ?? SQLITE_BUNDLE_ID,
-    generation: persistGeneration,
-    nonce: persistNonce,
-  });
+  await putIdbSnapshot(
+    bytes ?? new Uint8Array(0),
+    snapshotMetaForPersist(meta?.userVersion ?? 0, persistGeneration, persistNonce),
+  );
 }
 
 function hydrateMemoryDb(
@@ -405,6 +664,7 @@ export function assertHydrateIntegrity(
 async function openIdbSnapshotVfs(
   sqlite3: Sqlite3Static,
 ): Promise<PersistableSqlExecutor> {
+  await migrateLegacySqliteSnapshotIfNeeded();
   const { bytes, meta } = await getIdbSnapshotAndMeta();
   adoptPersistGenerationFromMeta(meta);
   const db = hydrateMemoryDb(sqlite3, bytes);
@@ -501,11 +761,21 @@ function delay(ms: number): Promise<void> {
 async function deleteIdbDatabaseOnce(name = currentSqliteIdbName()): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(name);
-    req.onsuccess = () => resolve();
-    req.onblocked = () =>
+    const timer = setTimeout(() => {
       reject(new SqliteDeleteBlockedError());
-    req.onerror = () =>
+    }, 250);
+    req.onsuccess = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    req.onblocked = () => {
+      clearTimeout(timer);
+      reject(new SqliteDeleteBlockedError());
+    };
+    req.onerror = () => {
+      clearTimeout(timer);
       reject(req.error ?? new Error("indexedDB.deleteDatabase failed"));
+    };
   });
 }
 
