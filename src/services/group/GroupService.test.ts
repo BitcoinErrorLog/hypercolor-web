@@ -15,6 +15,7 @@ import { LINK_RECEIVER_PATH } from "../../types/link";
 import { KeyStore } from "../KeyStore";
 import { StorageService } from "../StorageService";
 import { LinkService } from "../link/LinkService";
+import { LocalChatState } from "../localChatState";
 import { applyGroupInbound } from "./applyGroupInbound";
 import { GroupService } from "./GroupService";
 
@@ -437,6 +438,43 @@ describe("GroupService", () => {
     expect(history.some((m) => m.body === "after-remove" || m.body === "never-a-member")).toBe(
       false,
     );
+  });
+
+  it("purges group search FTS when the owner leaves or is removed", async () => {
+    const channelId = await createPrivateGroup();
+    await GroupService.sendGroupMessage(channelId, "secret group token");
+    expect((await LocalChatState.searchMessages(OWNER, "secret")).length).toBe(1);
+    await GroupService.removeMember(channelId, PEER_B);
+    expect((await LocalChatState.searchMessages(OWNER, "secret")).length).toBe(1);
+    await GroupService.leaveChannel(channelId);
+    expect((await LocalChatState.searchMessages(OWNER, "secret")).length).toBe(0);
+  });
+
+  it("purges group search FTS when inbound remove targets the owner", async () => {
+    const channelId = await createPrivateGroup();
+    await GroupService.sendGroupMessage(channelId, "kicked owner plaintext");
+    expect((await LocalChatState.searchMessages(OWNER, "kicked")).length).toBe(1);
+    const admin = await StorageService.getGroupMember(OWNER, channelId, PEER_A);
+    expect(admin).toBeTruthy();
+    await StorageService.upsertGroupMember({
+      ...admin!,
+      role: "admin",
+    });
+    const built = buildGroupMembershipEnvelope({
+      channelId,
+      eventId: EVENT3,
+      sentAt: NOW + 40,
+      op: "remove",
+      subjectPubky: OWNER,
+    });
+    await applyGroupInbound({
+      ownerPubky: OWNER,
+      senderPubky: PEER_A,
+      envelope: built.envelope,
+      rawJson: built.json,
+      receivedAt: NOW + 40,
+    });
+    expect((await LocalChatState.searchMessages(OWNER, "kicked")).length).toBe(0);
   });
 
   it("rejects a forged create whose channel_id founder is not the authenticated sender", async () => {

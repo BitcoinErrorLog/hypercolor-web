@@ -351,6 +351,13 @@ export const StorageService = {
     });
   },
 
+  async purgeGroupSearch(ownerPubky: PubkyKey, channelId: string): Promise<void> {
+    const db = await getDb();
+    transact(db, () => {
+      removeSearchThread(db, ownerPubky, groupThreadKey(channelId));
+    });
+  },
+
   // ── Delivery Queue ────────────────────────────────────────────────────────
 
   async enqueue(item: DeliveryQueueItem): Promise<void> {

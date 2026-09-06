@@ -2,6 +2,10 @@
 
 import { useEffect, useState } from "react";
 
+export function gifProxyLooksConfigured(status: number): boolean {
+  return status !== 503 && status !== 404 && status !== 401;
+}
+
 export function useGifConfigured(): boolean {
   const [configured, setConfigured] = useState(false);
   useEffect(() => {
@@ -9,7 +13,7 @@ export function useGifConfigured(): boolean {
     void fetch("/api/gif/search?q=")
       .then((res) => {
         if (cancelled) return;
-        setConfigured(res.status !== 503 && res.status !== 404);
+        setConfigured(gifProxyLooksConfigured(res.status));
       })
       .catch(() => {
         if (!cancelled) setConfigured(false);

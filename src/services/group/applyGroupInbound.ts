@@ -282,6 +282,9 @@ async function markRemoved(
     });
   }
   await StorageService.bumpGroupMembershipEpoch(ownerPubky, channelId);
+  if (memberPubky === ownerPubky) {
+    await StorageService.purgeGroupSearch(ownerPubky, channelId);
+  }
 }
 
 function isTargetedKind(

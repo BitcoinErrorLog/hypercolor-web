@@ -361,6 +361,9 @@ export const GroupService = {
       removedAt: ts,
     });
     await StorageService.bumpGroupMembershipEpoch(owner, channelId);
+    if (memberPubky === owner) {
+      await StorageService.purgeGroupSearch(owner, channelId);
+    }
     await fanOutMembershipOp(owner, channelId, "remove", memberPubky, [memberPubky]);
     notifyGroupEvent(owner, channelId);
   },
@@ -382,6 +385,7 @@ export const GroupService = {
       });
     }
     await StorageService.bumpGroupMembershipEpoch(owner, channelId);
+    await StorageService.purgeGroupSearch(owner, channelId);
     await fanOutMembershipOp(owner, channelId, "leave", owner);
     notifyGroupEvent(owner, channelId);
   },

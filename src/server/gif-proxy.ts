@@ -15,7 +15,9 @@ type TenorResult = { id?: unknown; media_formats?: Record<string, TenorFormat> }
 
 const WINDOW_MS = 60_000;
 const SEARCH_LIMIT = 30;
-const FETCH_LIMIT = 20;
+const FETCH_LIMIT = 30;
+const PREVIEW_LIMIT = 120;
+const SID_TTL_SEC = 86_400;
 const ALLOW_TTL_MS = 10 * 60_000;
 const ALLOW_MAX = 256;
 const UPSTREAM_TIMEOUT_MS = 8_000;
@@ -40,6 +42,7 @@ type AllowRow = { gifUrl: string; previewUrl: string; expires: number };
 
 const searchHits = new Map<string, Bucket>();
 const fetchHits = new Map<string, Bucket>();
+const previewHits = new Map<string, Bucket>();
 const allow = new Map<string, AllowRow>();
 
 function gifProxySecret(): string | null {
@@ -50,16 +53,15 @@ function gifProxySecret(): string | null {
   return createHmac("sha256", tenor).update("hypercolor-gif-proxy-sid").digest("hex");
 }
 
-function signSid(id: string): string {
+function signPayload(payload: string): string {
   const secret = gifProxySecret();
   if (!secret) return "";
-  return `${id}.${createHmac("sha256", secret).update(id).digest("hex")}`;
+  return createHmac("sha256", secret).update(payload).digest("hex");
 }
 
-function verifySid(id: string, mac: string): boolean {
-  const secret = gifProxySecret();
-  if (!secret) return false;
-  const expected = createHmac("sha256", secret).update(id).digest("hex");
+function verifyMac(payload: string, mac: string): boolean {
+  const expected = signPayload(payload);
+  if (!expected) return false;
   const a = Buffer.from(expected, "hex");
   const b = Buffer.from(mac.toLowerCase(), "hex");
   return a.length === b.length && timingSafeEqual(a, b);
@@ -76,12 +78,20 @@ export function parseGifSessionCookie(header: string | null): GifSessionParse {
   const match = header?.match(/(?:^|;\s*)hc_gif_sid=([^;]+)/i);
   if (!match) return { present: false, valid: false, sid: "", cookieValue: "" };
   const cookieValue = match[1].trim();
-  const signed = cookieValue.match(/^([0-9a-f]{32})\.([0-9a-f]{64})$/i);
-  if (!signed || !verifySid(signed[1].toLowerCase(), signed[2])) {
+  const signed = cookieValue.match(/^([0-9a-f]{32})\.(\d{1,10})\.([0-9a-f]{64})$/i);
+  if (!signed) {
     return { present: true, valid: false, sid: "", cookieValue };
   }
-  const sid = signed[1].toLowerCase();
-  return { present: true, valid: true, sid, cookieValue };
+  const id = signed[1].toLowerCase();
+  const exp = Number(signed[2]);
+  const mac = signed[3];
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) {
+    return { present: true, valid: false, sid: "", cookieValue };
+  }
+  if (!verifyMac(`${id}.${exp}`, mac)) {
+    return { present: true, valid: false, sid: "", cookieValue };
+  }
+  return { present: true, valid: true, sid: id, cookieValue };
 }
 
 export function gifSessionIdFromCookie(header: string | null): string {
@@ -89,20 +99,64 @@ export function gifSessionIdFromCookie(header: string | null): string {
   return parsed.valid ? parsed.sid : "";
 }
 
-export function newGifSessionId(): string {
+export function newGifSessionId(ttlSec = SID_TTL_SEC): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   const id = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return signSid(id);
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const payload = `${id}.${exp}`;
+  const mac = signPayload(payload);
+  if (!mac) return "";
+  return `${payload}.${mac}`;
 }
 
 export function sessionCookie(id: string): string {
-  return `hc_gif_sid=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400`;
+  return `hc_gif_sid=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SID_TTL_SEC}`;
 }
 
-export function clientIpFromHeaders(xff: string | null, fallback = ""): string {
-  const first = (xff ?? "").split(",")[0]?.trim() ?? "";
-  return first || fallback || "unknown";
+export function expireSessionCookie(): string {
+  return `hc_gif_sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+}
+
+export type BoundGifSession = {
+  sid: string;
+  cookieValue: string;
+  reissued: boolean;
+  hadInvalid: boolean;
+};
+
+export function bindGifSession(cookieHeader: string | null): BoundGifSession {
+  const parsed = parseGifSessionCookie(cookieHeader);
+  if (parsed.valid) {
+    return {
+      sid: parsed.sid,
+      cookieValue: parsed.cookieValue,
+      reissued: false,
+      hadInvalid: false,
+    };
+  }
+  const cookieValue = newGifSessionId();
+  const sid = parseGifSessionCookie(`hc_gif_sid=${cookieValue}`).sid;
+  return { sid, cookieValue, reissued: true, hadInvalid: parsed.present };
+}
+
+export function appendGifSessionCookies(headers: Headers, session: BoundGifSession): void {
+  if (session.hadInvalid) headers.append("Set-Cookie", expireSessionCookie());
+  if (session.reissued && session.cookieValue) {
+    headers.append("Set-Cookie", sessionCookie(session.cookieValue));
+  }
+}
+
+export function clientIpFromHeaders(headers: { get(name: string): string | null }): string {
+  const real = headers.get("x-real-ip")?.trim();
+  if (real) return real.split(",")[0]?.trim() || "unknown";
+  const vercel = headers.get("x-vercel-forwarded-for")?.trim();
+  if (vercel) return vercel.split(",")[0]?.trim() || "unknown";
+  const hops = (headers.get("x-forwarded-for") ?? "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return hops.at(-1) || "unknown";
 }
 
 function take(map: Map<string, Bucket>, key: string, limit: number): boolean {
@@ -313,8 +367,10 @@ export async function fetchTenorGif(
   if (!process.env.TENOR_API_KEY || !gifProxySecret()) {
     return { status: 503, body: { error: "GIF search not configured", code: "not-configured" } };
   }
-  sweepHits(fetchHits);
-  if (!take(fetchHits, `ip:${clientIp}`, FETCH_LIMIT) || !take(fetchHits, `sid:${sessionId}`, FETCH_LIMIT)) {
+  const hits = kind === "preview" ? previewHits : fetchHits;
+  const limit = kind === "preview" ? PREVIEW_LIMIT : FETCH_LIMIT;
+  sweepHits(hits);
+  if (!take(hits, `ip:${clientIp}`, limit) || !take(hits, `sid:${sessionId}`, limit)) {
     return { status: 429, body: { error: "Too many GIF downloads. Try again in a minute." } };
   }
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
