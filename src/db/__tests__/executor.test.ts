@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMigrations } from "../migrations";
+import { CURRENT_VERSION, runMigrations } from "../migrations";
 import {
   applyConnectionPreamble,
   closeDb,
@@ -65,7 +65,7 @@ describe("web SqlExecutor", () => {
         1,
       );
       expect(exec.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-        14,
+        CURRENT_VERSION,
       );
     } finally {
       closeDb();
@@ -110,12 +110,12 @@ describe("web SqlExecutor", () => {
     }
   });
 
-  it("runMigrations is idempotent at user_version 14", async () => {
+  it("runMigrations is idempotent at current user_version", async () => {
     const db = openMemoryDb();
     await runMigrations(db);
     await runMigrations(db);
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      14,
+      CURRENT_VERSION,
     );
     expect(
       db.executeSync(

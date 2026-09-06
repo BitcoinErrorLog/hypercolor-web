@@ -25,6 +25,29 @@ export const SCHEMA_V14_STATEMENTS: readonly string[] = [
 ];
 
 /**
+ * Schema v15 — durable predecessor snapshot for two-phase established re-key.
+ * The live `links` row stays established until the new handshake completes;
+ * the old snapshot is written here only at that commit so fallback remains
+ * possible while the adopt is pending (the live row is still the old link).
+ */
+export const SCHEMA_V15_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS links_archive (
+    owner_pubky              TEXT    NOT NULL,
+    peer_pubky               TEXT    NOT NULL,
+    role                     TEXT    NOT NULL,
+    status                   TEXT    NOT NULL,
+    snapshot                 TEXT    NOT NULL,
+    remote_noise_public_key  TEXT    NOT NULL DEFAULT '',
+    local_receiver_path      TEXT    NOT NULL DEFAULT '',
+    remote_receiver_path     TEXT    NOT NULL DEFAULT '',
+    consecutive_failures     INTEGER NOT NULL DEFAULT 0,
+    last_seen_peer_marker_pk TEXT,
+    archived_at              INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+];
+
+/**
  * Schema v13 — retire research-era DM/channel tables; keep the live
  * Encrypted-Link retry queue (`delivery_queue`). Add author scoping on
  * group-message replies (`reply_to_author_pubky`).

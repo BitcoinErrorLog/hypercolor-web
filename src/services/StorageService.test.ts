@@ -43,7 +43,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      14,
+      15,
     );
 
     await StorageService.upsertContact({

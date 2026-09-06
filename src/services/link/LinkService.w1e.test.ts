@@ -16,6 +16,14 @@ const deleteLink = vi.fn();
 const upsertLink = vi.fn();
 const closeLink = vi.fn();
 const clearOutbox = vi.fn();
+const receivePrivate = vi.fn(
+  async (): Promise<{ messages: { kind: string | null; rawJson: string }[]; snapshot: string }> => ({
+    messages: [],
+    snapshot: "est",
+  }),
+);
+const upsertArchivedLink = vi.fn();
+const getArchivedLink = vi.fn();
 
 vi.mock("./PaykitLinkWeb", async () => {
   const actual = await vi.importActual<typeof import("./PaykitLinkWeb")>("./PaykitLinkWeb");
@@ -30,7 +38,7 @@ vi.mock("./PaykitLinkWeb", async () => {
       restoreHandshake: (...args: unknown[]) => restoreHandshake(...args),
       restoreLink: (...args: unknown[]) => restoreLink(...args),
       sendPrivateMessageJson: vi.fn(),
-      receivePrivateMessages: vi.fn(async () => ({ messages: [], snapshot: "est" })),
+      receivePrivateMessages: () => receivePrivate(),
       clearLinkOutbox: (...args: unknown[]) => clearOutbox(...args),
       closeLink: (...args: unknown[]) => closeLink(...args),
     },
@@ -47,6 +55,8 @@ vi.mock("@/services/StorageService", () => ({
     getLink: (...args: unknown[]) => getLink(...args),
     getAllLinks: vi.fn(async () => []),
     upsertLink: (...args: unknown[]) => upsertLink(...args),
+    upsertArchivedLink: (...args: unknown[]) => upsertArchivedLink(...args),
+    getArchivedLink: (...args: unknown[]) => getArchivedLink(...args),
     recordLastSeenPeerMarkerPk: vi.fn(),
     updateLinkSnapshot: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
@@ -134,7 +144,7 @@ vi.mock("./provisionReceiver", () => ({
   takeoverReceiver: vi.fn(),
 }));
 
-import { LinkService, PEER_MARKER_REFRESH_TTL_MS, resetLinkServiceHarnessState } from "./LinkService";
+import { HANDSHAKE_STALE_MS, LinkService, PEER_MARKER_REFRESH_TTL_MS, resetLinkServiceHarnessState } from "./LinkService";
 import { LinkSendError } from "./LinkSendError";
 import { createLinkNativeError } from "./PaykitLinkWeb";
 import { LINK_RECEIVER_PATH } from "../../types/link";
@@ -191,6 +201,9 @@ describe("W1e marker multi-device + handshake recovery", () => {
     upsertLink.mockReset().mockResolvedValue(undefined);
     closeLink.mockReset().mockResolvedValue(undefined);
     clearOutbox.mockReset().mockResolvedValue(undefined);
+    receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "est" });
+    upsertArchivedLink.mockReset().mockResolvedValue(undefined);
+    getArchivedLink.mockReset().mockResolvedValue(null);
     getMarker.mockReset().mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
     probeInbound.mockReset().mockResolvedValue({ result: "none" });
     initiateLink.mockReset().mockResolvedValue({ linkId: "init-1", snapshot: "init-snap" });
@@ -203,6 +216,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     restoreLink.mockReset().mockResolvedValue({ linkId: "est-1" });
     getLink.mockReset();
     vi.mocked(takeoverReceiver).mockReset();
+    vi.mocked(StorageService.getMessageRequest).mockReset().mockResolvedValue(null);
     vi.mocked(StorageService.getAllLinks).mockReset().mockResolvedValue([]);
     vi.mocked(StorageService.abandonOwedLinkMessagesForPeer).mockReset();
     await LinkService.adoptHarnessSession(handle() as never);
@@ -629,7 +643,32 @@ describe("W1e marker multi-device + handshake recovery", () => {
     expect(takeoverReceiver).toHaveBeenCalledTimes(1);
   });
 
-  it("established + peer pk changed + valid new msg1 → supersede, adopt, keep history, no request", async () => {
+  it("orphan msg1 + marker rollback parks without wedging the established link", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      role: "responder",
+      status: "established",
+      snapshot: "est-old",
+    });
+    restoreLink.mockResolvedValue({ linkId: "est-live" });
+    getMarker.mockResolvedValue({ noisePublicKey: "rolled-back-pk", capabilitiesJson: "{}" });
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "orphan-hs",
+      snapshot: "orphan-snap",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(closeLink).not.toHaveBeenCalledWith("est-live");
+    expect(upsertLink).not.toHaveBeenCalledWith(expect.objectContaining({ status: "superseded" }));
+    expect(upsertLink).not.toHaveBeenCalledWith(
+      expect.objectContaining({ status: "handshaking", snapshot: "orphan-snap" }),
+    );
+    expect(upsertArchivedLink).not.toHaveBeenCalled();
+  });
+
+  it("established re-key supersedes only after the new handshake reaches established", async () => {
     getLink.mockResolvedValue({
       ...handshaking("old-pk"),
       role: "responder",
@@ -651,24 +690,92 @@ describe("W1e marker multi-device + handshake recovery", () => {
       linkId: "rekey-hs",
       snapshot: "rekey-snap",
     });
+    advanceHandshake.mockResolvedValue({ status: "pending", snapshot: "rekey-snap" });
 
+    await LinkService.syncInbox([PEER]);
+    expect(closeLink).not.toHaveBeenCalledWith("est-live");
+    expect(upsertArchivedLink).not.toHaveBeenCalled();
+
+    advanceHandshake.mockResolvedValue({ status: "established", snapshot: "rekey-est" });
     await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
 
     expect(closeLink).toHaveBeenCalledWith("est-live");
-    expect(upsertLink).toHaveBeenCalledWith(
-      expect.objectContaining({ status: "superseded", snapshot: "est-old" }),
+    expect(upsertArchivedLink).toHaveBeenCalledWith(
+      expect.objectContaining({ snapshot: "est-old", remoteNoisePublicKey: "old-pk" }),
     );
     expect(upsertLink).toHaveBeenCalledWith(
       expect.objectContaining({
         role: "responder",
-        status: "handshaking",
-        snapshot: "rekey-snap",
+        status: "established",
+        snapshot: "rekey-est",
         remoteNoisePublicKey: "new-pk",
       }),
     );
     expect(deleteLink).not.toHaveBeenCalled();
     expect(StorageService.deleteLinkMessagesForPeer).not.toHaveBeenCalled();
     expect(StorageService.upsertMessageRequest).not.toHaveBeenCalled();
+  });
+
+  it("adopted handshake age-out falls back to the still-live old link", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "established",
+      snapshot: "est-old",
+    });
+    restoreLink.mockResolvedValue({ linkId: "est-live" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "rekey-hs",
+      snapshot: "rekey-snap",
+    });
+
+    await LinkService.syncInbox([PEER]);
+    vi.spyOn(Date, "now").mockReturnValue(NOW + HANDSHAKE_STALE_MS);
+    await LinkService.syncInbox([PEER]);
+
+    expect(closeLink).toHaveBeenCalledWith("rekey-hs");
+    expect(closeLink).not.toHaveBeenCalledWith("est-live");
+    expect(upsertArchivedLink).not.toHaveBeenCalled();
+    expect(upsertLink).not.toHaveBeenCalledWith(expect.objectContaining({ status: "handshaking" }));
+  });
+
+  it("drains in-flight inbound on the old handle before supersede close", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      role: "responder",
+      status: "established",
+      snapshot: "est-old",
+    });
+    restoreLink.mockResolvedValue({ linkId: "est-live" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    probeInbound.mockResolvedValue({
+      result: "established",
+      linkId: "rekey-est",
+      snapshot: "rekey-est-snap",
+    });
+    receivePrivate.mockResolvedValue({
+      messages: [{ kind: "chat.message", rawJson: '{"kind":"chat.message"}' }],
+      snapshot: "est-drained",
+    });
+
+    await LinkService.syncInbox([PEER]);
+
+    expect(receivePrivate).toHaveBeenCalled();
+    expect(StorageService.saveLinkStreamItems).toHaveBeenCalled();
+    expect(closeLink).toHaveBeenCalledWith("est-live");
+    expect(upsertArchivedLink).toHaveBeenCalled();
+  });
+
+  it("deletes our consumed initiator msg1 after the link becomes established", async () => {
+    getLink.mockResolvedValue(handshaking("old-pk"));
+    restoreHandshake.mockResolvedValue({ linkId: "hs-1", status: "pending" });
+    advanceHandshake.mockResolvedValue({ status: "established", snapshot: "est-snap" });
+    restoreLink.mockResolvedValue({ linkId: "est-new" });
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("ready");
+
+    expect(clearOutbox).toHaveBeenCalled();
   });
 
   it("pk unchanged + junk msg1 → established link unchanged", async () => {
