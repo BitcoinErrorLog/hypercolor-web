@@ -33,7 +33,7 @@ let criticalDepth = 0;
 let deferredYield = false;
 let criticalTimer: ReturnType<typeof setTimeout> | null = null;
 const yieldRequestSeenAt = new Map<string, number>();
-let writerEpoch = 0;
+let writerSurfaceReady = true;
 
 export class TabLockWriterError extends Error {
   readonly name = "TabLockWriterError";
@@ -145,11 +145,9 @@ function postYieldRequest(): void {
 }
 
 function postWriterClaim(): void {
-  writerEpoch += 1;
   postChannel(claimChannelName(), {
     type: "claim",
     from: tabId,
-    epoch: String(writerEpoch),
   });
   trace("posted-claim");
 }
@@ -214,13 +212,12 @@ function installClaimListener(): void {
       const data = event.data;
       if (data?.type !== "claim") return;
       const from = data.from;
-      if (typeof from !== "string" || from === tabId) return;
+      if (typeof from !== "string" || from.length === 0 || from === tabId) return;
+      if (!rateLimitYieldFrom(`claim:${from}`)) return;
       if (mode === "writer" || yielding) {
         abortPendingSteal();
-        beginYielding();
-        currentAbort?.abort();
-        becomeReadonly();
-        trace("stood-down-on-claim");
+        requestWriterAbort();
+        trace("claim-as-yield-request");
       }
     };
   } catch {
@@ -243,7 +240,12 @@ function installYieldedListener(): void {
  * `mode === "writer"` — callers that already hold the lock should not call this.
  */
 export async function waitForPeerWriterYield(timeoutMs = YIELD_WAIT_MS): Promise<void> {
-  if (typeof BroadcastChannel === "undefined") return;
+  if (typeof BroadcastChannel === "undefined") {
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    });
+    return;
+  }
   await new Promise<void>((resolve) => {
     let settled = false;
     const channel = yieldedChannel ?? new BroadcastChannel(yieldChannelName());
@@ -446,10 +448,26 @@ export function isTakeoverInProgress(): boolean {
   return takeoverInProgress;
 }
 
+export function isWriterSurfaceReady(): boolean {
+  return writerSurfaceReady;
+}
+
+export function markWriterSurfaceReady(): void {
+  writerSurfaceReady = true;
+}
+
+export function isWriterCriticalSectionHeld(): boolean {
+  return criticalDepth > 0;
+}
+
+export function hasWriterLock(): boolean {
+  return isWriterNow();
+}
+
 export function shouldPersistWrites(): boolean {
   if (!hasWebLocks()) return true;
   if (!startPromise) return true;
-  return mode === "writer" && !yielding;
+  return mode === "writer" && !yielding && writerSurfaceReady;
 }
 
 export function subscribeTabLock(listener: (lock: TabLock) => void): () => void {
@@ -507,12 +525,14 @@ async function runTakeover(): Promise<void> {
   await tryAcquire({ ifAvailable: true });
   if (isWriterNow()) return;
 
+  const canCoordinate = typeof BroadcastChannel !== "undefined";
   takeoverInProgress = true;
   takeoverRefreshPending = true;
+  writerSurfaceReady = false;
   emit();
 
   const wait = waitForPeerWriterYield();
-  postYieldRequest();
+  if (canCoordinate) postYieldRequest();
   await wait;
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -526,11 +546,22 @@ async function runTakeover(): Promise<void> {
     await Promise.resolve();
   }
 
+  if (!canCoordinate) {
+    abortPendingSteal();
+    takeoverInProgress = false;
+    writerSurfaceReady = true;
+    emit();
+    return;
+  }
+
   const stealAbort = new AbortController();
   pendingStealAbort = stealAbort;
   await tryAcquire({ steal: true, stealAbort });
   if (!isWriterNow()) {
     abortPendingSteal();
+    writerSurfaceReady = true;
+  } else {
+    await waitForPeerWriterYield(YIELD_WAIT_MS);
   }
   takeoverInProgress = false;
   emit();
@@ -562,6 +593,14 @@ export async function ensureWriter(): Promise<TabLock> {
   return snapshot();
 }
 
+/** Switch owner scope, then become writer, then enter the critical section. */
+export async function acquireScopedWriter(pubky: string): Promise<void> {
+  setTabLockOwner(pubky);
+  await ensureWriter();
+  enterWriterCriticalSection();
+  assertWriter("acquireScopedWriter");
+}
+
 export function setBeforeWriterYield(fn: () => Promise<void>): void {
   beforeYield = fn;
 }
@@ -573,6 +612,11 @@ export function setBeforeWriterYield(fn: () => Promise<void>): void {
 export function setTabLockOwner(pubky: string | null): void {
   const next = pubky && pubky.length > 0 ? pubky : TAB_LOCK_UNSIGNED_SCOPE;
   if (next === ownerScope) return;
+  if (criticalDepth > 0) {
+    throw new TabLockWriterError(
+      `Cannot change tab lock owner to ${next} while a writer critical section is held.`,
+    );
+  }
   abortPendingSteal();
   currentAbort?.abort();
   ownerScope = next;
@@ -581,6 +625,7 @@ export function setTabLockOwner(pubky: string | null): void {
   yielding = false;
   takeoverInProgress = false;
   takeoverRefreshPending = false;
+  writerSurfaceReady = true;
   installYieldRequestListener();
   installClaimListener();
   installYieldedListener();
@@ -604,7 +649,7 @@ export function resetTabLockForTests(): void {
   takeoverRefreshPending = false;
   criticalDepth = 0;
   deferredYield = false;
-  writerEpoch = 0;
+  writerSurfaceReady = true;
   ownerScope = TAB_LOCK_UNSIGNED_SCOPE;
   yieldRequestSeenAt.clear();
   if (criticalTimer !== null) {

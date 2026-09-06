@@ -11,7 +11,6 @@ import {
 } from "./errors";
 import { isMutatingSql } from "./mutatingSql";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
-import { getPubky } from "@/services/KeyStore";
 import {
   getTabLock,
   getTabLockOwnerScope,
@@ -49,7 +48,7 @@ export type SqliteSnapshotMeta = {
   ownerPubky?: string;
 };
 
-export const LEGACY_MIGRATE_READER_ATTEMPTS = 15;
+export const LEGACY_MIGRATE_READER_ATTEMPTS = 50;
 export const LEGACY_MIGRATE_READER_DELAY_MS = 40;
 
 const migrateChains = new Map<string, Promise<void>>();
@@ -366,13 +365,6 @@ async function writeNamespacedIfEmpty(
   }
 }
 
-async function otherNamespacedSqliteDbs(owner: string): Promise<string[]> {
-  const names = await listIdbDatabaseNames();
-  if (!names) return [];
-  const self = `${IDB_NAME}:${owner}`;
-  return names.filter((name) => name.startsWith(`${IDB_NAME}:`) && name !== self);
-}
-
 async function mayAdoptLegacySnapshot(
   owner: string,
   meta: SqliteSnapshotMeta | null,
@@ -386,35 +378,10 @@ async function mayAdoptLegacySnapshot(
     });
     return false;
   }
-  let keyStorePubky: string | null = null;
-  try {
-    keyStorePubky = await getPubky();
-  } catch {
-    keyStorePubky = null;
-  }
-  if (keyStorePubky !== owner) {
-    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot", {
-      owner,
-      keyStorePubky,
-    });
-    return false;
-  }
-  const names = await listIdbDatabaseNames();
-  if (!names) {
-    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot; cannot list IndexedDB names", {
-      owner,
-    });
-    return false;
-  }
-  const others = await otherNamespacedSqliteDbs(owner);
-  if (others.length > 0) {
-    console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot; other namespaced DBs exist", {
-      owner,
-      others,
-    });
-    return false;
-  }
-  return true;
+  console.info("[hypercolor-sqlite] leaving unidentified legacy snapshot; adoption requires an in-blob owner marker", {
+    owner,
+  });
+  return false;
 }
 
 async function withExclusiveMigrateLock(owner: string, fn: () => Promise<void>): Promise<void> {
@@ -466,6 +433,11 @@ async function maybeDeleteLeftoverLegacy(owner: string): Promise<void> {
   ]);
   if (!snapshotBytesPresent(legacy.bytes) || !snapshotBytesPresent(current.bytes)) return;
   if (!snapshotBytesEqual(legacy.bytes, current.bytes)) return;
+  const identified = typeof legacy.meta?.ownerPubky === "string" && legacy.meta.ownerPubky.length > 0;
+  if (!identified) {
+    console.info("[hypercolor-sqlite] retaining unidentified legacy snapshot after copy");
+    return;
+  }
   if (!(await mayAdoptLegacySnapshot(owner, legacy.meta))) return;
   try {
     await deleteIdbDatabaseOnce(IDB_NAME);
@@ -506,11 +478,12 @@ export async function migrateLegacySqliteSnapshotIfNeeded(): Promise<void> {
     const legacy = await readNamedSnapshot(IDB_NAME);
     if (!snapshotBytesPresent(legacy.bytes) || !legacy.bytes) return;
     if (!(await mayAdoptLegacySnapshot(owner, legacy.meta))) return;
+    if (!legacy.meta) return;
 
     bumpPersistGeneration();
     const meta: SqliteSnapshotMeta = {
-      userVersion: legacy.meta?.userVersion ?? 0,
-      bundleId: legacy.meta?.bundleId ?? SQLITE_BUNDLE_ID,
+      userVersion: legacy.meta.userVersion,
+      bundleId: legacy.meta.bundleId,
       generation: persistGeneration,
       nonce: persistNonce,
       ownerPubky: owner,
@@ -589,8 +562,9 @@ export async function putIdbSnapshot(
 
 /** Bump generation and persist meta before hydrate so late old-writer puts lose. */
 export async function sealPersistGenerationInIdb(): Promise<void> {
-  bumpPersistGeneration();
   const { bytes, meta } = await getIdbSnapshotAndMeta();
+  adoptPersistGenerationFromMeta(meta);
+  bumpPersistGeneration();
   await putIdbSnapshot(
     bytes ?? new Uint8Array(0),
     snapshotMetaForPersist(meta?.userVersion ?? 0, persistGeneration, persistNonce),
@@ -686,6 +660,12 @@ async function openIdbSnapshotVfs(
 }
 
 function openKvvfs(sqlite3: Sqlite3Static): PersistableSqlExecutor {
+  const owner = getTabLockOwnerScope();
+  if (owner !== TAB_LOCK_UNSIGNED_SCOPE) {
+    throw new ReadOnlyTabError(
+      "kvvfs fallback is unsigned-only so identities cannot share localStorage sqlite.",
+    );
+  }
   const db = new sqlite3.oo1.JsStorageDb("local");
   const inner = wrapOo1Db(db);
   return {

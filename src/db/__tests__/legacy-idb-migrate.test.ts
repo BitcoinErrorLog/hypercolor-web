@@ -232,7 +232,7 @@ describe("legacy hypercolor-sqlite IDB migration", () => {
     expect((await readSnapshot(IDB_NAME)).bytes).toEqual(new Uint8Array([3, 3, 3]));
   });
 
-  it("unidentified legacy migrates only when KeyStore matches and no other namespaced DB exists", async () => {
+  it("unidentified legacy is not adopted and is never deleted", async () => {
     await seedSnapshot(IDB_NAME, new Uint8Array([5, 6]), {
       userVersion: 14,
       bundleId: BUNDLE,
@@ -242,11 +242,58 @@ describe("legacy hypercolor-sqlite IDB migration", () => {
     asWriter(OWNER);
     await migrateLegacySqliteSnapshotIfNeeded();
     expect((await readSnapshot(IDB_NAME)).bytes).toEqual(new Uint8Array([5, 6]));
+    expect((await readSnapshot(`${IDB_NAME}:${OWNER}`)).bytes).toBeNull();
 
     await KeyStore.setPubky(OWNER);
     asWriter(OWNER);
     await migrateLegacySqliteSnapshotIfNeeded();
-    expect((await readSnapshot(`${IDB_NAME}:${OWNER}`)).bytes).toEqual(new Uint8Array([5, 6]));
-    expect((await indexedDB.databases()).map((entry) => entry.name)).not.toContain(IDB_NAME);
+    expect((await readSnapshot(`${IDB_NAME}:${OWNER}`)).bytes).toBeNull();
+    expect((await indexedDB.databases()).map((entry) => entry.name)).toContain(IDB_NAME);
+  });
+
+  it("does not delete an unidentified leftover even when namespaced already has a copy", async () => {
+    const bytes = new Uint8Array([5, 6]);
+    await seedSnapshot(IDB_NAME, bytes, {
+      userVersion: 14,
+      bundleId: BUNDLE,
+      generation: 1,
+      nonce: "anon",
+    });
+    await seedSnapshot(`${IDB_NAME}:${OWNER}`, bytes, {
+      userVersion: 14,
+      bundleId: BUNDLE,
+      generation: 2,
+      nonce: "copy",
+      ownerPubky: OWNER,
+    });
+    asWriter(OWNER);
+    await migrateLegacySqliteSnapshotIfNeeded();
+    expect((await readSnapshot(IDB_NAME)).bytes).toEqual(bytes);
+  });
+
+  it("cross-tab migrate lock name is requested on navigator.locks", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: async (
+          name: string,
+          _options: LockOptions,
+          cb: (lock: unknown) => Promise<unknown>,
+        ) => {
+          requested.push(name);
+          return cb({ name });
+        },
+      },
+    });
+    await seedSnapshot(IDB_NAME, new Uint8Array([1, 2, 3, 4]), {
+      userVersion: 14,
+      bundleId: BUNDLE,
+      generation: 1,
+      nonce: "lock",
+      ownerPubky: OWNER,
+    });
+    asWriter(OWNER);
+    await migrateLegacySqliteSnapshotIfNeeded();
+    expect(requested).toContain(`hypercolor-sqlite-migrate:${OWNER}`);
   });
 });

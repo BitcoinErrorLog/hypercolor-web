@@ -7,6 +7,7 @@ import {
   bumpPersistGeneration,
   compareSnapshotMeta,
   currentPersistGeneration,
+  currentPersistNonce,
   currentSqliteIdbName,
   putIdbSnapshot,
   resetPersistGenerationForTests,
@@ -91,24 +92,37 @@ describe("idb snapshot generation guard", () => {
     expect(await readBlob(name)).toEqual(bytes);
   });
 
-  it("seal bumps generation so a late old-writer put loses", async () => {
-    await putIdbSnapshot(new Uint8Array([4]), {
-      userVersion: 1,
-      bundleId: BUNDLE,
-      generation: 1,
-      nonce: "n1",
-    });
-    await sealPersistGenerationInIdb();
-    const gen = currentPersistGeneration();
-    expect(gen).toBeGreaterThan(1);
-    await putIdbSnapshot(new Uint8Array([8, 8]), {
-      userVersion: 1,
-      bundleId: BUNDLE,
-      generation: 1,
-      nonce: "late",
-    });
-    const blob = await readBlob(currentSqliteIdbName());
-    expect(blob).toEqual(new Uint8Array([4]));
+  it("seal adopts stored generation then bumps so gen 2, 5, and 1000 lose to the new writer", async () => {
+    for (const storedGen of [2, 5, 1000]) {
+      resetTabLockForTests();
+      resetPersistGenerationForTests();
+      const name = currentSqliteIdbName();
+      await putIdbSnapshot(new Uint8Array([storedGen]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: storedGen,
+        nonce: "zzzz-old-nonce",
+      });
+      resetPersistGenerationForTests();
+      await sealPersistGenerationInIdb();
+      expect(currentPersistGeneration()).toBe(storedGen + 1);
+      const sealed = await readMeta(name);
+      expect(sealed?.generation).toBe(storedGen + 1);
+      await putIdbSnapshot(new Uint8Array([9, storedGen]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: currentPersistGeneration(),
+        nonce: currentPersistNonce(),
+      });
+      expect(await readBlob(name)).toEqual(new Uint8Array([9, storedGen]));
+      await putIdbSnapshot(new Uint8Array([1]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: storedGen,
+        nonce: "zzzz-old-nonce",
+      });
+      expect(await readBlob(name)).toEqual(new Uint8Array([9, storedGen]));
+    }
   });
 
   it("tie-breaks equal generation with nonce", () => {

@@ -11,6 +11,7 @@ vi.mock("./PaykitLinkWeb", () => ({
 
 const setPubky = vi.fn(async () => undefined);
 const clear = vi.fn(async () => undefined);
+const clearPubkyIfMatches = vi.fn();
 
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
@@ -18,6 +19,7 @@ vi.mock("@/services/KeyStore", () => ({
     getPubky: vi.fn(async () => null),
     getReceiverNoiseSecret: vi.fn(async () => null),
     clear: () => clear(),
+    clearPubkyIfMatches: (expected: string) => clearPubkyIfMatches(expected),
   },
 }));
 
@@ -66,6 +68,7 @@ describe("adoptApprovedSession writer critical section", () => {
     resetTabLockForTests();
     setPubky.mockClear();
     clear.mockClear();
+    clearPubkyIfMatches.mockClear();
     vi.stubGlobal("navigator", {});
   });
 
@@ -76,7 +79,7 @@ describe("adoptApprovedSession writer critical section", () => {
     vi.unstubAllGlobals();
   });
 
-  it("rolls back KeyStore when assertWriter fails after setPubky", async () => {
+  it("rolls back only the adopted pubky when assertWriter fails after setPubky and the writer was lost", async () => {
     const handle = fakeHandle(
       OWNER,
       exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
@@ -88,7 +91,22 @@ describe("adoptApprovedSession writer critical section", () => {
     await expect(adoptApprovedSession(handle as never)).rejects.toMatchObject({
       name: "TabLockWriterError",
     });
-    expect(clear).toHaveBeenCalled();
+    expect(clearPubkyIfMatches).toHaveBeenCalledWith(OWNER);
+    expect(clear).not.toHaveBeenCalled();
+  });
+
+  it("does not call KeyStore.clear when setPubky itself fails", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    setPubky.mockImplementation(async () => {
+      throw new Error("homeserver timeout");
+    });
+    vi.stubGlobal("navigator", {});
+    await expect(adoptApprovedSession(handle as never)).rejects.toThrow("homeserver timeout");
+    expect(clear).not.toHaveBeenCalled();
+    expect(clearPubkyIfMatches).not.toHaveBeenCalled();
   });
 
   it("holds the critical section so a yield request is deferred until exit", async () => {

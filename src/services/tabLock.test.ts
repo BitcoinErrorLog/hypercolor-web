@@ -225,10 +225,14 @@ describe("tabLock", () => {
     await tabB.initTabLock();
     const takeover = tabB.requestTakeoverAndWait();
     await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(1500);
     await takeover;
     expect(locks.stealCount).toBeGreaterThan(0);
     expect(tabB.getTabLock().mode).toBe("writer");
-    expect(tabA.getTabLock().mode).toBe("readonly");
+    expect(tabA.isWriterCriticalSectionHeld()).toBe(true);
+    expect(tabA.getTabLock().mode).toBe("writer");
+    tabA.exitWriterCriticalSection();
+    await vi.waitFor(() => expect(tabA.getTabLock().mode).toBe("readonly"));
     vi.useRealTimers();
   });
 
@@ -354,6 +358,83 @@ describe("tabLock", () => {
     expect(tabB.getTabLock().mode).toBe("readonly");
     await vi.advanceTimersByTimeAsync(1);
     await vi.waitFor(() => expect(tabB.getTabLock().mode).toBe("writer"));
+    vi.useRealTimers();
+  });
+
+  it("treats unverified claims as rate-limited yield-requests, not instant stand-down", async () => {
+    const locks = new FakeLockManager();
+    stubLocksAndChannel(locks);
+    const flushes: number[] = [];
+    const tabA = await loadTabLock();
+    tabA.setBeforeWriterYield(async () => {
+      flushes.push(Date.now());
+    });
+    await tabA.initTabLock();
+    expect(tabA.getTabLock().mode).toBe("writer");
+    const ch = new FakeBroadcastChannel("hypercolor-writer-claim:unsigned");
+    ch.postMessage({ type: "claim", from: "attacker" });
+    await vi.waitFor(() => expect(flushes.length).toBe(1));
+    await vi.waitFor(() => expect(tabA.getTabLock().mode).toBe("readonly"));
+    ch.postMessage({ type: "claim", from: "attacker" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(flushes.length).toBe(1);
+  });
+
+  it("after steal still waits for yielded before takeover completes", async () => {
+    vi.useFakeTimers();
+    const locks = new FakeLockManager();
+    stubLocksAndChannel(locks);
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    tabA.enterWriterCriticalSection();
+    vi.resetModules();
+    stubLocksAndChannel(locks);
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    let done = false;
+    const takeover = tabB.requestTakeoverAndWait().then(() => {
+      done = true;
+    });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(done).toBe(false);
+    expect(locks.stealCount).toBeGreaterThan(0);
+    expect(tabB.isWriterSurfaceReady()).toBe(false);
+    expect(tabB.isTakeoverInProgress()).toBe(true);
+    await vi.advanceTimersByTimeAsync(1499);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await takeover;
+    expect(done).toBe(true);
+    expect(tabB.getTabLock().mode).toBe("writer");
+    vi.useRealTimers();
+  });
+
+  it("refuses setTabLockOwner while a critical section is held", async () => {
+    vi.stubGlobal("navigator", {});
+    const tabLock = await loadTabLock();
+    await tabLock.ensureWriter();
+    tabLock.enterWriterCriticalSection();
+    expect(() => tabLock.setTabLockOwner("other-pubky")).toThrow(/critical section/);
+    tabLock.exitWriterCriticalSection();
+  });
+
+  it("no BroadcastChannel does not steal", async () => {
+    vi.useFakeTimers();
+    const locks = new FakeLockManager();
+    vi.stubGlobal("navigator", { locks });
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    vi.resetModules();
+    vi.stubGlobal("navigator", { locks });
+    vi.stubGlobal("BroadcastChannel", undefined);
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    const takeover = tabB.requestTakeoverAndWait();
+    await vi.advanceTimersByTimeAsync(2000);
+    await takeover;
+    expect(locks.stealCount).toBe(0);
+    expect(tabB.getTabLock().mode).toBe("readonly");
     vi.useRealTimers();
   });
 });

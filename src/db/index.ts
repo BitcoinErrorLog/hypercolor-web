@@ -11,9 +11,12 @@ import type { SqlExecutor } from "./sql";
 import {
   consumeTakeoverRefresh,
   getTabLock,
+  getTabLockOwnerScope,
   initTabLock,
   isTakeoverInProgress,
+  isWriterSurfaceReady,
   isYieldingTab,
+  markWriterSurfaceReady,
   setBeforeWriterYield,
   subscribeTabLock,
 } from "@/services/tabLock";
@@ -53,17 +56,32 @@ setBeforeWriterYield(async () => {
   await persistable.persistForYield?.();
 });
 
+let lastOwnerScope = getTabLockOwnerScope();
+
 subscribeTabLock((lock) => {
-  if (!_db || _injected) return;
+  if (_injected) return;
+  const owner = getTabLockOwnerScope();
+  if (owner !== lastOwnerScope) {
+    lastOwnerScope = owner;
+    if (_db || _opening) {
+      discardCloseDb();
+      void getDb();
+    }
+  }
   if (isTakeoverInProgress()) return;
   if (lock.mode === "writer") {
     if (!consumeTakeoverRefresh()) return;
     void (async () => {
-      await sealPersistGenerationInIdb();
-      await refreshReadonlySnapshot();
+      try {
+        await sealPersistGenerationInIdb();
+        await refreshReadonlySnapshot();
+      } finally {
+        markWriterSurfaceReady();
+      }
     })();
     return;
   }
+  if (!_db) return;
   const persistable = _db as PersistableSqlExecutor;
   if (typeof persistable.rollbackOpenTransaction === "function") {
     persistable.rollbackOpenTransaction();
@@ -82,7 +100,9 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
   return {
     executeSync(query, params) {
       if (
-        (getTabLock().mode === "readonly" || isYieldingTab()) &&
+        (getTabLock().mode === "readonly" ||
+          isYieldingTab() ||
+          !isWriterSurfaceReady()) &&
         isReadonlyBlockedSql(query)
       ) {
         const err = new ReadOnlyTabError();

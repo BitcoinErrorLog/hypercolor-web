@@ -211,13 +211,11 @@ export async function finishSingleApproval(input: {
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
   const {
+    acquireScopedWriter,
     assertWriter,
-    ensureWriter,
-    enterWriterCriticalSection,
     exitWriterCriticalSection,
   } = await import("@/services/tabLock");
-  await ensureWriter();
-  enterWriterCriticalSection();
+  await acquireScopedWriter(input.session.pubky());
   try {
     assertWriter("finishSingleApproval:start");
     const { params, payload, session, ch } = input;
@@ -257,13 +255,11 @@ export async function finishLegacyChainedGrant(input: {
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
   const {
+    acquireScopedWriter,
     assertWriter,
-    ensureWriter,
-    enterWriterCriticalSection,
     exitWriterCriticalSection,
   } = await import("@/services/tabLock");
-  await ensureWriter();
-  enterWriterCriticalSection();
+  await acquireScopedWriter(input.session.pubky());
   try {
     assertWriter("finishLegacyChainedGrant:start");
     const { params, payload, session, ch } = input;

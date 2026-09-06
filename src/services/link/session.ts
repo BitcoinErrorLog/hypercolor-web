@@ -280,17 +280,19 @@ export function sessionExportCoversHypercolor(exported: string): boolean {
 
 export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveSession> {
   const {
+    acquireScopedWriter,
     assertWriter,
-    ensureWriter,
-    enterWriterCriticalSection,
     exitWriterCriticalSection,
+    hasWriterLock,
+    isWriterCriticalSectionHeld,
+    setTabLockOwner,
   } = await import("@/services/tabLock");
-  await ensureWriter();
-  enterWriterCriticalSection();
+  const pubky = handle.pubky();
+  await acquireScopedWriter(pubky);
   let keyStoreAdvanced = false;
+  let adoptionCommitted = false;
   try {
     assertWriter("adoptApprovedSession:start");
-    const pubky = handle.pubky();
     const exported = handle.exportSession();
     if (!sessionExportCoversHypercolor(exported)) {
       try {
@@ -320,11 +322,12 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
     keyStoreAdvanced = true;
     assertWriter("adoptApprovedSession:after-keystore");
     useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
+    adoptionCommitted = true;
     return adopted;
   } catch (err) {
-    if (keyStoreAdvanced) {
+    if (keyStoreAdvanced && !adoptionCommitted && !hasWriterLock()) {
       try {
-        await KeyStore.clear();
+        await KeyStore.clearPubkyIfMatches(pubky);
       } catch {
         /* rollback best-effort */
       }
@@ -332,6 +335,16 @@ export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveS
     throw err;
   } finally {
     exitWriterCriticalSection();
+    if (keyStoreAdvanced && !adoptionCommitted) {
+      const still = await KeyStore.getPubky();
+      if (still !== pubky && !isWriterCriticalSectionHeld()) {
+        try {
+          setTabLockOwner(null);
+        } catch {
+          /* scope reset best-effort after the section */
+        }
+      }
+    }
   }
 }
 

@@ -451,13 +451,20 @@ export async function getAppCert(): Promise<AppCert | null> {
 // ─── Pubky public key (plaintext metadata — not sensitive) ────────────────────
 
 export async function setPubky(pubky: string): Promise<void> {
-  await setMetadata(KEY_PUBKY, pubky);
   const { setTabLockOwner } = await import("@/services/tabLock");
   setTabLockOwner(pubky);
+  await setMetadata(KEY_PUBKY, pubky);
 }
 
 export async function getPubky(): Promise<string | null> {
   return getMetadata(KEY_PUBKY);
+}
+
+/** Un-set the signed-in pubky only if it still equals `expected`. Does not wipe secrets. */
+export async function clearPubkyIfMatches(expected: string): Promise<void> {
+  const current = await getPubky();
+  if (current !== expected) return;
+  await deleteMetadata(KEY_PUBKY);
 }
 
 // ─── Homeserver (plaintext metadata) ──────────────────────────────────────────
@@ -996,6 +1003,7 @@ export const KeyStore = {
   // Metadata
   setPubky,
   getPubky,
+  clearPubkyIfMatches,
   setHomeserver,
   getHomeserver,
   // Session
