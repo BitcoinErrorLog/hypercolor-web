@@ -87,6 +87,9 @@ export type HandshakeIntent = "user" | "auto";
 /** Non-ready links older than this are wiped so a later probe can adopt a fresh msg1. */
 export const HANDSHAKE_STALE_MS = 10 * 60 * 1000;
 
+/** Parked established re-keys per peer inside one {@link HANDSHAKE_STALE_MS} window. */
+export const ESTABLISHED_REKEY_PARK_LIMIT = 3;
+
 /** Initiator C: re-GET the peer marker after this many no-advance polls. */
 export const MARKER_RECOVERY_POLL_LIMIT = 3;
 
@@ -170,6 +173,7 @@ type PendingEstablishedRekey = {
   role: LinkRole;
 };
 const pendingEstablishedRekeys = new Map<string, PendingEstablishedRekey>();
+const establishedRekeyParkWindows = new Map<string, { windowStart: number; parks: number }>();
 let takeoverInFlight: Promise<{
   pubky: string;
   receiverPath: string;
@@ -770,6 +774,7 @@ export function resetLinkServiceHarnessState(): void {
   handshakeWatch.clear();
   peerMarkerRefreshedAt.clear();
   pendingEstablishedRekeys.clear();
+  establishedRekeyParkWindows.clear();
   drainPassChain = Promise.resolve();
   takeoverInFlight = null;
 }
@@ -841,6 +846,7 @@ async function ensureLinkLocked(
 
   if (allowInitiate && intent === "user") {
     await StorageService.clearHandshakeBudget(ownerPubky, peerPubky);
+    establishedRekeyParkWindows.delete(key);
   }
 
   if (stored && (await shouldAgeOutNonReadyLink(stored))) {
@@ -873,6 +879,9 @@ async function ensureLinkLocked(
         intent,
       );
       if (rekeyed !== null) return rekeyed;
+      stored = await StorageService.getLink(ownerPubky, peerPubky);
+      const blocked = stored ? blockedEstablishedRekeyOutcome(stored) : null;
+      if (blocked) return blocked;
     }
     if (liveHandles.get(key)?.status === "established" || stored?.status === "established") {
       return "ready";
@@ -1022,6 +1031,60 @@ function establishedRemotePk(stored: LinkRecord): string {
   return stored.remoteNoisePublicKey || "";
 }
 
+function blockedEstablishedRekeyOutcome(
+  stored: LinkRecord,
+  markerPk?: string | null,
+): EnsureOutcome | null {
+  const establishedPk = establishedRemotePk(stored);
+  const seen = markerPk || stored.lastSeenPeerMarkerPk || "";
+  if (establishedPk === "" || seen === "" || establishedPk === seen) return null;
+  const key = linkKey(stored.ownerPubky, stored.peerPubky);
+  if (pendingEstablishedRekeys.has(key)) return null;
+  return "error";
+}
+
+function establishedRekeyParkAllowed(ownerPubky: PubkyKey, peerPubky: PubkyKey): boolean {
+  const key = linkKey(ownerPubky, peerPubky);
+  const now = Date.now();
+  const held = establishedRekeyParkWindows.get(key);
+  if (!held || now - held.windowStart >= HANDSHAKE_STALE_MS) {
+    establishedRekeyParkWindows.set(key, { windowStart: now, parks: 0 });
+    return true;
+  }
+  return held.parks < ESTABLISHED_REKEY_PARK_LIMIT;
+}
+
+async function chargeEstablishedRekeyPark(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+): Promise<{ exhausted: boolean }> {
+  const key = linkKey(ownerPubky, peerPubky);
+  const now = Date.now();
+  const held = establishedRekeyParkWindows.get(key);
+  const window =
+    !held || now - held.windowStart >= HANDSHAKE_STALE_MS
+      ? { windowStart: now, parks: 0 }
+      : held;
+  window.parks += 1;
+  establishedRekeyParkWindows.set(key, window);
+  return chargeHandshakeBudget(ownerPubky, peerPubky, { throttle: false });
+}
+
+async function dropParkedEstablishedRekey(
+  stored: LinkRecord,
+  pending: PendingEstablishedRekey,
+): Promise<EnsureOutcome | null> {
+  const key = linkKey(stored.ownerPubky, stored.peerPubky);
+  await closeQuietly(pending.handshakeLinkId);
+  pendingEstablishedRekeys.delete(key);
+  await StorageService.recordLastSeenPeerMarkerPk(
+    stored.ownerPubky,
+    stored.peerPubky,
+    pending.marker.noisePublicKey,
+  );
+  return blockedEstablishedRekeyOutcome(stored, pending.marker.noisePublicKey);
+}
+
 function pkPrefix8(pk: string | null | undefined): string {
   const raw = (pk ?? "").replace(/^pubky/i, "");
   return raw.length === 0 ? "empty" : raw.slice(0, 8);
@@ -1068,7 +1131,9 @@ async function maybeAdoptEstablishedRekey(
   );
   if (advanced !== undefined) return advanced;
 
-  if (!peerMarkerRefreshDue(ownerPubky, peerPubky)) return null;
+  if (!peerMarkerRefreshDue(ownerPubky, peerPubky) && intent !== "user") {
+    return blockedEstablishedRekeyOutcome(stored);
+  }
 
   if (!(await inboundStillAllowed(ownerPubky, peerPubky))) return null;
   if (!(await isCurrentOwner(ownerPubky))) return null;
@@ -1078,18 +1143,33 @@ async function maybeAdoptEstablishedRekey(
   try {
     marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, localPath);
   } catch {
-    return null;
+    return blockedEstablishedRekeyOutcome(stored);
   }
-  if (!marker) return null;
+  if (!marker) return blockedEstablishedRekeyOutcome(stored);
   if (!(await isCurrentOwner(ownerPubky))) return null;
 
   const establishedPk = establishedRemotePk(stored);
   console.warn(
     `[LinkService] rekey-marker peer=${pkPrefix8(peerPubky)} stored=${pkPrefix8(establishedPk)} lastSeen=${pkPrefix8(stored.lastSeenPeerMarkerPk)} fetched=${pkPrefix8(marker.noisePublicKey)}`,
   );
+  await StorageService.recordLastSeenPeerMarkerPk(ownerPubky, peerPubky, marker.noisePublicKey);
+  stored = { ...stored, lastSeenPeerMarkerPk: marker.noisePublicKey };
   if (establishedPk !== "" && marker.noisePublicKey === establishedPk) {
-    await StorageService.recordLastSeenPeerMarkerPk(ownerPubky, peerPubky, marker.noisePublicKey);
     return null;
+  }
+
+  if (intent !== "user") {
+    const budget = await StorageService.getHandshakeBudget(ownerPubky, peerPubky);
+    if (budget && budget.nextAdvanceAt > Date.now()) {
+      return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
+    }
+    if (budget && budget.exhaustedAt !== null) {
+      return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
+    }
+  }
+
+  if (intent !== "user" && !establishedRekeyParkAllowed(ownerPubky, peerPubky)) {
+    return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
   }
 
   if (!(await inboundStillAllowed(ownerPubky, peerPubky))) return null;
@@ -1099,13 +1179,15 @@ async function maybeAdoptEstablishedRekey(
   try {
     inbound = await probeInbound(activeSession, receiver, ownerPubky, peerPubky, marker, localPath);
   } catch (err) {
-    if (isLinkNativeError(err) && err.code === "protocol") return null;
+    if (isLinkNativeError(err) && err.code === "protocol") {
+      return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
+    }
     throw err;
   }
   if (inbound !== null) {
     if (!(await inboundStillAllowed(ownerPubky, peerPubky))) {
       await closeQuietly(inbound.linkId);
-      return null;
+      return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
     }
     if (!(await isCurrentOwner(ownerPubky))) {
       await closeQuietly(inbound.linkId);
@@ -1123,6 +1205,12 @@ async function maybeAdoptEstablishedRekey(
         localPath,
         inbound,
       );
+    }
+
+    const parkCharge = await chargeEstablishedRekeyPark(ownerPubky, peerPubky);
+    if (parkCharge.exhausted) {
+      await closeQuietly(inbound.linkId);
+      return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
     }
 
     pendingEstablishedRekeys.set(linkKey(ownerPubky, peerPubky), {
@@ -1145,7 +1233,7 @@ async function maybeAdoptEstablishedRekey(
     return "handshaking-responder";
   }
 
-  return null;
+  return blockedEstablishedRekeyOutcome(stored, marker.noisePublicKey);
 }
 
 async function advancePendingEstablishedRekey(
@@ -1161,15 +1249,18 @@ async function advancePendingEstablishedRekey(
   if (!pending) return undefined;
 
   if (Date.now() - pending.startedAt >= HANDSHAKE_STALE_MS) {
-    await closeQuietly(pending.handshakeLinkId);
-    pendingEstablishedRekeys.delete(key);
-    return null;
+    return dropParkedEstablishedRekey(stored, pending);
   }
 
   if (!(await inboundStillAllowed(ownerPubky, peerPubky)) || !(await isCurrentOwner(ownerPubky))) {
-    await closeQuietly(pending.handshakeLinkId);
-    pendingEstablishedRekeys.delete(key);
-    return null;
+    return dropParkedEstablishedRekey(stored, pending);
+  }
+
+  if (intent !== "user") {
+    const held = await StorageService.getHandshakeBudget(ownerPubky, peerPubky);
+    if (held && held.nextAdvanceAt > Date.now()) {
+      return roleStatus(pending.role);
+    }
   }
 
   try {
@@ -1188,20 +1279,16 @@ async function advancePendingEstablishedRekey(
       );
     }
     if (intent !== "user") {
-      const budget = await chargeHandshakeBudget(ownerPubky, peerPubky);
+      const budget = await chargeHandshakeBudget(ownerPubky, peerPubky, { throttle: true });
       if (budget.exhausted) {
-        await closeQuietly(pending.handshakeLinkId);
-        pendingEstablishedRekeys.delete(key);
-        return null;
+        return dropParkedEstablishedRekey(stored, pending);
       }
     }
     pending.snapshot = result.snapshot;
     pendingEstablishedRekeys.set(key, pending);
     return roleStatus(pending.role);
   } catch {
-    await closeQuietly(pending.handshakeLinkId);
-    pendingEstablishedRekeys.delete(key);
-    return null;
+    return dropParkedEstablishedRekey(stored, pending);
   }
 }
 
@@ -1671,12 +1758,16 @@ async function recoverWedgedLink(
 async function chargeHandshakeBudget(
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
+  opts: { throttle: boolean } = { throttle: false },
 ): Promise<{ advances: number; exhausted: boolean }> {
   const current = await StorageService.getHandshakeBudget(ownerPubky, peerPubky);
   const held = {
     advances: current?.pendingAdvances ?? 0,
     exhausted: current ? current.exhaustedAt !== null : false,
   };
+  if (opts.throttle && current && current.nextAdvanceAt > Date.now()) {
+    return held;
+  }
   const advances = held.advances + 1;
   const exhausted = advances >= HANDSHAKE_PENDING_ADVANCE_LIMIT;
   await StorageService.upsertHandshakeBudget({

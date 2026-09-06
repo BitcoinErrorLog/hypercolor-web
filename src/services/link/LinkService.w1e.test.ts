@@ -232,7 +232,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     });
     getMarker.mockResolvedValue({ noisePublicKey: "foreign-now", capabilitiesJson: "{}" });
     const status = await LinkService.ensureLinkWith(PEER);
-    expect(status).toBe("ready");
+    expect(status).toBe("error");
     expect(restoreLink).toHaveBeenCalledWith(
       expect.anything(),
       "recv",
@@ -444,6 +444,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       status: "established",
       snapshot: "HC1.opaque",
     });
+    getMarker.mockResolvedValue({ noisePublicKey: "stored-peer-pk", capabilitiesJson: "{}" });
     const persistIntent = vi.mocked(StorageService.persistLinkSendIntent);
     persistIntent.mockResolvedValue(undefined);
     vi.mocked(StorageService.finalizeLinkSend).mockResolvedValue(undefined);

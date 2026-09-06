@@ -109,6 +109,8 @@ vi.mock("@/services/KeyStore", () => ({
 
 vi.mock("@/services/RetryQueue", () => ({
   isRetired: vi.fn(() => false),
+  nextAttemptAt: (attempts: number, now = Date.now()) =>
+    now + Math.min(15_000 * 2 ** attempts, 30 * 60 * 1000),
   RetryQueue: {
     getDue: vi.fn(async () => []),
     recordSuccess: vi.fn(),
@@ -155,6 +157,9 @@ import { reconstructAttachmentWireJson } from "../attachments/redaction";
 import {
   LINK_GROUP_FANOUT_PAYLOAD_TYPE,
   LINK_RETRY_PAYLOAD_TYPE,
+  ESTABLISHED_REKEY_PARK_LIMIT,
+  HANDSHAKE_PENDING_ADVANCE_LIMIT,
+  HANDSHAKE_STALE_MS,
   LinkService,
   PEER_MARKER_REFRESH_TTL_MS,
   buildPreparedSendIntent,
@@ -1707,12 +1712,17 @@ describe("LinkService parked established re-key on ensureLink", () => {
       receiverPath: LINK_RECEIVER_PATH,
       markerPublished: true,
     });
-    getLink.mockReset().mockResolvedValue({
+    let lastSeenPeerMarkerPk = "old-peer-pk";
+    getLink.mockReset().mockImplementation(async () => ({
       ...establishedLink,
       remoteNoisePublicKey: "old-peer-pk",
-      lastSeenPeerMarkerPk: "old-peer-pk",
-    });
-    vi.mocked(StorageService.recordLastSeenPeerMarkerPk).mockReset();
+      lastSeenPeerMarkerPk,
+    }));
+    vi.mocked(StorageService.recordLastSeenPeerMarkerPk).mockReset().mockImplementation(
+      async (_owner, _peer, pk) => {
+        lastSeenPeerMarkerPk = pk;
+      },
+    );
     vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockReset().mockResolvedValue([]);
     vi.mocked(StorageService.upsertArchivedLink).mockReset();
     vi.mocked(StorageService.upsertLink).mockReset();
@@ -1786,7 +1796,7 @@ describe("LinkService parked established re-key on ensureLink", () => {
       lastSeenPeerMarkerPk: "old-peer-pk",
     });
 
-    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("ready");
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("error");
     expect(initiateLink).not.toHaveBeenCalled();
     expect(sendPrivate).not.toHaveBeenCalled();
   });
@@ -1831,5 +1841,127 @@ describe("LinkService parked established re-key on ensureLink", () => {
       expect(link.remoteNoisePublicKey).toBe(newPk);
       expect(link.status).toBe("established");
     }
+  });
+
+  function installDurableBudget() {
+    let row: {
+      pendingAdvances: number;
+      nextAdvanceAt: number;
+      exhaustedAt: number | null;
+    } = { pendingAdvances: 0, nextAdvanceAt: 0, exhaustedAt: null };
+    vi.mocked(StorageService.getHandshakeBudget).mockImplementation(async () => {
+      if (row.pendingAdvances === 0 && row.nextAdvanceAt === 0 && row.exhaustedAt === null) {
+        return null;
+      }
+      return {
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        pendingAdvances: row.pendingAdvances,
+        nextAdvanceAt: row.nextAdvanceAt,
+        exhaustedAt: row.exhaustedAt,
+        updatedAt: NOW,
+      };
+    });
+    vi.mocked(StorageService.upsertHandshakeBudget).mockImplementation(async (budget) => {
+      row = {
+        pendingAdvances: budget.pendingAdvances,
+        nextAdvanceAt: budget.nextAdvanceAt,
+        exhaustedAt: budget.exhaustedAt,
+      };
+    });
+    vi.mocked(StorageService.clearHandshakeBudget).mockImplementation(async () => {
+      row = { pendingAdvances: 0, nextAdvanceAt: 0, exhaustedAt: null };
+    });
+    return {
+      set(next: Partial<typeof row>) {
+        row = { ...row, ...next };
+      },
+    };
+  }
+
+  it("does not return ready or encrypt on the old handle after the handshake budget is exhausted", async () => {
+    const budget = installDurableBudget();
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
+    const queued = await LinkService.sendDm(PEER, "hello");
+    expect(queued.deliveryState).toBe("sending");
+    expect(sendPrivate).not.toHaveBeenCalled();
+
+    budget.set({
+      pendingAdvances: HANDSHAKE_PENDING_ADVANCE_LIMIT - 1,
+      nextAdvanceAt: 0,
+      exhaustedAt: null,
+    });
+    await LinkService.syncInbox([PEER]);
+    sendPrivate.mockClear();
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([
+      {
+        id: QUEUE_ID,
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: JSON.stringify({
+          type: LINK_RETRY_PAYLOAD_TYPE,
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          senderPubky: OWNER,
+          kind: CHAT_MESSAGE_KIND,
+          eventId: EVENT_ID,
+          rawJson: "{}",
+        }),
+        attempts: 0,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+
+    await LinkService.drainRetries();
+    expect(sendPrivate).not.toHaveBeenCalled();
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
+  });
+
+  it("caps established re-key parks per stale window until user intent", async () => {
+    installDurableBudget();
+    for (let cycle = 0; cycle < ESTABLISHED_REKEY_PARK_LIMIT; cycle += 1) {
+      vi.spyOn(Date, "now").mockReturnValue(NOW + cycle * (PEER_MARKER_REFRESH_TTL_MS + 1));
+      probeInbound.mockResolvedValue({
+        result: "pending",
+        linkId: `rekey-hs-${cycle}`,
+        snapshot: `rekey-snap-${cycle}`,
+      });
+      advanceHandshake.mockRejectedValueOnce(new Error("transient"));
+      await LinkService.syncInbox([PEER]);
+    }
+    vi.spyOn(Date, "now").mockReturnValue(
+      NOW + ESTABLISHED_REKEY_PARK_LIMIT * (PEER_MARKER_REFRESH_TTL_MS + 1),
+    );
+    probeInbound.mockClear();
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "rekey-hs-blocked",
+      snapshot: "rekey-snap-blocked",
+    });
+    await LinkService.syncInbox([PEER]);
+    expect(probeInbound).not.toHaveBeenCalled();
+
+    advanceHandshake.mockReset().mockResolvedValue({
+      status: "pending",
+      snapshot: "rekey-snap-user",
+    });
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "rekey-hs-user",
+      snapshot: "rekey-snap-user",
+    });
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
+    expect(probeInbound).toHaveBeenCalled();
+  });
+
+  it("does not return ready after a stale parked re-key is dropped against a new marker", async () => {
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
+    vi.spyOn(Date, "now").mockReturnValue(NOW + HANDSHAKE_STALE_MS);
+    sendPrivate.mockClear();
+    await LinkService.syncInbox([PEER]);
+    expect(sendPrivate).not.toHaveBeenCalled();
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.not.toBe("ready");
   });
 });
