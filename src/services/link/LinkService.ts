@@ -52,7 +52,7 @@ import {
 import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
-import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver } from "./provisionReceiver";
+import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver, healMissingReceiverRow } from "./provisionReceiver";
 import { STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
 import { LinkSendError } from "./LinkSendError";
 import { shouldPersistWrites } from "@/services/tabLock";
@@ -825,8 +825,13 @@ async function ensureLinkLocked(
   if (!isActiveSession(lookup)) return "needs-enable";
   const activeSession = lookup;
   const ownerPubky = activeSession.pubky;
-  const receiver = await StorageService.getLinkReceiver(ownerPubky);
-  if (!receiver) return "needs-enable";
+  let receiver = await StorageService.getLinkReceiver(ownerPubky);
+  if (!receiver) {
+    const healed = await healMissingReceiverRow(activeSession.handle, ownerPubky);
+    if (!healed) return "needs-enable";
+    receiver = await StorageService.getLinkReceiver(ownerPubky);
+    if (!receiver) return "needs-enable";
+  }
   const localPath = assertValidReceiverPath(coerceReceiverPath(receiver.receiverPath));
 
   const key = linkKey(ownerPubky, peerPubky);

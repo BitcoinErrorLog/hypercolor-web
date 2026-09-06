@@ -492,6 +492,7 @@ export const StorageService = {
         now(),
       ],
     );
+    await (db as { flushPersist?: () => Promise<void> }).flushPersist?.();
   },
 
   async getLinkReceiver(ownerPubky: PubkyKey): Promise<LinkReceiver | null> {

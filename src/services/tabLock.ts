@@ -600,8 +600,11 @@ export async function ensureWriter(): Promise<TabLock> {
 
 /** Switch owner scope, then become writer, then enter the critical section. */
 export async function acquireScopedWriter(pubky: string): Promise<void> {
+  const { prepareSqliteOwnerSwitch, waitForOwnerScopedSqlite } = await import("@/db");
+  await prepareSqliteOwnerSwitch(pubky);
   setTabLockOwner(pubky);
   await ensureWriter();
+  await waitForOwnerScopedSqlite();
   enterWriterCriticalSection();
   assertWriter("acquireScopedWriter");
 }

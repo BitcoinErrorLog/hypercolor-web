@@ -57,21 +57,26 @@ setBeforeWriterYield(async () => {
 });
 
 let lastOwnerScope = getTabLockOwnerScope();
+let openGeneration = 0;
+let scopeReopen: Promise<SqlExecutor> | null = null;
+let writerRefresh: Promise<void> | null = null;
 
 subscribeTabLock((lock) => {
   if (_injected) return;
   const owner = getTabLockOwnerScope();
   if (owner !== lastOwnerScope) {
     lastOwnerScope = owner;
+    openGeneration += 1;
     if (_db || _opening) {
       discardCloseDb();
-      void getDb();
+      _opening = null;
+      scopeReopen = getDb();
     }
   }
   if (isTakeoverInProgress()) return;
   if (lock.mode === "writer") {
     if (!consumeTakeoverRefresh()) return;
-    void (async () => {
+    writerRefresh = (async () => {
       try {
         await sealPersistGenerationInIdb();
         await refreshReadonlySnapshot();
@@ -174,10 +179,16 @@ export async function getDb(): Promise<SqlExecutor> {
   if (_db) return _db;
   if (_opening) return _opening;
 
+  const gen = openGeneration;
   _opening = (async () => {
     try {
       await initTabLock();
       const db = await openWebSqlite();
+      if (gen !== openGeneration) {
+        const persistable = db as PersistableSqlExecutor;
+        persistable.discardClose?.();
+        return getDb();
+      }
       applyConnectionPreamble(db);
       const writer = getTabLock().mode === "writer";
       await runMigrations(db);
@@ -185,13 +196,45 @@ export async function getDb(): Promise<SqlExecutor> {
         db.executeSync("DELETE FROM mesh_peers");
         await db.flushPersist?.();
       }
+      if (gen !== openGeneration) {
+        const persistable = db as PersistableSqlExecutor;
+        persistable.discardClose?.();
+        return getDb();
+      }
       _db = guardMutations(db);
       return _db;
     } finally {
-      _opening = null;
+      if (gen === openGeneration) _opening = null;
     }
   })();
   return _opening;
+}
+
+export async function prepareSqliteOwnerSwitch(owner: string): Promise<void> {
+  if (_injected) return;
+  const persistable = _db as PersistableSqlExecutor | null;
+  await persistable?.flushPersist?.();
+  const { stampThisTabUnsignedSnapshotOwner } = await import("./openWebSqlite");
+  await stampThisTabUnsignedSnapshotOwner(owner);
+}
+
+export async function waitForOwnerScopedSqlite(): Promise<void> {
+  if (_injected) return;
+  if (writerRefresh) {
+    try {
+      await writerRefresh;
+    } catch {
+      /* seal/refresh best-effort */
+    }
+  }
+  if (scopeReopen) {
+    try {
+      await scopeReopen;
+    } catch {
+      /* getDb below */
+    }
+  }
+  if (_db || _opening) await getDb();
 }
 
 export async function refreshReadonlySnapshot(): Promise<void> {
@@ -202,6 +245,8 @@ export async function refreshReadonlySnapshot(): Promise<void> {
     if (typeof current?.discardClose === "function") current.discardClose();
     else current?.close?.();
     _db = null;
+    _opening = null;
+    openGeneration += 1;
     clearOpenedVfs();
     await getDb();
   } finally {

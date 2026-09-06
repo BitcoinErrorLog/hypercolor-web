@@ -57,6 +57,8 @@ const migrateChains = new Map<string, Promise<void>>();
 
 let persistGeneration = 1;
 let persistNonce = randomPersistNonce();
+/** Persist nonce of an unsigned snapshot this tab created (empty hydrate). Not a leftover. */
+let thisTabUnsignedCreateNonce: string | null = null;
 
 function randomPersistNonce(): string {
   return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
@@ -93,6 +95,44 @@ export function preparePersistGenerationForOpen(meta: SqliteSnapshotMeta | null)
 export function resetPersistGenerationForTests(): void {
   persistGeneration = 1;
   persistNonce = randomPersistNonce();
+  thisTabUnsignedCreateNonce = null;
+}
+
+export function rememberUnsignedSnapshotCreated(nonce: string): void {
+  if (getTabLockOwnerScope() !== TAB_LOCK_UNSIGNED_SCOPE) return;
+  thisTabUnsignedCreateNonce = nonce;
+}
+
+export function thisTabUnsignedCreateNonceForTests(): string | null {
+  return thisTabUnsignedCreateNonce;
+}
+
+/**
+ * Mark the currently-open unsigned IDB as owned by `owner` only when this tab
+ * created that snapshot. Shared-browser leftovers keep no owner marker.
+ */
+export async function stampThisTabUnsignedSnapshotOwner(owner: string): Promise<void> {
+  if (!owner || owner.length === 0) return;
+  if (getTabLockOwnerScope() !== TAB_LOCK_UNSIGNED_SCOPE) return;
+  if (!thisTabUnsignedCreateNonce) return;
+  const legacy = await readNamedSnapshot(IDB_NAME);
+  if (!snapshotBytesPresent(legacy.bytes) || !legacy.bytes || !legacy.meta) return;
+  if (legacy.meta.nonce !== thisTabUnsignedCreateNonce) {
+    console.info("[hypercolor-sqlite] refusing to stamp unsigned snapshot this tab did not create", {
+      owner,
+    });
+    return;
+  }
+  if (typeof legacy.meta.ownerPubky === "string" && legacy.meta.ownerPubky.length > 0) {
+    if (legacy.meta.ownerPubky !== owner) return;
+    return;
+  }
+  await putIdbSnapshot(legacy.bytes, {
+    ...legacy.meta,
+    generation: persistGeneration,
+    nonce: persistNonce,
+    ownerPubky: owner,
+  });
 }
 
 export function compareSnapshotMeta(
@@ -681,6 +721,12 @@ async function openIdbSnapshotVfs(
   await migrateLegacySqliteSnapshotIfNeeded();
   const { bytes, meta } = await getIdbSnapshotAndMeta();
   preparePersistGenerationForOpen(meta);
+  if (
+    getTabLockOwnerScope() === TAB_LOCK_UNSIGNED_SCOPE &&
+    !snapshotBytesPresent(bytes)
+  ) {
+    rememberUnsignedSnapshotCreated(persistNonce);
+  }
   const db = hydrateMemoryDb(sqlite3, bytes);
   if (bytes && bytes.byteLength > 0 && meta) {
     const blobVersion = pragmaUserVersion(db);

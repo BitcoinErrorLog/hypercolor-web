@@ -204,6 +204,40 @@ export async function provisionReceiver(
   return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
 }
 
+let healReceiverInFlight: Promise<boolean> | null = null;
+
+/**
+ * KeyStore has the receiver secret but sqlite `link_receivers` is missing
+ * (unsigned persist / namespace miss). Re-run provision: GET-first, so a
+ * marker already on the homeserver does not PUT again.
+ */
+export async function healMissingReceiverRow(
+  session: SessionHandle,
+  pubky: PubkyKey,
+): Promise<boolean> {
+  if (healReceiverInFlight) return healReceiverInFlight;
+  healReceiverInFlight = (async () => {
+    const { ensureWriter } = await import("@/services/tabLock");
+    const { waitForOwnerScopedSqlite } = await import("@/db");
+    await ensureWriter();
+    await waitForOwnerScopedSqlite();
+    if (await StorageService.getLinkReceiver(pubky)) return true;
+    let secret: Uint8Array | null = null;
+    try {
+      secret = await KeyStore.getReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
+    } catch {
+      return false;
+    }
+    if (!secret) return false;
+    zeroizeBytes(secret);
+    await provisionReceiver(session, pubky);
+    return (await StorageService.getLinkReceiver(pubky)) !== null;
+  })().finally(() => {
+    healReceiverInFlight = null;
+  });
+  return healReceiverInFlight;
+}
+
 export async function takeoverReceiver(
   session: SessionHandle,
   pubky: PubkyKey,
