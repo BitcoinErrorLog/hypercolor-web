@@ -91,6 +91,9 @@ vi.mock("@/services/StorageService", () => ({
     updateAttachmentDelivery: vi.fn(),
     markGroupEventSeen: vi.fn(),
     clearAccountData: vi.fn(),
+    deleteArchivedLink: vi.fn(),
+    upsertArchivedLink: vi.fn(),
+    getArchivedLink: vi.fn(),
   },
 }));
 

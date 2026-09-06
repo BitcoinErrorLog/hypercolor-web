@@ -57,6 +57,7 @@ vi.mock("@/services/StorageService", () => ({
     upsertLink: (...args: unknown[]) => upsertLink(...args),
     upsertArchivedLink: (...args: unknown[]) => upsertArchivedLink(...args),
     getArchivedLink: (...args: unknown[]) => getArchivedLink(...args),
+    deleteArchivedLink: vi.fn(async () => undefined),
     recordLastSeenPeerMarkerPk: vi.fn(),
     updateLinkSnapshot: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
@@ -767,7 +768,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     expect(upsertArchivedLink).toHaveBeenCalled();
   });
 
-  it("deletes our consumed initiator msg1 after the link becomes established", async () => {
+  it("does not clear the initiator outbox (msg3) after the link becomes established", async () => {
     getLink.mockResolvedValue(handshaking("old-pk"));
     restoreHandshake.mockResolvedValue({ linkId: "hs-1", status: "pending" });
     advanceHandshake.mockResolvedValue({ status: "established", snapshot: "est-snap" });
@@ -775,7 +776,29 @@ describe("W1e marker multi-device + handshake recovery", () => {
 
     await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("ready");
 
-    expect(clearOutbox).toHaveBeenCalled();
+    // Noise XX: initiator is Complete the instant msg3 is PUT; the responder
+    // still needs that slot. clearLinkOutbox deletes the whole write path.
+    expect(clearOutbox).not.toHaveBeenCalled();
+  });
+
+  it("deletes the archived predecessor on per-link wipe, reset, and decline", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "established",
+      snapshot: "est-old",
+    });
+
+    await LinkService.resetEncryptedLink(PEER);
+    expect(StorageService.deleteArchivedLink).toHaveBeenCalledWith(OWNER, PEER);
+
+    vi.mocked(StorageService.deleteArchivedLink).mockClear();
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "established",
+      snapshot: "est-old",
+    });
+    await LinkService.declineMessageRequest(PEER);
+    expect(StorageService.deleteArchivedLink).toHaveBeenCalledWith(OWNER, PEER);
   });
 
   it("pk unchanged + junk msg1 → established link unchanged", async () => {
