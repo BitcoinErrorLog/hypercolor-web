@@ -133,7 +133,8 @@ export function ChatsPage({
               type="button"
               size="sm"
               variant={listFilter === filter ? "brand" : "outline"}
-              aria-pressed={listFilter === filter}
+              role="tab"
+              aria-selected={listFilter === filter}
               data-testid={`chatsFilter-${filter}`}
               onClick={() => onChangeListFilter?.(filter)}
             >

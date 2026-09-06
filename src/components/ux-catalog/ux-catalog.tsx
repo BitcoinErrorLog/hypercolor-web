@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { AttachmentBubble } from "@/components/attachment-bubble";
 import { AuthQr } from "@/components/auth-qr";
@@ -126,11 +126,11 @@ function attachment(partial: Partial<AttachmentRecord>): AttachmentRecord {
 
 function rows(state?: string): ChatsPageRow[] {
   return [
-    { key: ASTER, href: `/chats/${encodeURIComponent(DM_ID)}`, title: "Aster Example", kind: "dm", preview: "See you in the thread", lastMessageAt: NOW, unreadCount: 3, nickname: state === "nickname" ? "Star" : null, displayName: "Aster Example", pubky: ASTER },
-    { key: BRAMBLE, href: `/chats/${encodeURIComponent(buildDmConversationId(BRAMBLE))}`, title: "Bramble Example", kind: "dm", preview: "Queued", lastMessageAt: NOW - 60_000, unreadCount: 0, archived: state === "archived", displayName: "Bramble Example", pubky: BRAMBLE },
-    { key: `${ASTER.slice(0, 48)}aaaa`, href: "/chats/dm:fixture-alpha", title: "Cedar Example", kind: "dm", preview: "Attachment ready", lastMessageAt: NOW - 120_000, unreadCount: 1 },
-    { key: `${ASTER.slice(0, 48)}bbbb`, href: "/chats/dm:fixture-beta", title: "Dahlia Example", kind: "dm", preview: "Payment request", lastMessageAt: NOW - 180_000, unreadCount: 0 },
-    { key: `${ASTER.slice(0, 48)}cccc`, href: "/chats/dm:fixture-gamma", title: "Elm Example", kind: "dm", preview: "Encrypted Link established", lastMessageAt: NOW - 240_000, unreadCount: 0 },
+    { key: ASTER, href: `/chats/${encodeURIComponent(DM_ID)}`, title: "Aster Example", kind: "dm", preview: "See you in the thread", lastMessageAt: NOW, unreadCount: 3, nickname: state === "nickname" ? "Starlight (local nickname)" : null, displayName: "Aster Example", pubky: ASTER },
+    { key: BRAMBLE, href: `/chats/${encodeURIComponent(buildDmConversationId(BRAMBLE))}`, title: "Bramble Example", kind: "dm", preview: "Queued", lastMessageAt: NOW - 60_000, unreadCount: 0, archived: state === "archived", nickname: state === "nickname" ? "Bramble nick" : null, displayName: "Bramble Example", pubky: BRAMBLE },
+    { key: `${ASTER.slice(0, 48)}aaaa`, href: "/chats/dm:fixture-alpha", title: "Cedar Example", kind: "dm", preview: "Attachment ready", lastMessageAt: NOW - 120_000, unreadCount: 1, nickname: state === "nickname" ? "Cedar nick" : null },
+    { key: `${ASTER.slice(0, 48)}bbbb`, href: "/chats/dm:fixture-beta", title: "Dahlia Example", kind: "dm", preview: "Payment request", lastMessageAt: NOW - 180_000, unreadCount: 0, nickname: state === "nickname" ? "Dahlia nick" : null },
+    { key: `${ASTER.slice(0, 48)}cccc`, href: "/chats/dm:fixture-gamma", title: "Elm Example", kind: "dm", preview: "Encrypted Link established", lastMessageAt: NOW - 240_000, unreadCount: 0, nickname: state === "nickname" ? "Elm nick" : null },
   ];
 }
 
@@ -561,9 +561,15 @@ function ThreadFixture({ state }: { state: string }) {
 function ChatsFixture({ state }: { state: string }) {
   return (
     <ChatsPage
-      conversationId={null}
+      conversationId={state === "nickname" ? DM_ID : null}
       enableCta={<EnableCtaFixture />}
-      thread={<ThreadView conversationId={null} participantPubky={null} localPubky={OWNER} messages={[]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} now={NOW} />}
+      thread={
+        state === "nickname" ? (
+          <ThreadView conversationId={DM_ID} participantPubky={ASTER} displayName="Starlight (local nickname)" localPubky={OWNER} messages={[message({})]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} now={NOW} />
+        ) : (
+          <ThreadView conversationId={null} participantPubky={null} localPubky={OWNER} messages={[]} attachments={[]} loading={false} error={null} draft="" sending={false} status={{ kind: "enabled", pubky: OWNER }} enableCta={null} renderAttachment={() => null} onChangeDraft={noop} onSend={noop} onAttach={noop} onRetry={noop} onResolved={noop} now={NOW} />
+        )
+      }
       rows={state === "populated" || state === "error" || state === "nickname" || state === "archived" ? rows(state) : []}
       pendingRequests={state === "populated" ? 2 : 0}
       inboxError={state === "error" ? "Could not load inbox." : null}
@@ -738,12 +744,28 @@ function installFixtureStores(scene: UxCatalogScene) {
   useInboxStore.getState().setRows([], scene.id.includes("requests") ? 2 : 0);
 }
 
+function fixtureStatusReady(status: SessionUiStatus, expected: SessionUiStatus): boolean {
+  if (status.kind !== expected.kind) return false;
+  if (
+    expected.kind === "enabled" ||
+    expected.kind === "session-offline" ||
+    expected.kind === "live"
+  ) {
+    return status.kind === expected.kind && status.pubky === expected.pubky;
+  }
+  return true;
+}
+
 export function UxCatalog() {
   const searchParams = useSearchParams();
   const sceneId = searchParams.get("scene");
   const scene = findUxCatalogScene(sceneId);
-  installFixtureStores(scene);
-  useEffect(() => {
+  const expectedStatus = sessionStatusForScene(scene);
+  const sessionStatus = useSessionStatusStore((s) => s.status);
+  const sceneReady = fixtureStatusReady(sessionStatus, expectedStatus);
+
+  useLayoutEffect(() => {
+    installFixtureStores(scene);
     const originalFetch = window.fetch;
     window.fetch = (input, init) => {
       const url = new URL(
@@ -768,15 +790,19 @@ export function UxCatalog() {
     return () => {
       window.fetch = originalFetch;
     };
-  }, []);
+  }, [scene]);
 
   return (
     <div className="space-y-6">
       <SceneChrome scene={scene} />
+      {sceneReady ? (
       <div data-vrt-scene={scene.id}>
         <div data-vrt-portal-root className="fixed inset-0" />
         <RenderProductionScene scene={scene} />
       </div>
+      ) : (
+        <p data-vrt-preparing={scene.id}>Preparing catalog scene…</p>
+      )}
       <details className="text-sm text-muted-foreground">
         <summary>Catalog scenes</summary>
         <ul className="mt-2 columns-1 md:columns-2">

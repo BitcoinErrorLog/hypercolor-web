@@ -1,3 +1,4 @@
+import "server-only";
 import { ATTACHMENT_MAX_BYTES } from "@/flags/config";
 
 export type GifMedia = {

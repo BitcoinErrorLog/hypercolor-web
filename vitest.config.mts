@@ -24,6 +24,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(root, "src"),
+      "server-only": path.resolve(root, "node_modules/next/dist/compiled/server-only/empty.js"),
     },
   },
 });

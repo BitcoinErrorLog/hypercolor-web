@@ -28,6 +28,7 @@
     "app/**/*.tsx",
     "src/**/*.ts",
     "src/**/*.tsx",
+    "src/**/*.d.ts",
     "e2e/**/*.ts",
     "vitest.config.mts",
     "playwright.config.ts",
