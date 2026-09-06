@@ -2,6 +2,7 @@ import type { Database, Sqlite3Static } from "@sqlite.org/sqlite-wasm";
 import { SQLITE_BUNDLE_ID } from "./bundleId";
 import { CURRENT_VERSION } from "./migrations";
 import {
+  ReadOnlyTabError,
   SqliteDeleteBlockedError,
   SqlitePersistError,
   SqliteSnapshotIntegrityError,
@@ -10,7 +11,12 @@ import {
 } from "./errors";
 import { isMutatingSql } from "./mutatingSql";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
-import { getTabLock } from "@/services/tabLock";
+import {
+  getTabLock,
+  getTabLockOwnerScope,
+  isYieldingTab,
+  TAB_LOCK_UNSIGNED_SCOPE,
+} from "@/services/tabLock";
 
 export type { ClosableSqlExecutor } from "./oo1Executor";
 export { isMutatingSql } from "./mutatingSql";
@@ -22,6 +28,12 @@ export const IDB_STORE = "sqlite";
 export const IDB_KEY = "hypercolor.db";
 export const IDB_META_KEY = "hypercolor.db.meta";
 
+export function currentSqliteIdbName(): string {
+  const owner = getTabLockOwnerScope();
+  if (!owner || owner === TAB_LOCK_UNSIGNED_SCOPE) return IDB_NAME;
+  return `${IDB_NAME}:${owner}`;
+}
+
 let openedVfs: WebSqliteVfs | null = null;
 
 export function getOpenedVfs(): WebSqliteVfs | null {
@@ -32,17 +44,50 @@ export type SqliteSnapshotMeta = {
   userVersion: number;
   bundleId: string;
   generation: number;
+  nonce?: string;
 };
 
 let persistGeneration = 1;
+let persistNonce = randomPersistNonce();
+
+function randomPersistNonce(): string {
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
 
 export function currentPersistGeneration(): number {
   return persistGeneration;
 }
 
+export function currentPersistNonce(): string {
+  return persistNonce;
+}
+
+/** Monotonic counter (not Date.now) plus a random nonce for same-generation ties. */
 export function bumpPersistGeneration(): number {
-  persistGeneration = Math.max(persistGeneration + 1, Date.now());
+  persistGeneration += 1;
+  persistNonce = randomPersistNonce();
   return persistGeneration;
+}
+
+export function adoptPersistGenerationFromMeta(meta: SqliteSnapshotMeta | null): void {
+  if (!meta || typeof meta.generation !== "number" || Number.isNaN(meta.generation)) return;
+  if (meta.generation > persistGeneration) persistGeneration = meta.generation;
+}
+
+export function resetPersistGenerationForTests(): void {
+  persistGeneration = 1;
+  persistNonce = randomPersistNonce();
+}
+
+export function compareSnapshotMeta(
+  left: Pick<SqliteSnapshotMeta, "generation" | "nonce">,
+  right: Pick<SqliteSnapshotMeta, "generation" | "nonce">,
+): number {
+  if (left.generation !== right.generation) return left.generation - right.generation;
+  const ln = left.nonce ?? "";
+  const rn = right.nonce ?? "";
+  if (ln === rn) return 0;
+  return ln < rn ? -1 : 1;
 }
 
 type SqliteInit = (config?: {
@@ -87,11 +132,14 @@ function wrapIdbSnapshot(
   let rolledBack = false;
   let lastPersistError: SqlitePersistError | null = null;
   const generation = persistGeneration;
+  const nonce = persistNonce;
   let persistBlocked = false;
 
   const persistNow = (reason: "commit" | "autocommit" | "close") => {
     if (persistBlocked) return persistChain;
-    if (getTabLock().mode !== "writer") return persistChain;
+    const writer = getTabLock().mode === "writer";
+    if (!writer) return persistChain;
+    if (reason !== "close" && isYieldingTab()) return persistChain;
     if (rolledBack) return persistChain;
     if (!db.pointer) return persistChain;
     const bytes = sqlite3.capi.sqlite3_js_db_export(db.pointer);
@@ -107,6 +155,7 @@ function wrapIdbSnapshot(
           userVersion,
           bundleId: SQLITE_BUNDLE_ID,
           generation,
+          nonce,
         }),
       )
       .then(() => {
@@ -170,17 +219,16 @@ function wrapIdbSnapshot(
       });
     },
     persistForYield() {
-      void persistNow("close");
-      return persistChain.then(() => {
+      return persistNow("close").then(() => {
         if (lastPersistError) throw lastPersistError;
       });
     },
   };
 }
 
-function openIdb(): Promise<IDBDatabase> {
+function openIdb(name = currentSqliteIdbName()): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(IDB_NAME, 1);
+    const req = indexedDB.open(name, 1);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains(IDB_STORE)) {
         req.result.createObjectStore(IDB_STORE);
@@ -225,6 +273,10 @@ async function getIdbSnapshotAndMeta(): Promise<{
                 userVersion: Number((raw as SqliteSnapshotMeta).userVersion),
                 bundleId: String((raw as SqliteSnapshotMeta).bundleId),
                 generation: Number((raw as SqliteSnapshotMeta).generation ?? 0),
+                nonce:
+                  typeof (raw as SqliteSnapshotMeta).nonce === "string"
+                    ? (raw as SqliteSnapshotMeta).nonce
+                    : undefined,
               }
             : null;
         resolve({ bytes: decodeSnapshotBytes(blobReq.result), meta });
@@ -237,6 +289,16 @@ async function getIdbSnapshotAndMeta(): Promise<{
   }
 }
 
+function isStalePut(meta: SqliteSnapshotMeta, existing: SqliteSnapshotMeta | undefined): boolean {
+  if (meta.generation < persistGeneration) return true;
+  if (!existing || typeof existing.generation !== "number") return false;
+  return compareSnapshotMeta(existing, meta) > 0;
+}
+
+/**
+ * Blob + meta are written in one IndexedDB transaction. A crash mid-put
+ * cannot leave a blob without matching meta (or the reverse).
+ */
 export async function putIdbSnapshot(
   bytes: Uint8Array,
   meta: SqliteSnapshotMeta,
@@ -249,11 +311,7 @@ export async function putIdbSnapshot(
       const existingReq = store.get(IDB_META_KEY);
       existingReq.onsuccess = () => {
         const existing = existingReq.result as SqliteSnapshotMeta | undefined;
-        if (
-          existing &&
-          typeof existing.generation === "number" &&
-          existing.generation > meta.generation
-        ) {
+        if (isStalePut(meta, existing)) {
           return;
         }
         store.put(bytes, IDB_KEY);
@@ -266,6 +324,18 @@ export async function putIdbSnapshot(
   } finally {
     db.close();
   }
+}
+
+/** Bump generation and persist meta before hydrate so late old-writer puts lose. */
+export async function sealPersistGenerationInIdb(): Promise<void> {
+  bumpPersistGeneration();
+  const { bytes, meta } = await getIdbSnapshotAndMeta();
+  await putIdbSnapshot(bytes ?? new Uint8Array(0), {
+    userVersion: meta?.userVersion ?? 0,
+    bundleId: meta?.bundleId ?? SQLITE_BUNDLE_ID,
+    generation: persistGeneration,
+    nonce: persistNonce,
+  });
 }
 
 function hydrateMemoryDb(
@@ -336,6 +406,7 @@ async function openIdbSnapshotVfs(
   sqlite3: Sqlite3Static,
 ): Promise<PersistableSqlExecutor> {
   const { bytes, meta } = await getIdbSnapshotAndMeta();
+  adoptPersistGenerationFromMeta(meta);
   const db = hydrateMemoryDb(sqlite3, bytes);
   if (bytes && bytes.byteLength > 0 && meta) {
     const blobVersion = pragmaUserVersion(db);
@@ -358,7 +429,17 @@ function openKvvfs(sqlite3: Sqlite3Static): PersistableSqlExecutor {
   const db = new sqlite3.oo1.JsStorageDb("local");
   const inner = wrapOo1Db(db);
   return {
-    ...inner,
+    executeSync(query, params) {
+      if (getTabLock().mode !== "writer" || isYieldingTab()) {
+        if (isMutatingSql(query) || /^\s*BEGIN\b/i.test(query)) {
+          throw new ReadOnlyTabError(
+            "kvvfs fallback refuses writes unless this tab is the writer.",
+          );
+        }
+      }
+      return inner.executeSync(query, params);
+    },
+    close: inner.close,
     flushPersist: async () => undefined,
     persistForYield: async () => undefined,
     discardClose() {
@@ -417,9 +498,9 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-async function deleteIdbDatabaseOnce(): Promise<void> {
+async function deleteIdbDatabaseOnce(name = currentSqliteIdbName()): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    const req = indexedDB.deleteDatabase(IDB_NAME);
+    const req = indexedDB.deleteDatabase(name);
     req.onsuccess = () => resolve();
     req.onblocked = () =>
       reject(new SqliteDeleteBlockedError());

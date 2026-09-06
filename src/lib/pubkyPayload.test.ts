@@ -20,6 +20,12 @@ describe("parsePubkyPayload", () => {
     expect(parsePubkyPayload(input)).toBe(expected);
   });
 
+  it("does not synthesize a z32 across path-segment boundaries", () => {
+    const left = valid.slice(0, 30);
+    const right = valid.slice(30);
+    expect(parsePubkyPayload(`https://pubky.app/${left}/${right}`)).toBeNull();
+  });
+
   it.each([
     ["empty", ""],
     ["whitespace", "   "],

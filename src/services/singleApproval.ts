@@ -210,28 +210,44 @@ export async function finishSingleApproval(input: {
   session: SessionHandle;
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
-  const { ensureWriter } = await import("@/services/tabLock");
+  const {
+    assertWriter,
+    ensureWriter,
+    enterWriterCriticalSection,
+    exitWriterCriticalSection,
+  } = await import("@/services/tabLock");
   await ensureWriter();
-  const { params, payload, session, ch } = input;
-  const handlePubky = session.pubky();
-  if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
-    await signOutQuietly(session);
-    throw new BindingMismatchError("Handoff pubky does not match the approved session");
-  }
-  if (!(await pendingChannelMatches(ch))) {
-    await signOutQuietly(session);
-    throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
-  }
-  const adopted = await adoptApprovedSession(session);
-  await adoptHandoff(params, payload, ch);
+  enterWriterCriticalSection();
   try {
-    await provisionReceiver(adopted.handle, adopted.pubky);
-  } catch (error) {
-    throw new ProvisionReceiverFailedError(
-      error instanceof Error ? error.message : "Failed to publish receiver",
-    );
+    assertWriter("finishSingleApproval:start");
+    const { params, payload, session, ch } = input;
+    const handlePubky = session.pubky();
+    if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
+      await signOutQuietly(session);
+      throw new BindingMismatchError("Handoff pubky does not match the approved session");
+    }
+    assertWriter("finishSingleApproval:after-binding");
+    if (!(await pendingChannelMatches(ch))) {
+      await signOutQuietly(session);
+      throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
+    }
+    assertWriter("finishSingleApproval:after-channel");
+    const adopted = await adoptApprovedSession(session);
+    assertWriter("finishSingleApproval:after-adopt");
+    await adoptHandoff(params, payload, ch);
+    assertWriter("finishSingleApproval:after-handoff");
+    try {
+      await provisionReceiver(adopted.handle, adopted.pubky);
+    } catch (error) {
+      throw new ProvisionReceiverFailedError(
+        error instanceof Error ? error.message : "Failed to publish receiver",
+      );
+    }
+    assertWriter("finishSingleApproval:after-provision");
+    return { pubky: adopted.pubky, homeserver: params.homeserver };
+  } finally {
+    exitWriterCriticalSection();
   }
-  return { pubky: adopted.pubky, homeserver: params.homeserver };
 }
 
 export async function finishLegacyChainedGrant(input: {
@@ -240,32 +256,48 @@ export async function finishLegacyChainedGrant(input: {
   session: SessionHandle;
   ch: string;
 }): Promise<{ pubky: string; homeserver: string }> {
-  const { ensureWriter } = await import("@/services/tabLock");
+  const {
+    assertWriter,
+    ensureWriter,
+    enterWriterCriticalSection,
+    exitWriterCriticalSection,
+  } = await import("@/services/tabLock");
   await ensureWriter();
-  const { params, payload, session, ch } = input;
-  const handlePubky = session.pubky();
-  if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
-    await signOutQuietly(session);
-    await wipeSessionMetadata();
-    useAuthStore.getState().clearSession();
-    throw new BindingMismatchError("Handoff pubky does not match the approved session");
-  }
-  if (!(await pendingChannelMatches(ch))) {
-    await signOutQuietly(session);
-    await wipeSessionMetadata();
-    useAuthStore.getState().clearSession();
-    throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
-  }
-  const adopted = await adoptApprovedSession(session);
-  await adoptHandoff(params, payload, ch);
+  enterWriterCriticalSection();
   try {
-    await provisionReceiver(adopted.handle, adopted.pubky);
-  } catch (error) {
-    throw new ProvisionReceiverFailedError(
-      error instanceof Error ? error.message : "Failed to publish receiver",
-    );
+    assertWriter("finishLegacyChainedGrant:start");
+    const { params, payload, session, ch } = input;
+    const handlePubky = session.pubky();
+    if (params.pubky !== handlePubky || payload.pubky !== handlePubky) {
+      await signOutQuietly(session);
+      await wipeSessionMetadata();
+      useAuthStore.getState().clearSession();
+      throw new BindingMismatchError("Handoff pubky does not match the approved session");
+    }
+    assertWriter("finishLegacyChainedGrant:after-binding");
+    if (!(await pendingChannelMatches(ch))) {
+      await signOutQuietly(session);
+      await wipeSessionMetadata();
+      useAuthStore.getState().clearSession();
+      throw new BindingMismatchError("Handoff channel does not match the pending ephemeral key");
+    }
+    assertWriter("finishLegacyChainedGrant:after-channel");
+    const adopted = await adoptApprovedSession(session);
+    assertWriter("finishLegacyChainedGrant:after-adopt");
+    await adoptHandoff(params, payload, ch);
+    assertWriter("finishLegacyChainedGrant:after-handoff");
+    try {
+      await provisionReceiver(adopted.handle, adopted.pubky);
+    } catch (error) {
+      throw new ProvisionReceiverFailedError(
+        error instanceof Error ? error.message : "Failed to publish receiver",
+      );
+    }
+    assertWriter("finishLegacyChainedGrant:after-provision");
+    return { pubky: adopted.pubky, homeserver: params.homeserver };
+  } finally {
+    exitWriterCriticalSection();
   }
-  return { pubky: adopted.pubky, homeserver: params.homeserver };
 }
 
 export { HANDOFF_MODE_COMBINED, HANDOFF_MODE_LEGACY };

@@ -2,9 +2,9 @@ import { runMigrations } from "./migrations";
 import { isMutatingSql } from "./mutatingSql";
 import { ReadOnlyTabError } from "./errors";
 import {
-  bumpPersistGeneration,
   clearOpenedVfs,
   openWebSqlite,
+  sealPersistGenerationInIdb,
   type PersistableSqlExecutor,
 } from "./openWebSqlite";
 import type { SqlExecutor } from "./sql";
@@ -12,9 +12,10 @@ import {
   consumeTakeoverRefresh,
   getTabLock,
   initTabLock,
+  isTakeoverInProgress,
+  isYieldingTab,
   setBeforeWriterYield,
   subscribeTabLock,
-  waitForPeerWriterYield,
 } from "@/services/tabLock";
 
 export type { SqlExecutor, SqlExecuteResult, SqlParams, SqlValue } from "./sql";
@@ -54,11 +55,11 @@ setBeforeWriterYield(async () => {
 
 subscribeTabLock((lock) => {
   if (!_db || _injected) return;
+  if (isTakeoverInProgress()) return;
   if (lock.mode === "writer") {
     if (!consumeTakeoverRefresh()) return;
     void (async () => {
-      await waitForPeerWriterYield();
-      bumpPersistGeneration();
+      await sealPersistGenerationInIdb();
       await refreshReadonlySnapshot();
     })();
     return;
@@ -80,7 +81,10 @@ function guardMutations(db: PersistableSqlExecutor | SqlExecutor): PersistableSq
   let txDepth = 0;
   return {
     executeSync(query, params) {
-      if (getTabLock().mode === "readonly" && isReadonlyBlockedSql(query)) {
+      if (
+        (getTabLock().mode === "readonly" || isYieldingTab()) &&
+        isReadonlyBlockedSql(query)
+      ) {
         const err = new ReadOnlyTabError();
         if (typeof window !== "undefined") {
           window.dispatchEvent(

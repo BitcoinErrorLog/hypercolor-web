@@ -452,6 +452,8 @@ export async function getAppCert(): Promise<AppCert | null> {
 
 export async function setPubky(pubky: string): Promise<void> {
   await setMetadata(KEY_PUBKY, pubky);
+  const { setTabLockOwner } = await import("@/services/tabLock");
+  setTabLockOwner(pubky);
 }
 
 export async function getPubky(): Promise<string | null> {
@@ -943,6 +945,8 @@ export async function clear(): Promise<void> {
       reject(clearMeta.error ?? new Error("KeyStore: failed to clear metadata"));
     tx.onerror = () => reject(tx.error ?? new Error("KeyStore: clear transaction failed"));
   });
+  const { setTabLockOwner } = await import("@/services/tabLock");
+  setTabLockOwner(null);
 }
 
 // ─── Exported object (method names match mobile KeyStore) ─────────────────────

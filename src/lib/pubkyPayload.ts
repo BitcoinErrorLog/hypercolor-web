@@ -43,7 +43,7 @@ function parseHttpProfileUrl(raw: string): PubkyKey | null {
     const asKey = parsePubky(decoded) ?? firstValidZ32(decoded);
     if (asKey) return asKey;
   }
-  return firstValidZ32(`${url.pathname}${url.search}${url.hash}`);
+  return null;
 }
 
 /**

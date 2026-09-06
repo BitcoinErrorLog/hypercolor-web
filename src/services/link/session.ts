@@ -279,32 +279,60 @@ export function sessionExportCoversHypercolor(exported: string): boolean {
 }
 
 export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveSession> {
-  const pubky = handle.pubky();
-  const exported = handle.exportSession();
-  if (!sessionExportCoversHypercolor(exported)) {
-    try {
-      await PaykitLinkWeb.signOutSession(handle);
-    } catch {
-      closeHandleQuietly(handle);
+  const {
+    assertWriter,
+    ensureWriter,
+    enterWriterCriticalSection,
+    exitWriterCriticalSection,
+  } = await import("@/services/tabLock");
+  await ensureWriter();
+  enterWriterCriticalSection();
+  let keyStoreAdvanced = false;
+  try {
+    assertWriter("adoptApprovedSession:start");
+    const pubky = handle.pubky();
+    const exported = handle.exportSession();
+    if (!sessionExportCoversHypercolor(exported)) {
+      try {
+        await PaykitLinkWeb.signOutSession(handle);
+      } catch {
+        closeHandleQuietly(handle);
+      }
+      throw Object.assign(
+        new Error("session grant does not cover the Ring grant /pub/paykit/:rw and /pub/hypercolor.app/v1/:rw"),
+        {
+          name: "SessionResumeScopeMissing",
+        },
+      );
     }
-    throw Object.assign(
-      new Error("session grant does not cover the Ring grant /pub/paykit/:rw and /pub/hypercolor.app/v1/:rw"),
-      {
-        name: "SessionResumeScopeMissing",
-      },
+    assertWriter("adoptApprovedSession:after-export");
+    if (live && live.handle !== handle) {
+      closeHandleQuietly(live.handle);
+    }
+    const adopted = bindLive({ pubky, handle })!;
+    const previous = await readSessionMetadata();
+    assertWriter("adoptApprovedSession:after-read-metadata");
+    await persistSessionMetadata(
+      await metadataWithPreservedReceiver(pubky, exported, previous),
     );
+    assertWriter("adoptApprovedSession:after-sqlite");
+    await KeyStore.setPubky(pubky);
+    keyStoreAdvanced = true;
+    assertWriter("adoptApprovedSession:after-keystore");
+    useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
+    return adopted;
+  } catch (err) {
+    if (keyStoreAdvanced) {
+      try {
+        await KeyStore.clear();
+      } catch {
+        /* rollback best-effort */
+      }
+    }
+    throw err;
+  } finally {
+    exitWriterCriticalSection();
   }
-  if (live && live.handle !== handle) {
-    closeHandleQuietly(live.handle);
-  }
-  const adopted = bindLive({ pubky, handle })!;
-  const previous = await readSessionMetadata();
-  await persistSessionMetadata(
-    await metadataWithPreservedReceiver(pubky, exported, previous),
-  );
-  await KeyStore.setPubky(pubky);
-  useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
-  return adopted;
 }
 
 async function adoptRestoredHandle(
