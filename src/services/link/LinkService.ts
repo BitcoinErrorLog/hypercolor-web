@@ -167,6 +167,7 @@ type PendingEstablishedRekey = {
   marker: ReceiverMarker;
   localPath: string;
   startedAt: number;
+  role: LinkRole;
 };
 const pendingEstablishedRekeys = new Map<string, PendingEstablishedRekey>();
 let takeoverInFlight: Promise<{
@@ -869,6 +870,7 @@ async function ensureLinkLocked(
         ownerPubky,
         peerPubky,
         localPath,
+        intent,
       );
       if (rekeyed !== null) return rekeyed;
     }
@@ -1054,6 +1056,7 @@ async function maybeAdoptEstablishedRekey(
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
   localPath: string,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome | null> {
   const advanced = await advancePendingEstablishedRekey(
     activeSession,
@@ -1061,6 +1064,7 @@ async function maybeAdoptEstablishedRekey(
     stored,
     ownerPubky,
     peerPubky,
+    intent,
   );
   if (advanced !== undefined) return advanced;
 
@@ -1098,36 +1102,49 @@ async function maybeAdoptEstablishedRekey(
     if (isLinkNativeError(err) && err.code === "protocol") return null;
     throw err;
   }
-  if (inbound === null) return null;
-  if (!(await inboundStillAllowed(ownerPubky, peerPubky))) {
-    await closeQuietly(inbound.linkId);
-    return null;
-  }
-  if (!(await isCurrentOwner(ownerPubky))) {
-    await closeQuietly(inbound.linkId);
-    return null;
-  }
+  if (inbound !== null) {
+    if (!(await inboundStillAllowed(ownerPubky, peerPubky))) {
+      await closeQuietly(inbound.linkId);
+      return null;
+    }
+    if (!(await isCurrentOwner(ownerPubky))) {
+      await closeQuietly(inbound.linkId);
+      return null;
+    }
 
-  if (inbound.result === "established") {
-    return commitEstablishedRekey(
+    if (inbound.result === "established") {
+      return commitEstablishedRekey(
+        activeSession,
+        receiver,
+        stored,
+        ownerPubky,
+        peerPubky,
+        marker,
+        localPath,
+        inbound,
+      );
+    }
+
+    pendingEstablishedRekeys.set(linkKey(ownerPubky, peerPubky), {
+      handshakeLinkId: inbound.linkId,
+      snapshot: inbound.snapshot,
+      marker,
+      localPath,
+      startedAt: Date.now(),
+      role: "responder",
+    });
+    const stepped = await advancePendingEstablishedRekey(
       activeSession,
       receiver,
       stored,
       ownerPubky,
       peerPubky,
-      marker,
-      localPath,
-      inbound,
+      intent,
     );
+    if (stepped !== undefined) return stepped;
+    return "handshaking-responder";
   }
 
-  pendingEstablishedRekeys.set(linkKey(ownerPubky, peerPubky), {
-    handshakeLinkId: inbound.linkId,
-    snapshot: inbound.snapshot,
-    marker,
-    localPath,
-    startedAt: Date.now(),
-  });
   return null;
 }
 
@@ -1137,6 +1154,7 @@ async function advancePendingEstablishedRekey(
   stored: LinkRecord,
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
+  intent: HandshakeIntent,
 ): Promise<EnsureOutcome | null | undefined> {
   const key = linkKey(ownerPubky, peerPubky);
   const pending = pendingEstablishedRekeys.get(key);
@@ -1169,9 +1187,17 @@ async function advancePendingEstablishedRekey(
         { result: "established", linkId: pending.handshakeLinkId, snapshot: result.snapshot },
       );
     }
+    if (intent !== "user") {
+      const budget = await chargeHandshakeBudget(ownerPubky, peerPubky);
+      if (budget.exhausted) {
+        await closeQuietly(pending.handshakeLinkId);
+        pendingEstablishedRekeys.delete(key);
+        return null;
+      }
+    }
     pending.snapshot = result.snapshot;
     pendingEstablishedRekeys.set(key, pending);
-    return null;
+    return roleStatus(pending.role);
   } catch {
     await closeQuietly(pending.handshakeLinkId);
     pendingEstablishedRekeys.delete(key);
