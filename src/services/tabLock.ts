@@ -482,6 +482,11 @@ function isWriterNow(): boolean {
   return mode === "writer" && !yielding;
 }
 
+function armTakeoverRefresh(): void {
+  takeoverRefreshPending = true;
+  writerSurfaceReady = false;
+}
+
 export function assertWriter(context: string): void {
   if (isWriterNow()) return;
   throw new TabLockWriterError(`Writer lock lost during ${context}.`);
@@ -515,6 +520,7 @@ export function exitWriterCriticalSection(): void {
 
 async function runTakeover(): Promise<void> {
   if (!hasWebLocks()) {
+    if (!isWriterNow()) armTakeoverRefresh();
     mode = "writer";
     yielding = false;
     emit();
@@ -522,13 +528,12 @@ async function runTakeover(): Promise<void> {
     return;
   }
   if (isWriterNow()) return;
+  armTakeoverRefresh();
   await tryAcquire({ ifAvailable: true });
   if (isWriterNow()) return;
 
   const canCoordinate = typeof BroadcastChannel !== "undefined";
   takeoverInProgress = true;
-  takeoverRefreshPending = true;
-  writerSurfaceReady = false;
   emit();
 
   const wait = waitForPeerWriterYield();
@@ -636,6 +641,10 @@ export function setTabLockModeForTests(next: TabLockMode): void {
   mode = next;
   yielding = false;
   emit();
+}
+
+export function setYieldingForTests(next: boolean): void {
+  yielding = next;
 }
 
 export function resetTabLockForTests(): void {

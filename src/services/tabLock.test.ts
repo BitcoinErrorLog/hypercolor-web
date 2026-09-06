@@ -17,6 +17,10 @@ class FakeLockManager {
   private held = new Map<string, true>();
   private holderRequestSettled = new Map<string, Promise<unknown>>();
 
+  forceRelease(name: string): void {
+    this.held.delete(name);
+  }
+
   request(
     name: string,
     optionsOrCb: LockOptions | ((lock: LockInfo) => Promise<unknown> | unknown),
@@ -407,6 +411,27 @@ describe("tabLock", () => {
     expect(done).toBe(true);
     expect(tabB.getTabLock().mode).toBe("writer");
     vi.useRealTimers();
+  });
+
+  it("fast-path acquire arms seal refresh and keeps writer surface unready until seal", async () => {
+    const locks = new FakeLockManager();
+    stubLocksAndChannel(locks);
+    const tabA = await loadTabLock();
+    await tabA.initTabLock();
+    expect(tabA.getTabLock().mode).toBe("writer");
+    vi.resetModules();
+    stubLocksAndChannel(locks);
+    const tabB = await loadTabLock();
+    await tabB.initTabLock();
+    expect(tabB.getTabLock().mode).toBe("readonly");
+    expect(tabB.isWriterSurfaceReady()).toBe(true);
+    locks.forceRelease("hypercolor-writer:unsigned");
+    await tabB.requestTakeoverAndWait();
+    expect(tabB.getTabLock().mode).toBe("writer");
+    expect(tabB.isWriterSurfaceReady()).toBe(false);
+    expect(tabB.consumeTakeoverRefresh()).toBe(true);
+    tabB.markWriterSurfaceReady();
+    expect(tabB.isWriterSurfaceReady()).toBe(true);
   });
 
   it("refuses setTabLockOwner while a critical section is held", async () => {

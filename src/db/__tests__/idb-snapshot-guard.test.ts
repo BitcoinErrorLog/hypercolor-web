@@ -9,13 +9,19 @@ import {
   currentPersistGeneration,
   currentPersistNonce,
   currentSqliteIdbName,
+  isExpectedStalePersistRefusal,
   preparePersistGenerationForOpen,
   putIdbSnapshot,
   resetPersistGenerationForTests,
   sealPersistGenerationInIdb,
 } from "../openWebSqlite";
-import { SQLITE_PERSIST_FAILED_EVENT, SqlitePersistError } from "../errors";
-import { resetTabLockForTests, setTabLockModeForTests, setTabLockOwner } from "@/services/tabLock";
+import { SQLITE_PERSIST_FAILED_EVENT, SqlitePersistError, STALE_SNAPSHOT_GENERATION } from "../errors";
+import {
+  resetTabLockForTests,
+  setTabLockModeForTests,
+  setTabLockOwner,
+  setYieldingForTests,
+} from "@/services/tabLock";
 
 const BUNDLE = "test-bundle";
 
@@ -189,7 +195,8 @@ describe("idb snapshot generation guard", () => {
     expect(await readMeta(name)).toMatchObject({ generation: storedGen, nonce: "zzzzzzzzzzzz" });
   });
 
-  it("refused stale put sets persist error and SQLITE_PERSIST_FAILED_EVENT", async () => {
+  it("refused stale put as writer emits SQLITE_PERSIST_FAILED_EVENT", async () => {
+    setTabLockModeForTests("writer");
     await putIdbSnapshot(new Uint8Array([3]), {
       userVersion: 1,
       bundleId: BUNDLE,
@@ -214,7 +221,82 @@ describe("idb snapshot generation guard", () => {
         nonce: "aaaa",
       }),
     ).rejects.toBeInstanceOf(SqlitePersistError);
-    expect(events.some((detail) => detail.includes("stale snapshot generation"))).toBe(true);
+    expect(events.some((detail) => detail.includes(STALE_SNAPSHOT_GENERATION))).toBe(true);
+  });
+
+  it("expected stale refusal while yielding does not emit SQLITE_PERSIST_FAILED_EVENT", async () => {
+    setTabLockModeForTests("writer");
+    setYieldingForTests(true);
+    await putIdbSnapshot(new Uint8Array([3]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: 10,
+      nonce: "zzzzzzzzzzzz",
+    });
+    resetPersistGenerationForTests();
+    const events: string[] = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (event: Event) => {
+        if (event instanceof CustomEvent && event.type === SQLITE_PERSIST_FAILED_EVENT) {
+          events.push(String(event.detail));
+        }
+        return true;
+      },
+    });
+    const stale = new SqlitePersistError(STALE_SNAPSHOT_GENERATION);
+    expect(isExpectedStalePersistRefusal(stale)).toBe(true);
+    await expect(
+      putIdbSnapshot(new Uint8Array([9]), {
+        userVersion: 1,
+        bundleId: BUNDLE,
+        generation: 1,
+        nonce: "aaaa",
+      }),
+    ).rejects.toBeInstanceOf(SqlitePersistError);
+    expect(events).toEqual([]);
+  });
+
+  it("expected stale refusal does not latch lastPersistError so reads stay live", () => {
+    setTabLockModeForTests("writer");
+    setYieldingForTests(true);
+    let lastPersistError: SqlitePersistError | null = null;
+    const err = new SqlitePersistError(STALE_SNAPSHOT_GENERATION);
+    if (!isExpectedStalePersistRefusal(err)) {
+      lastPersistError = err;
+    }
+    expect(lastPersistError).toBeNull();
+    expect(() => {
+      if (lastPersistError) throw lastPersistError;
+    }).not.toThrow();
+  });
+
+  it("reader-to-writer seal lands first put against zzzz nonce", async () => {
+    const storedGen = 7;
+    const name = currentSqliteIdbName();
+    await putIdbSnapshot(new Uint8Array([1]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    resetPersistGenerationForTests();
+    setTabLockModeForTests("readonly");
+    preparePersistGenerationForOpen({
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: storedGen,
+      nonce: "zzzzzzzzzzzz",
+    });
+    expect(currentPersistGeneration()).toBe(storedGen);
+    await sealPersistGenerationInIdb();
+    expect(currentPersistGeneration()).toBe(storedGen + 1);
+    await putIdbSnapshot(new Uint8Array([9, 9]), {
+      userVersion: 1,
+      bundleId: BUNDLE,
+      generation: currentPersistGeneration(),
+      nonce: currentPersistNonce(),
+    });
+    expect(await readBlob(name)).toEqual(new Uint8Array([9, 9]));
   });
 
   it("tie-breaks equal generation with nonce", () => {

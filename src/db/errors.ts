@@ -35,6 +35,13 @@ export function isSqlitePersistError(err: unknown): err is SqlitePersistError {
   return err instanceof SqlitePersistError || (err instanceof Error && err.name === "SqlitePersistError");
 }
 
+export const STALE_SNAPSHOT_GENERATION = "stale snapshot generation";
+
+export function isStaleSnapshotGenerationError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes(STALE_SNAPSHOT_GENERATION);
+}
+
 export class SqliteSnapshotIntegrityError extends Error {
   readonly code = "sqlite-snapshot-integrity" as const;
 

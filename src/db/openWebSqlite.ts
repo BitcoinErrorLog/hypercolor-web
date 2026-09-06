@@ -8,6 +8,8 @@ import {
   SqliteSnapshotIntegrityError,
   SQLITE_BUNDLE_CHANGED_EVENT,
   SQLITE_PERSIST_FAILED_EVENT,
+  STALE_SNAPSHOT_GENERATION,
+  isStaleSnapshotGenerationError,
 } from "./errors";
 import { isMutatingSql } from "./mutatingSql";
 import { wrapOo1Db, type ClosableSqlExecutor } from "./oo1Executor";
@@ -171,6 +173,7 @@ function wrapIdbSnapshot(
         lastPersistError = null;
       })
       .catch((err: unknown) => {
+        if (isExpectedStalePersistRefusal(err)) return;
         lastPersistError = err instanceof SqlitePersistError ? err : new SqlitePersistError(err);
         if (!(err instanceof SqlitePersistError)) {
           emitPersistFailed(lastPersistError);
@@ -539,6 +542,12 @@ function isStalePut(meta: SqliteSnapshotMeta, existing: SqliteSnapshotMeta | und
   return compareSnapshotMeta(existing, meta) > 0;
 }
 
+/** Yield / stand-down refusals must not brick reads or raise the persist banner. */
+export function isExpectedStalePersistRefusal(err: unknown): boolean {
+  if (!isStaleSnapshotGenerationError(err)) return false;
+  return isYieldingTab() || getTabLock().mode !== "writer";
+}
+
 /**
  * Blob + meta are written in one IndexedDB transaction. A crash mid-put
  * cannot leave a blob without matching meta (or the reverse).
@@ -562,8 +571,10 @@ export async function putIdbSnapshot(
       existingReq.onsuccess = () => {
         const existing = existingReq.result as SqliteSnapshotMeta | undefined;
         if (isStalePut(meta, existing)) {
-          const stale = new SqlitePersistError("stale snapshot generation");
-          emitPersistFailed(stale);
+          const stale = new SqlitePersistError(STALE_SNAPSHOT_GENERATION);
+          if (!isExpectedStalePersistRefusal(stale)) {
+            emitPersistFailed(stale);
+          }
           fail(stale);
           try {
             tx.abort();

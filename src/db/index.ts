@@ -24,7 +24,7 @@ import {
 export type { SqlExecutor, SqlExecuteResult, SqlParams, SqlValue } from "./sql";
 export { getOpenedVfs, deleteSqliteSnapshot } from "./openWebSqlite";
 export type { WebSqliteVfs } from "./openWebSqlite";
-export { ReadOnlyTabError, SqlitePersistError, SqliteSnapshotIntegrityError, SqliteDeleteBlockedError, SqliteRepairIncompleteError, isReadOnlyTabError, isSqlitePersistError, isSqliteSnapshotIntegrityError } from "./errors";
+export { ReadOnlyTabError, SqlitePersistError, SqliteSnapshotIntegrityError, SqliteDeleteBlockedError, SqliteRepairIncompleteError, isReadOnlyTabError, isSqlitePersistError, isSqliteSnapshotIntegrityError, isStaleSnapshotGenerationError } from "./errors";
 
 let _db: PersistableSqlExecutor | SqlExecutor | null = null;
 let _injected: SqlExecutor | null = null;
