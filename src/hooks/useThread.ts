@@ -147,7 +147,11 @@ export function useThread(conversationId: string | null) {
   const retryFailed = useCallback(async () => {
     setError(null);
     try {
-      await LinkService.retryPendingSends();
+      if (participantPubky) {
+        await LinkService.retryPeerSends(participantPubky);
+      } else {
+        await LinkService.retryPendingSends();
+      }
       await reload();
     } catch (err) {
       if (!isReadOnlyTabError(err)) {
@@ -155,7 +159,7 @@ export function useThread(conversationId: string | null) {
         emitCoarseError("thread", err);
       }
     }
-  }, [reload]);
+  }, [reload, participantPubky]);
 
   const sendAttachment = useCallback(
     async (file: File) => {

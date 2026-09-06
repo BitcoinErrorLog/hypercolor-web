@@ -6,6 +6,7 @@ import {
   queuedThreadSubtitle,
   QUEUED_HANDSHAKE_SUBTITLE,
   QUEUED_STANDBY_SUBTITLE,
+  CONNECTION_CHANGED_RETRY,
 } from "./delivery-status";
 
 describe("formatDeliveryStatus", () => {
@@ -70,5 +71,6 @@ describe("formatDeliveryStatus", () => {
         receiverRole: "standby",
       }),
     ).toBe(QUEUED_STANDBY_SUBTITLE);
+    expect(queuedThreadSubtitle({ linkStatus: "error" })).toBe(CONNECTION_CHANGED_RETRY);
   });
 });

@@ -14,7 +14,7 @@ import { isReadOnlyTabError } from "@/db/errors";
 import { PaymentNotice } from "@/components/payment-notice";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { describePaymentNotice, isPaymentMessageKind } from "@/lib/payment-notice";
-import { queuedThreadSubtitle, STANDBY_COMPOSER_NOTICE, isStandbyNewChatBlocked } from "@/lib/delivery-status";
+import { queuedThreadSubtitle, STANDBY_COMPOSER_NOTICE, CONNECTION_CHANGED_RETRY, isStandbyNewChatBlocked } from "@/lib/delivery-status";
 import { canComposeMessages } from "@/lib/session-ui";
 import { withDaySeparators } from "@/lib/day-separators";
 import { dataTransferFiles } from "@/lib/attach-file";
@@ -257,7 +257,16 @@ export function ThreadView({
           {nickname && title ? (
             <p className="text-sm text-muted-foreground">{title}</p>
           ) : null}
-          {queuedSubtitle ? (
+          {linkStatus === "error" ? (
+            <button
+              type="button"
+              data-testid="threadLinkRetry"
+              className="text-sm font-light hc-brand-muted underline-offset-4 hover:underline"
+              onClick={onRetry}
+            >
+              {CONNECTION_CHANGED_RETRY}
+            </button>
+          ) : queuedSubtitle ? (
             <p className="text-sm font-light hc-brand-muted" data-testid="queuedHandshakeSubtitle">
               {queuedSubtitle}
             </p>

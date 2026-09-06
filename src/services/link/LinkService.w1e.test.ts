@@ -567,6 +567,17 @@ describe("W1e marker multi-device + handshake recovery", () => {
     expect(await LinkService.getLinkStatus(PEER)).toBe("ready");
   });
 
+  it("getLinkStatus reports error when an established peer marker has moved", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-peer-pk"),
+      status: "established",
+      snapshot: "HC1.opaque",
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: "new-peer-pk",
+    });
+    expect(await LinkService.getLinkStatus(PEER)).toBe("error");
+  });
+
   it("takeover on a budget-exhausted peer resets budget and re-initiates without failing queued", async () => {
     let stored: ReturnType<typeof handshaking> | null = handshaking("dead-pk");
     getReceiver.mockResolvedValue({ ...receiver(), receiverRole: "active" });

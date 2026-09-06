@@ -491,4 +491,34 @@ describe("ThreadView standby composer", () => {
     expect(host.textContent).toContain("from phone");
     expect(host.textContent).not.toContain("Could not load this thread.");
   });
+
+  it("renders connection-changed retry copy when the link is blocked", async () => {
+    const onRetry = vi.fn();
+    await renderThread({
+      status: { kind: "enabled", pubky: OWNER },
+      localPubky: OWNER,
+      linkStatus: "error",
+      onRetry,
+      messages: [
+        {
+          ownerPubky: OWNER,
+          eventId: "evt-queued",
+          conversationId: `dm:${OWNER}`,
+          peerPubky: OWNER,
+          senderPubky: OWNER,
+          direction: "sent",
+          kind: "chat.message.v0",
+          rawJson: "{}",
+          body: "held",
+          sentAt: NOW,
+          receivedAt: null,
+          deliveryState: "sending",
+        },
+      ],
+    });
+    expect(host.textContent).toContain("Connection changed — tap to retry");
+    expect(host.textContent).toContain("Queued");
+    (host.querySelector("[data-testid=threadLinkRetry]") as HTMLButtonElement).click();
+    expect(onRetry).toHaveBeenCalled();
+  });
 });

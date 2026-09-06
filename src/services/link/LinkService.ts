@@ -81,7 +81,11 @@ export const HANDSHAKE_FAILURE_LIMIT = 5;
 /** Unproductive handshake steps against one peer before abandonment. */
 export const HANDSHAKE_PENDING_ADVANCE_LIMIT = 10;
 
-/** Composer / user-driven ensure vs automatic retry/inbox. */
+/**
+ * Composer / user-driven ensure vs automatic retry/inbox.
+ * `user` clears the handshake budget (send, tap to retry, failed-bubble retry).
+ * Thread focus / inbox poll stays `auto` and does not clear it.
+ */
 export type HandshakeIntent = "user" | "auto";
 
 /** Non-ready links older than this are wiped so a later probe can adopt a fresh msg1. */
@@ -333,7 +337,10 @@ export const LinkService = {
       const record = await StorageService.getLink(owner, peerPubky);
       if (!record) return null;
       const live = liveHandles.get(linkKey(owner, peerPubky));
-      if (isReadyLinkPredicate(record, live)) return "ready";
+      if (isReadyLinkPredicate(record, live)) {
+        if (blockedEstablishedRekeyOutcome(record) === "error") return "error";
+        return "ready";
+      }
       return record.role === "initiator" ? "handshaking-initiator" : "handshaking-responder";
     } catch {
       return "error";
@@ -601,6 +608,16 @@ export const LinkService = {
 
   async retryPendingSends(): Promise<void> {
     await LinkService.drainRetries();
+  },
+
+  /**
+   * User-gesture recovery for a blocked established re-key: clears the
+   * handshake budget, attempts ensure, then flushes queued sends.
+   */
+  async retryPeerSends(peerPubky: PubkyKey): Promise<LinkStatus> {
+    const status = await LinkService.ensureLinkWith(peerPubky);
+    await LinkService.drainRetries();
+    return status;
   },
 
   async syncInbox(peers?: PubkyKey[]): Promise<LinkMessage[]> {
@@ -1922,7 +1939,8 @@ function assertLinkSendable(
   if (
     outcome === "ready" ||
     outcome === "handshaking-initiator" ||
-    outcome === "handshaking-responder"
+    outcome === "handshaking-responder" ||
+    outcome === "error"
   ) {
     return;
   }

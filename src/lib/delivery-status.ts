@@ -11,6 +11,8 @@ export const QUEUED_STANDBY_SUBTITLE =
 export const STANDBY_COMPOSER_NOTICE =
   "This device isn't receiving new chats. Receive on this device to start this conversation.";
 
+export const CONNECTION_CHANGED_RETRY = "Connection changed — tap to retry";
+
 /** Service/UI shared ready predicate: live established, `ready`, or established+snapshot. */
 export function isUiLinkReady(
   linkStatus: string | null | undefined,
@@ -58,6 +60,7 @@ export function queuedThreadSubtitle(input: {
   receiverRole?: string | null;
 }): string | null {
   if (input.linkStatus === "established" || input.linkStatus === "ready") return null;
+  if (input.linkStatus === "error") return CONNECTION_CHANGED_RETRY;
   if (input.lastDeliveryState === "sent" || input.lastDeliveryState === "delivered") return null;
   const handshake =
     input.linkStatus === "handshaking" ||

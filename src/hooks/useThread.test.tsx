@@ -42,6 +42,7 @@ vi.mock("@/services/link/LinkService", () => ({
     markRead: (conversationId: string, readAt?: number) => markRead(conversationId, readAt),
     subscribeInboxSynced: (listener: (owner: string) => void) => subscribeInboxSynced(listener),
     retryPendingSends: () => Promise.resolve(),
+    retryPeerSends: () => Promise.resolve(),
     getLinkStatus: async () => null,
   },
 }));

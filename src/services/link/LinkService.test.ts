@@ -1789,16 +1789,26 @@ describe("LinkService parked established re-key on ensureLink", () => {
 
   it("does not start a GET-only initiator handshake over an established predecessor", async () => {
     probeInbound.mockResolvedValue({ result: "none" });
-    getLink.mockResolvedValue({
+    let lastSeen = "old-peer-pk";
+    getLink.mockImplementation(async () => ({
       ...establishedLink,
       role: "initiator",
       remoteNoisePublicKey: "old-peer-pk",
-      lastSeenPeerMarkerPk: "old-peer-pk",
+      lastSeenPeerMarkerPk: lastSeen,
+    }));
+    vi.mocked(StorageService.recordLastSeenPeerMarkerPk).mockImplementation(async (_o, _p, pk) => {
+      lastSeen = pk;
     });
 
     await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("error");
     expect(initiateLink).not.toHaveBeenCalled();
     expect(sendPrivate).not.toHaveBeenCalled();
+
+    const queued = await LinkService.sendDm(PEER, "hello");
+    expect(queued.deliveryState).toBe("sending");
+    expect(persistIntent).toHaveBeenCalled();
+    expect(sendPrivate).not.toHaveBeenCalled();
+    await expect(LinkService.getLinkStatus(PEER)).resolves.toBe("error");
   });
 
   it("converges three successive established re-key cycles onto the newest link", async () => {
@@ -1954,6 +1964,83 @@ describe("LinkService parked established re-key on ensureLink", () => {
     });
     await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
     expect(probeInbound).toHaveBeenCalled();
+  });
+
+  it("queues a send while the re-key is blocked and flushes once after user retry", async () => {
+    installDurableBudget();
+    let lastSeen = "new-peer-pk";
+    let link: typeof establishedLink & { lastSeenPeerMarkerPk: string } = {
+      ...establishedLink,
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: lastSeen,
+    };
+    getLink.mockImplementation(async () => ({ ...link, lastSeenPeerMarkerPk: lastSeen }));
+    vi.mocked(StorageService.upsertLink).mockImplementation(async (record) => {
+      link = {
+        ...establishedLink,
+        ...record,
+        lastSeenPeerMarkerPk: lastSeen,
+        role: "responder",
+        status: "established",
+      };
+    });
+    vi.mocked(StorageService.recordLastSeenPeerMarkerPk).mockImplementation(async (_o, _p, pk) => {
+      lastSeen = pk;
+    });
+
+    for (let cycle = 0; cycle < ESTABLISHED_REKEY_PARK_LIMIT; cycle += 1) {
+      vi.spyOn(Date, "now").mockReturnValue(NOW + cycle * (PEER_MARKER_REFRESH_TTL_MS + 1));
+      probeInbound.mockResolvedValue({
+        result: "pending",
+        linkId: `rekey-hs-${cycle}`,
+        snapshot: `rekey-snap-${cycle}`,
+      });
+      advanceHandshake.mockRejectedValueOnce(new Error("transient"));
+      await LinkService.syncInbox([PEER]);
+    }
+    vi.spyOn(Date, "now").mockReturnValue(
+      NOW + ESTABLISHED_REKEY_PARK_LIMIT * (PEER_MARKER_REFRESH_TTL_MS + 1),
+    );
+    probeInbound.mockClear();
+    await LinkService.syncInbox([PEER]);
+    await expect(LinkService.getLinkStatus(PEER)).resolves.toBe("error");
+
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "rekey-hs-user",
+      snapshot: "rekey-snap-user",
+    });
+    advanceHandshake.mockReset().mockResolvedValue({
+      status: "pending",
+      snapshot: "rekey-snap-user",
+    });
+    sendPrivate.mockResolvedValue({ snapshot: "should-not-send" });
+    const queued = await LinkService.sendDm(PEER, "hello");
+    expect(queued.deliveryState).toBe("sending");
+    expect(persistIntent).toHaveBeenCalled();
+    expect(sendPrivate).not.toHaveBeenCalled();
+    const persist = persistIntent.mock.calls[0]?.[0] as { queueItem: { payload: string } };
+
+    advanceHandshake.mockResolvedValue({
+      status: "established",
+      snapshot: "rekey-est",
+    });
+    sendPrivate.mockResolvedValue({ snapshot: "est-new-sent" });
+    vi.mocked(RetryQueue.getDue).mockResolvedValue([
+      {
+        id: QUEUE_ID,
+        messageId: EVENT_ID,
+        recipientPubky: PEER,
+        payload: persist.queueItem.payload,
+        attempts: 0,
+        nextRetryAt: NOW,
+        createdAt: NOW,
+      },
+    ]);
+    await LinkService.retryPeerSends(PEER);
+    expect(StorageService.clearHandshakeBudget).toHaveBeenCalled();
+    expect(probeInbound).toHaveBeenCalled();
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
   });
 
   it("does not return ready after a stale parked re-key is dropped against a new marker", async () => {
