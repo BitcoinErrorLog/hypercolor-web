@@ -20,7 +20,7 @@ export type MessageSearchHit = {
 let ftsReady: boolean | null = null;
 
 export function ensureMessageSearchFts(db: SqlExecutor): boolean {
-  if (ftsReady === true) return true;
+  if (ftsReady === false) return false;
   try {
     db.executeSync(
       `CREATE VIRTUAL TABLE IF NOT EXISTS message_search_fts USING fts5(
@@ -37,6 +37,53 @@ export function ensureMessageSearchFts(db: SqlExecutor): boolean {
   }
 }
 
+function lookupSearchRow(
+  db: SqlExecutor,
+  ownerPubky: string,
+  threadKey: string,
+  eventId: string,
+): { rowid: number; bodyNorm: string } | null {
+  const result = db.executeSync(
+    `SELECT rowid, body_norm FROM message_search
+     WHERE owner_pubky = ? AND thread_key = ? AND event_id = ?`,
+    [ownerPubky, threadKey, eventId],
+  );
+  const row = result.rows?.[0];
+  if (!row) return null;
+  return { rowid: Number(row.rowid), bodyNorm: String(row.body_norm ?? "") };
+}
+
+function ftsDeleteRow(db: SqlExecutor, rowid: number, bodyNorm: string): void {
+  if (!ensureMessageSearchFts(db)) return;
+  try {
+    db.executeSync(
+      `INSERT INTO message_search_fts(message_search_fts, rowid, body_norm) VALUES('delete', ?, ?)`,
+      [rowid, bodyNorm],
+    );
+  } catch {
+    /* LIKE path remains */
+  }
+}
+
+function ftsInsertCurrent(
+  db: SqlExecutor,
+  ownerPubky: string,
+  threadKey: string,
+  eventId: string,
+): void {
+  if (!ensureMessageSearchFts(db)) return;
+  try {
+    db.executeSync(
+      `INSERT INTO message_search_fts(rowid, body_norm)
+       SELECT rowid, body_norm FROM message_search
+       WHERE owner_pubky = ? AND thread_key = ? AND event_id = ?`,
+      [ownerPubky, threadKey, eventId],
+    );
+  } catch {
+    /* LIKE path remains */
+  }
+}
+
 export function indexDecryptedMessage(
   db: SqlExecutor,
   input: {
@@ -50,12 +97,11 @@ export function indexDecryptedMessage(
 ): void {
   const bodyNorm = normalizeSearchBody(input.body);
   if (!bodyNorm) {
-    db.executeSync(
-      `DELETE FROM message_search WHERE owner_pubky = ? AND thread_key = ? AND event_id = ?`,
-      [input.ownerPubky, input.threadKey, input.eventId],
-    );
+    removeSearchMessage(db, input.ownerPubky, input.threadKey, input.eventId);
     return;
   }
+  const existing = lookupSearchRow(db, input.ownerPubky, input.threadKey, input.eventId);
+  if (existing) ftsDeleteRow(db, existing.rowid, existing.bodyNorm);
   db.executeSync(
     `INSERT INTO message_search
       (owner_pubky, thread_key, event_id, sender_pubky, body_norm, sent_at)
@@ -66,18 +112,7 @@ export function indexDecryptedMessage(
        sent_at = excluded.sent_at`,
     [input.ownerPubky, input.threadKey, input.eventId, input.senderPubky, bodyNorm, input.sentAt],
   );
-  if (ensureMessageSearchFts(db)) {
-    try {
-      db.executeSync(
-        `INSERT INTO message_search_fts(rowid, body_norm)
-         SELECT rowid, body_norm FROM message_search
-         WHERE owner_pubky = ? AND thread_key = ? AND event_id = ?`,
-        [input.ownerPubky, input.threadKey, input.eventId],
-      );
-    } catch {
-      /* LIKE path remains */
-    }
-  }
+  ftsInsertCurrent(db, input.ownerPubky, input.threadKey, input.eventId);
 }
 
 export function removeSearchMessage(
@@ -86,10 +121,37 @@ export function removeSearchMessage(
   threadKey: string,
   eventId: string,
 ): void {
+  const existing = lookupSearchRow(db, ownerPubky, threadKey, eventId);
+  if (existing) ftsDeleteRow(db, existing.rowid, existing.bodyNorm);
   db.executeSync(
     `DELETE FROM message_search WHERE owner_pubky = ? AND thread_key = ? AND event_id = ?`,
     [ownerPubky, threadKey, eventId],
   );
+}
+
+export function removeSearchForOwner(db: SqlExecutor, ownerPubky: string): void {
+  const rows =
+    db.executeSync(`SELECT rowid, body_norm FROM message_search WHERE owner_pubky = ?`, [ownerPubky])
+      .rows ?? [];
+  for (const row of rows) {
+    ftsDeleteRow(db, Number(row.rowid), String(row.body_norm ?? ""));
+  }
+  db.executeSync(`DELETE FROM message_search WHERE owner_pubky = ?`, [ownerPubky]);
+}
+
+export function removeSearchThread(db: SqlExecutor, ownerPubky: string, threadKey: string): void {
+  const rows =
+    db.executeSync(
+      `SELECT rowid, body_norm FROM message_search WHERE owner_pubky = ? AND thread_key = ?`,
+      [ownerPubky, threadKey],
+    ).rows ?? [];
+  for (const row of rows) {
+    ftsDeleteRow(db, Number(row.rowid), String(row.body_norm ?? ""));
+  }
+  db.executeSync(`DELETE FROM message_search WHERE owner_pubky = ? AND thread_key = ?`, [
+    ownerPubky,
+    threadKey,
+  ]);
 }
 
 export const LocalChatState = {

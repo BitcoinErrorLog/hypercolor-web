@@ -166,7 +166,38 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       consecutiveFailures: 0,
     });
 
+    db.executeSync(
+      `INSERT INTO contact_nicknames (owner_pubky, peer_pubky, nickname, updated_at)
+       VALUES (?, ?, 'Star', 1)`,
+      [OWNER, PEER],
+    );
+    db.executeSync(
+      `INSERT INTO thread_local_state (owner_pubky, thread_key, muted, archived, updated_at)
+       VALUES (?, 'dm:x', 1, 0, 1)`,
+      [OWNER],
+    );
+    const { indexDecryptedMessage, ensureMessageSearchFts } = await import("./localChatState");
+    ensureMessageSearchFts(db);
+    indexDecryptedMessage(db, {
+      ownerPubky: OWNER,
+      threadKey: "dm:x",
+      eventId: EVENT,
+      senderPubky: PEER,
+      body: "Secret hello world",
+      sentAt: 1,
+    });
+
     await StorageService.clearAccountData(OWNER);
+
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM contact_nicknames WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM thread_local_state WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM message_search WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM message_search_fts").rows?.[0]?.n).toBe(0);
+    expect(
+      db.executeSync(
+        `SELECT COUNT(*) AS n FROM message_search_fts WHERE message_search_fts MATCH 'hello'`,
+      ).rows?.[0]?.n,
+    ).toBe(0);
 
     expect(await StorageService.getContact(PEER, OWNER)).toBeNull();
     expect(await StorageService.getLink(OWNER, PEER)).toBeNull();

@@ -7,6 +7,8 @@ describe("attach validation", () => {
     expect(validateAttachFile(big).ok).toBe(false);
     const html = new File(["<script>"], "x.html", { type: "text/html" });
     expect(validateAttachFile(html).ok).toBe(false);
+    const svg = new File(["<svg></svg>"], "x.svg", { type: "image/svg+xml" });
+    expect(validateAttachFile(svg).ok).toBe(false);
     const ok = new File([new Uint8Array(16)], "x.png", { type: "image/png" });
     expect(validateAttachFile(ok).ok).toBe(true);
   });

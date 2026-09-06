@@ -44,7 +44,7 @@ export function DmMessageBubble({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage" data-surface="message-bubble">
       <div
-        className={`hc-bubble space-y-2 ${
+        className={`group hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
       >
@@ -57,7 +57,11 @@ export function DmMessageBubble({
         </p>
         <div className="flex flex-wrap gap-1">
           {onCopy ? (
-            <button type="button" className="inline-flex min-h-11 items-center text-sm underline" onClick={onCopy}>
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+              onClick={onCopy}
+            >
               Copy
             </button>
           ) : null}
@@ -120,7 +124,7 @@ export function GroupMessageBubble({
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage" data-surface="message-bubble">
       <div
-        className={`hc-bubble space-y-2 ${
+        className={`group hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
       >
@@ -190,7 +194,7 @@ export function GroupMessageBubble({
             {onCopy ? (
               <button
                 type="button"
-                className="inline-flex min-h-11 items-center text-sm underline"
+                className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
                 onClick={onCopy}
               >
                 Copy

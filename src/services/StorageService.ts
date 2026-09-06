@@ -51,7 +51,7 @@ import type {
 } from '../types/payment';
 import { isPaykitPaymentKind } from '../types/payment';
 import { KeyStore } from './KeyStore';
-import { indexDecryptedMessage, removeSearchMessage } from './localChatState';
+import { indexDecryptedMessage, removeSearchForOwner, removeSearchMessage, removeSearchThread } from './localChatState';
 import { dmThreadKey, groupThreadKey } from '../lib/contact-label';
 import { cachePathsForAttachment, deleteCacheFiles } from './attachments/fileIo';
 import { OWNER_BACKUP_VERSION, type OwnerBackupSnapshot } from './backup/snapshot';
@@ -342,10 +342,13 @@ export const StorageService = {
 
   async deleteLinkMessagesForPeer(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
     const db = await getDb();
-    db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ? AND peer_pubky = ?', [
-      ownerPubky,
-      peerPubky,
-    ]);
+    transact(db, () => {
+      removeSearchThread(db, ownerPubky, dmThreadKey(`dm:${peerPubky}`));
+      db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ? AND peer_pubky = ?', [
+        ownerPubky,
+        peerPubky,
+      ]);
+    });
   },
 
   // ── Delivery Queue ────────────────────────────────────────────────────────
@@ -1243,6 +1246,9 @@ export const StorageService = {
       db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM message_requests WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contacts WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM contact_nicknames WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM thread_local_state WHERE owner_pubky = ?', [ownerPubky]);
+      removeSearchForOwner(db, ownerPubky);
     });
   },
 

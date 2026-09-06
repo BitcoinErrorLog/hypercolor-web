@@ -4,9 +4,11 @@ Static web client for **Hypercolor Encrypted Links**. Same protocol as the
 mobile app at [`BitcoinErrorLog/hypercolor`](https://github.com/BitcoinErrorLog/hypercolor)
 commit `6185a6a8e6bf3a52831515cb85131a7020704396`. BLE mesh is omitted.
 
-This repo is a Next.js App Router **static export** (`output: 'export'`). The
-Pubky homeserver is the backend. There are no Route Handlers that need a Node
-server.
+This repo is a Next.js App Router app. Local/e2e still uses a static export;
+Vercel runs a Node server so `/api/gif/search` and `/api/gif/fetch` exist.
+Set server-only `TENOR_API_KEY` (required) and optional `GIF_PROXY_SECRET`
+(HMAC for the GIF session cookie; derived from the Tenor key when unset).
+The Pubky homeserver remains the message backend.
 
 ## Auth (honest)
 

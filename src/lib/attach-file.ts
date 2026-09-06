@@ -1,6 +1,7 @@
 import { ATTACHMENT_MAX_BYTES } from "@/flags/config";
 import { isRasterImageContentType } from "@/lib/attachment-preview";
 
+/** Declared MIME only (no magic-byte sniff). EXIF/GPS is not stripped; bytes are encrypted verbatim. */
 const BLOCKED_TYPES = new Set([
   "application/x-msdownload",
   "application/x-executable",
@@ -8,6 +9,7 @@ const BLOCKED_TYPES = new Set([
   "application/javascript",
   "text/html",
   "application/xhtml+xml",
+  "image/svg+xml",
 ]);
 
 export type AttachValidation =
