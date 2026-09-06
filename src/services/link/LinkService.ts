@@ -94,6 +94,13 @@ export const MARKER_RECOVERY_TIMEOUT_MS = 120_000;
 
 export const LINK_RETRY_DRAIN_INTERVAL_MS = 30_000;
 
+/**
+ * Ready-link peer-marker refresh cadence. syncInbox may GET a ready peer's
+ * marker at most once per this window, and probes that peer's msg1 only when
+ * the GET succeeds and the pk differs from the stored established link.
+ */
+export const PEER_MARKER_REFRESH_TTL_MS = 60_000;
+
 export type LinkEnableFlow = {
   authorizationUrl: string;
   awaitEnabled: () => Promise<{ pubky: string; receiverPath: string; noisePublicKey: string }>;
@@ -152,6 +159,7 @@ let drainPassChain: Promise<void> = Promise.resolve();
 const drainItemClaims = new Map<string, number>();
 const DRAIN_CLAIM_TTL_MS = 60_000;
 const handshakeWatch = new Map<string, { polls: number; firstAt: number; snapshot: string }>();
+const peerMarkerRefreshedAt = new Map<string, number>();
 let takeoverInFlight: Promise<{
   pubky: string;
   receiverPath: string;
@@ -744,6 +752,7 @@ export function resetLinkServiceHarnessState(): void {
   queues.clear();
   drainItemClaims.clear();
   handshakeWatch.clear();
+  peerMarkerRefreshedAt.clear();
   drainPassChain = Promise.resolve();
   takeoverInFlight = null;
 }
@@ -818,9 +827,33 @@ async function ensureLinkLocked(
     live = liveHandles.get(key);
   }
 
-  if (live?.status === "established") return "ready";
-  if (stored?.status === "established") {
-    return restoreEstablished(activeSession, receiver, stored, alreadyRecovered, allowInitiate, intent);
+  if (live?.status === "established" || stored?.status === "established") {
+    if (stored?.status === "established" && live?.status !== "established") {
+      const restored = await restoreEstablished(
+        activeSession,
+        receiver,
+        stored,
+        alreadyRecovered,
+        allowInitiate,
+        intent,
+      );
+      if (restored !== "ready") return restored;
+      live = liveHandles.get(key);
+    }
+    if (stored?.status === "established") {
+      const rekeyed = await maybeAdoptEstablishedRekey(
+        activeSession,
+        receiver,
+        stored,
+        ownerPubky,
+        peerPubky,
+        localPath,
+      );
+      if (rekeyed !== null) return rekeyed;
+    }
+    if (liveHandles.get(key)?.status === "established" || stored?.status === "established") {
+      return "ready";
+    }
   }
 
   // Standby: this device's published marker is not live (foreign or orphan).
@@ -955,6 +988,93 @@ async function ensureLinkLocked(
     allowInitiate,
     intent,
   );
+}
+
+function recordedEstablishedPeerPk(stored: LinkRecord): string {
+  return stored.lastSeenPeerMarkerPk || stored.remoteNoisePublicKey || "";
+}
+
+function peerMarkerRefreshDue(ownerPubky: PubkyKey, peerPubky: PubkyKey): boolean {
+  const last = peerMarkerRefreshedAt.get(linkKey(ownerPubky, peerPubky));
+  if (last === undefined) return true;
+  return Date.now() - last >= PEER_MARKER_REFRESH_TTL_MS;
+}
+
+function markPeerMarkerRefreshed(ownerPubky: PubkyKey, peerPubky: PubkyKey): void {
+  peerMarkerRefreshedAt.set(linkKey(ownerPubky, peerPubky), Date.now());
+}
+
+async function inboundStillAllowed(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
+  const existing = await StorageService.getMessageRequest(ownerPubky, peerPubky);
+  return existing?.status !== "declined";
+}
+
+/**
+ * Responder re-key: an established link is kept unless a fresh GET shows the
+ * peer's published marker pk changed AND a new msg1 decrypts under our current
+ * receiver secret against that new pk. Junk / undecryptable msg1 leaves the
+ * established link in place (an attacker cannot force a drop).
+ */
+async function maybeAdoptEstablishedRekey(
+  activeSession: ActiveSession,
+  receiver: LinkReceiver,
+  stored: LinkRecord,
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  localPath: string,
+): Promise<EnsureOutcome | null> {
+  if (!peerMarkerRefreshDue(ownerPubky, peerPubky)) return null;
+
+  let marker: ReceiverMarker | null | undefined;
+  try {
+    marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, localPath);
+  } catch {
+    markPeerMarkerRefreshed(ownerPubky, peerPubky);
+    return null;
+  }
+  markPeerMarkerRefreshed(ownerPubky, peerPubky);
+  if (!marker) return null;
+
+  const recorded = recordedEstablishedPeerPk(stored);
+  if (!recorded || marker.noisePublicKey === recorded) {
+    await StorageService.recordLastSeenPeerMarkerPk(ownerPubky, peerPubky, marker.noisePublicKey);
+    return null;
+  }
+
+  if (!(await inboundStillAllowed(ownerPubky, peerPubky))) return null;
+
+  let inbound: Extract<LinkProbeResult, { result: "pending" | "established" }> | null;
+  try {
+    inbound = await probeInbound(activeSession, receiver, ownerPubky, peerPubky, marker, localPath);
+  } catch (err) {
+    if (isLinkNativeError(err) && err.code === "protocol") return null;
+    throw err;
+  }
+  if (inbound === null) return null;
+
+  await archiveEstablishedLink(stored);
+  return adoptInboundHandshake(ownerPubky, peerPubky, marker, localPath, inbound);
+}
+
+async function archiveEstablishedLink(stored: LinkRecord): Promise<void> {
+  const key = linkKey(stored.ownerPubky, stored.peerPubky);
+  const live = liveHandles.get(key);
+  if (live) {
+    await closeQuietly(live.linkId);
+    liveHandles.delete(key);
+  }
+  await StorageService.upsertLink({
+    ownerPubky: stored.ownerPubky,
+    peerPubky: stored.peerPubky,
+    role: stored.role,
+    status: "superseded",
+    snapshot: stored.snapshot,
+    remoteNoisePublicKey: stored.remoteNoisePublicKey,
+    localReceiverPath: stored.localReceiverPath,
+    remoteReceiverPath: stored.remoteReceiverPath,
+    consecutiveFailures: stored.consecutiveFailures,
+    lastSeenPeerMarkerPk: stored.lastSeenPeerMarkerPk ?? stored.remoteNoisePublicKey,
+  });
 }
 
 async function restoreEstablished(

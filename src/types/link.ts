@@ -338,8 +338,8 @@ export type LinkRole = 'initiator' | 'responder';
 /** This device's published-inbox role. Standby must not auto-PUT the marker. */
 export type ReceiverRole = 'active' | 'standby';
 
-/** Persisted link lifecycle — in-progress handshakes and established links. */
-export type StoredLinkStatus = 'handshaking' | 'established';
+/** Persisted link lifecycle — in-progress, live, or archived-after-rekey. */
+export type StoredLinkStatus = 'handshaking' | 'established' | 'superseded';
 
 export type LinkMessageDirection = 'sent' | 'received';
 
