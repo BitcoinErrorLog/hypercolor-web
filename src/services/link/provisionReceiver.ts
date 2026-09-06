@@ -64,6 +64,11 @@ async function mintReceiver(
   ownerPubky: PubkyKey,
   receiverPath: string,
 ): Promise<{ noisePublicKey: string }> {
+  const already = await KeyStore.getReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
+  if (already) {
+    zeroizeBytes(already);
+    throw new Error("mintReceiver: receiver secret already exists");
+  }
   const secret = await PaykitLinkWeb.generateNoiseSecretKey();
   try {
     await KeyStore.setReceiverNoiseSecret(RECEIVER_NOISE_ALIAS, secret);
@@ -77,6 +82,16 @@ async function mintReceiver(
       lastSeenOwnMarkerPk: null,
     });
     return { noisePublicKey };
+  } finally {
+    zeroizeBytes(secret);
+  }
+}
+
+async function publicKeyFromStoredSecret(alias: string): Promise<string | null> {
+  const secret = await KeyStore.getReceiverNoiseSecret(alias);
+  if (!secret) return null;
+  try {
+    return await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
   } finally {
     zeroizeBytes(secret);
   }
@@ -157,20 +172,22 @@ export async function provisionReceiver(
   let noisePublicKey: string;
   let rollbackOnFailure = true;
   if (existing) {
-    const secret = await KeyStore.getReceiverNoiseSecret(existing.receiverAlias);
-    if (secret) {
-      try {
-        noisePublicKey = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
-      } finally {
-        zeroizeBytes(secret);
-      }
+    const reused = await publicKeyFromStoredSecret(existing.receiverAlias);
+    if (reused) {
+      noisePublicKey = reused;
       rollbackOnFailure = !existing.markerPublished;
     } else {
       await StorageService.deleteLinkReceiver(pubky);
       ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
     }
   } else {
-    ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
+    const reused = await publicKeyFromStoredSecret(RECEIVER_NOISE_ALIAS);
+    if (reused) {
+      noisePublicKey = reused;
+      rollbackOnFailure = false;
+    } else {
+      ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
+    }
   }
 
   let published: Awaited<ReturnType<typeof inspectOwnPublishedMarker>>;
@@ -204,38 +221,46 @@ export async function provisionReceiver(
   return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
 }
 
-let healReceiverInFlight: Promise<boolean> | null = null;
+const healReceiverInFlight = new Map<string, Promise<boolean>>();
 
 /**
  * KeyStore has the receiver secret but sqlite `link_receivers` is missing
- * (unsigned persist / namespace miss). Re-run provision: GET-first, so a
- * marker already on the homeserver does not PUT again.
+ * (unsigned persist / namespace miss). Reuses the existing secret: GET-first,
+ * persist the row, PUT only when the marker is confirmed absent. Never mints.
  */
 export async function healMissingReceiverRow(
   session: SessionHandle,
   pubky: PubkyKey,
 ): Promise<boolean> {
-  if (healReceiverInFlight) return healReceiverInFlight;
-  healReceiverInFlight = (async () => {
-    const { ensureWriter } = await import("@/services/tabLock");
-    const { waitForOwnerScopedSqlite } = await import("@/db");
-    await ensureWriter();
-    await waitForOwnerScopedSqlite();
-    if (await StorageService.getLinkReceiver(pubky)) return true;
-    let secret: Uint8Array | null = null;
+  const inflight = healReceiverInFlight.get(pubky);
+  if (inflight) return inflight;
+  const run = (async () => {
     try {
-      secret = await KeyStore.getReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
-    } catch {
-      return false;
+      const { ensureWriter } = await import("@/services/tabLock");
+      const { waitForOwnerScopedSqlite } = await import("@/db");
+      await ensureWriter();
+      await waitForOwnerScopedSqlite();
+      if (await StorageService.getLinkReceiver(pubky)) return true;
+      let secret: Uint8Array | null = null;
+      try {
+        secret = await KeyStore.getReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
+      } catch {
+        return false;
+      }
+      if (!secret) return false;
+      zeroizeBytes(secret);
+      await provisionReceiver(session, pubky);
+      return (await StorageService.getLinkReceiver(pubky)) !== null;
+    } catch (error) {
+      if (error instanceof Error && error.name === "TabLockWriterError") return false;
+      throw error;
     }
-    if (!secret) return false;
-    zeroizeBytes(secret);
-    await provisionReceiver(session, pubky);
-    return (await StorageService.getLinkReceiver(pubky)) !== null;
-  })().finally(() => {
-    healReceiverInFlight = null;
+  })();
+  healReceiverInFlight.set(pubky, run);
+  void run.finally(() => {
+    if (healReceiverInFlight.get(pubky) === run) healReceiverInFlight.delete(pubky);
   });
-  return healReceiverInFlight;
+  return run;
 }
 
 export async function takeoverReceiver(

@@ -33,11 +33,15 @@ import {
   TAB_LOCK_UNSIGNED_SCOPE,
 } from "@/services/tabLock";
 
+function noisePkFromSecretBytes(secret: Uint8Array): string {
+  return `pk:${Array.from(secret.subarray(0, 8)).join("-")}`;
+}
+
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
     signOutSession: vi.fn(async () => undefined),
     generateNoiseSecretKey: vi.fn(async () => new Uint8Array(32).fill(3)),
-    noisePublicKeyFromSecret: vi.fn(async () => "noise-pk-fresh"),
+    noisePublicKeyFromSecret: vi.fn(async (secret: Uint8Array) => noisePkFromSecretBytes(secret)),
     publishReceiverMarker: vi.fn(async () => undefined),
     getReceiverMarker: vi.fn(async () => null),
   },
@@ -595,17 +599,96 @@ describe("fresh sign-in receiver row vs unsigned sqlite snapshot", () => {
 
     await StorageService.deleteLinkReceiver(OWNER);
     expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeTruthy();
+    const secretBefore = await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH);
+    expect(secretBefore).toBeTruthy();
+    const secretBytesBefore = new Uint8Array(secretBefore!);
+    const matchingPk = noisePkFromSecretBytes(secretBytesBefore);
 
     vi.mocked(PaykitLinkWeb.getReceiverMarker).mockResolvedValue({
-      noisePublicKey: "noise-pk-fresh",
+      noisePublicKey: matchingPk,
     } as never);
 
     const first = healMissingReceiverRow(handle as never, OWNER);
     const second = healMissingReceiverRow(handle as never, OWNER);
     expect(await first).toBe(true);
     expect(await second).toBe(true);
-    expect(await StorageService.getLinkReceiver(OWNER)).not.toBeNull();
+    const row = await StorageService.getLinkReceiver(OWNER);
+    expect(row).not.toBeNull();
+    expect(row?.receiverRole).toBe("active");
+    const secretAfter = await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH);
+    expect(secretAfter).toEqual(secretBytesBefore);
     expect(vi.mocked(PaykitLinkWeb.publishReceiverMarker).mock.calls.length).toBe(1);
+  });
+
+  it("heals a missing row on 404 by PUTting the pre-existing KeyStore pk once", async () => {
+    const { getDb } = await import("@/db");
+    const { adoptApprovedSession } = await import("./session");
+    const { healMissingReceiverRow } = await import("./provisionReceiver");
+    const { StorageService } = await import("@/services/StorageService");
+    const { KeyStore } = await import("@/services/KeyStore");
+    const { ensureWriter } = await import("@/services/tabLock");
+    const { PaykitLinkWeb } = await import("./PaykitLinkWeb");
+    const { LINK_RECEIVER_PATH } = await import("@/types/link");
+
+    await ensureWriter();
+    await getDb();
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    await adoptApprovedSession(handle as never);
+    await KeyStore.setPubky(OWNER);
+    const existing = new Uint8Array(32).fill(9);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, existing);
+    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+
+    vi.mocked(PaykitLinkWeb.publishReceiverMarker).mockClear();
+    vi.mocked(PaykitLinkWeb.getReceiverMarker).mockResolvedValue(null);
+
+    expect(await healMissingReceiverRow(handle as never, OWNER)).toBe(true);
+    const row = await StorageService.getLinkReceiver(OWNER);
+    expect(row?.receiverRole).toBe("active");
+    expect(vi.mocked(PaykitLinkWeb.publishReceiverMarker).mock.calls.length).toBe(1);
+    expect(vi.mocked(PaykitLinkWeb.publishReceiverMarker).mock.calls[0][2]).toBe(
+      noisePkFromSecretBytes(existing),
+    );
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(existing);
+  });
+
+  it("heals a missing row with a foreign marker as standby without touching KeyStore or PUT", async () => {
+    const { getDb } = await import("@/db");
+    const { adoptApprovedSession } = await import("./session");
+    const { healMissingReceiverRow } = await import("./provisionReceiver");
+    const { StorageService } = await import("@/services/StorageService");
+    const { KeyStore } = await import("@/services/KeyStore");
+    const { ensureWriter } = await import("@/services/tabLock");
+    const { PaykitLinkWeb } = await import("./PaykitLinkWeb");
+    const { LINK_RECEIVER_PATH } = await import("@/types/link");
+
+    await ensureWriter();
+    await getDb();
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    await adoptApprovedSession(handle as never);
+    await KeyStore.setPubky(OWNER);
+    const existing = new Uint8Array(32).fill(11);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, existing);
+
+    vi.mocked(PaykitLinkWeb.publishReceiverMarker).mockClear();
+    vi.mocked(PaykitLinkWeb.generateNoiseSecretKey).mockClear();
+    vi.mocked(PaykitLinkWeb.getReceiverMarker).mockResolvedValue({
+      noisePublicKey: "foreign-marker-pk",
+    } as never);
+
+    expect(await healMissingReceiverRow(handle as never, OWNER)).toBe(true);
+    const row = await StorageService.getLinkReceiver(OWNER);
+    expect(row?.receiverRole).toBe("standby");
+    expect(row?.markerPublished).toBe(false);
+    expect(row?.lastSeenOwnMarkerPk).toBe("foreign-marker-pk");
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(existing);
+    expect(vi.mocked(PaykitLinkWeb.publishReceiverMarker).mock.calls.length).toBe(0);
+    expect(vi.mocked(PaykitLinkWeb.generateNoiseSecretKey)).not.toHaveBeenCalled();
   });
 });
