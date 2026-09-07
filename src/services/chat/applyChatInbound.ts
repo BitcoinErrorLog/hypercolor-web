@@ -75,8 +75,18 @@ function tagRowFromEnvelope(
   };
 }
 
+async function senderIsActiveMember(
+  ownerPubky: PubkyKey,
+  channelId: string,
+  senderPubky: PubkyKey,
+): Promise<boolean> {
+  const member = await StorageService.getGroupMember(ownerPubky, channelId, senderPubky);
+  return member?.status === "active";
+}
+
 async function targetExists(
   ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
   envelope: { target_event_id: string; target_author_pubky: string; channel_id?: string },
 ): Promise<boolean> {
   if (envelope.channel_id) {
@@ -88,7 +98,12 @@ async function targetExists(
     );
     return Boolean(row && !row.deleted);
   }
-  const row = await StorageService.findLinkMessageByEventId(ownerPubky, envelope.target_event_id);
+  const conversationId = buildDmConversationId(peerPubky);
+  const row = await StorageService.findLinkMessageInConversation(
+    ownerPubky,
+    conversationId,
+    envelope.target_event_id,
+  );
   return Boolean(row && row.senderPubky === envelope.target_author_pubky);
 }
 
@@ -123,8 +138,11 @@ async function applyTagEnvelope(
   senderPubky: PubkyKey,
   peerPubky: PubkyKey,
   envelope: ChatTagEnvelope,
-): Promise<"applied" | "deferred" | "processed"> {
-  if (!(await targetExists(ownerPubky, envelope))) return "deferred";
+): Promise<"applied" | "deferred" | "processed" | { error: ChatKindParseReason }> {
+  if (envelope.channel_id && !(await senderIsActiveMember(ownerPubky, envelope.channel_id, senderPubky))) {
+    return { error: "not-member" };
+  }
+  if (!(await targetExists(ownerPubky, peerPubky, envelope))) return "deferred";
   if (envelope.op === "remove") {
     await StorageService.deleteChatTag({
       ownerPubky,
@@ -146,13 +164,17 @@ async function applyReceiptEnvelope(
   senderPubky: PubkyKey,
   envelope: { status: "delivered" | "read"; event_ids: string[]; channel_id?: string },
 ): Promise<"applied" | { error: ChatKindParseReason }> {
+  if (envelope.channel_id && !(await senderIsActiveMember(ownerPubky, envelope.channel_id, senderPubky))) {
+    return { error: "not-member" };
+  }
   const next = envelope.status === "read" ? "read" : "delivered";
   let applied = 0;
   let selfOnly = true;
+  const conversationId = buildDmConversationId(senderPubky);
   for (const eventId of envelope.event_ids) {
     const target = envelope.channel_id
       ? await StorageService.findGroupMessageByEventId(ownerPubky, envelope.channel_id, eventId)
-      : await StorageService.findLinkMessageByEventId(ownerPubky, eventId);
+      : await StorageService.findLinkMessageInConversation(ownerPubky, conversationId, eventId);
     if (!target) continue;
     if (target.senderPubky === senderPubky) continue;
     selfOnly = false;
@@ -195,24 +217,47 @@ export async function applyKnownChatKind(input: {
   if (kind === CHAT_EDIT_KIND) {
     const parsed = parseChatEditV0(input.rawJson, ctx);
     if ("error" in parsed) return { error: parsed.error };
-    return "unprocessed";
+    return "processed";
   }
   if (kind === CHAT_DELETE_KIND) {
     const parsed = parseChatDeleteV0(input.rawJson, ctx);
     if ("error" in parsed) return { error: parsed.error };
-    return "unprocessed";
+    return applyDeleteEnvelope(input.ownerPubky, input.senderPubky, input.peerPubky, parsed.ok);
   }
   if (kind === CHAT_PIN_KIND) {
     const parsed = parseChatPinV0(input.rawJson, ctx);
     if ("error" in parsed) return { error: parsed.error };
-    return "unprocessed";
+    return "processed";
   }
   if (kind === GROUP_INVITE_KIND) {
     const parsed = parseChatGroupInviteV0(input.rawJson, ctx);
     if ("error" in parsed) return { error: parsed.error };
-    return "unprocessed";
+    return "processed";
   }
   return "unprocessed";
+}
+
+async function applyDeleteEnvelope(
+  ownerPubky: PubkyKey,
+  senderPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  envelope: { target_event_id: string },
+): Promise<"applied" | "processed" | { error: ChatKindParseReason }> {
+  const conversationId = buildDmConversationId(peerPubky);
+  const target = await StorageService.findLinkMessageInConversation(
+    ownerPubky,
+    conversationId,
+    envelope.target_event_id,
+  );
+  if (!target) return "processed";
+  if (target.senderPubky !== senderPubky) return { error: "wrong-author" };
+  await StorageService.tombstoneLinkMessage({
+    ownerPubky,
+    conversationId,
+    eventId: target.eventId,
+    senderPubky,
+  });
+  return "applied";
 }
 
 function parseChatReactionAlias(

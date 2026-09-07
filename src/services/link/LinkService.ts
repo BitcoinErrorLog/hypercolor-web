@@ -2340,7 +2340,7 @@ async function routeUnprocessedStreamItems(
           receivedAt: item.receivedAt,
         });
         if (groupEnvelope.kind === GROUP_MESSAGE_KIND) {
-          void emitReceiptsToAuthor({
+          await emitReceiptsToAuthor({
             ownerPubky,
             authorPubky: peerPubky,
             status: "delivered",
@@ -2383,7 +2383,7 @@ async function routeUnprocessedStreamItems(
     await StorageService.saveLinkMessage(row);
     await StorageService.markLinkStreamItemProcessed(item.id);
     received.push(row);
-    void emitReceiptsToAuthor({
+    await emitReceiptsToAuthor({
       ownerPubky,
       authorPubky: peerPubky,
       status: "delivered",
@@ -3262,6 +3262,7 @@ async function sendControlPam(input: {
     nextRetryAt: ts,
     createdAt: ts,
   });
+  // Must not call withQueue: syncPeerLocked already holds the per-peer mutex.
   try {
     const outcome = await ensureLinkLocked(input.peerPubky, true, false, "auto");
     if (outcome !== "ready") return;
@@ -3298,6 +3299,8 @@ async function replayReadReceiptsAfterV1Upgrade(
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
 ): Promise<void> {
+  const request = await StorageService.getMessageRequest(ownerPubky, peerPubky);
+  if (request && request.status !== "accepted") return;
   const conversationId = buildDmConversationId(peerPubky);
   const cursor = await StorageService.getLinkReadCursor(ownerPubky, conversationId);
   if (cursor == null || cursor <= 0) return;
@@ -3318,9 +3321,14 @@ async function replayReadReceiptsAfterV1Upgrade(
   });
 }
 
-async function canEmitReceipts(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
+async function canEmitReceipts(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  peerKnownV1: boolean,
+): Promise<boolean> {
   const prefs = await StorageService.ensureChatDevicePrefs(ownerPubky);
   if (!prefs.receiptsEnabled) return false;
+  if (peerKnownV1) return true;
   const link = await StorageService.getLink(ownerPubky, peerPubky);
   return normalizeChatKindsV(link?.chatKindsV) >= CHAT_KINDS_V;
 }
@@ -3336,7 +3344,11 @@ async function emitReceiptsToAuthor(input: {
   const ids = input.eventIds.filter((id) => id.length > 0).slice(0, CHAT_RECEIPT_EVENT_IDS_CAP);
   if (ids.length === 0) return;
   if (input.authorPubky === input.ownerPubky) return;
-  if (!input.peerKnownV1 && !(await canEmitReceipts(input.ownerPubky, input.authorPubky))) return;
+  const request = await StorageService.getMessageRequest(input.ownerPubky, input.authorPubky);
+  if (request && request.status !== "accepted") return;
+  if (!(await canEmitReceipts(input.ownerPubky, input.authorPubky, Boolean(input.peerKnownV1)))) {
+    return;
+  }
   const built = buildChatReceiptEnvelope({
     eventId: crypto.randomUUID(),
     sentAt: Date.now(),

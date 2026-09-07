@@ -255,7 +255,11 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(StorageService.removeQueueItemsForRecipient).mockReset();
     vi.mocked(StorageService.removeQueueItemsAndAbandonOwedForPeer).mockReset();
     vi.mocked(StorageService.abandonOwedLinkMessagesForPeer).mockReset();
-    vi.mocked(reconstructAttachmentWireJson).mockReset().mockImplementation(async (raw: string) => raw);
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockReset().mockResolvedValue(0);
+    vi.mocked(StorageService.markLinkStreamItemProcessed).mockReset();
+    vi.mocked(StorageService.saveLinkMessage).mockReset();
+    vi.mocked(StorageService.hasLinkMessage).mockReset().mockResolvedValue(false);
     await LinkService.adoptHarnessSession(handle() as never);
   });
 
@@ -2237,6 +2241,175 @@ describe("LinkService parked established re-key on ensureLink", () => {
         queueMicrotask(resolve);
       });
       expect(StorageService.enqueueControlPam).not.toHaveBeenCalled();
+    });
+
+    it("does not replay read receipts when the device receipts pref is off", async () => {
+      getMarker.mockResolvedValue(v1Marker());
+      getLink.mockResolvedValue({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        role: "initiator",
+        status: "established",
+        snapshot: "HC1.opaque",
+        remoteNoisePublicKey: "peer-noise",
+        localReceiverPath: LINK_RECEIVER_PATH,
+        remoteReceiverPath: LINK_RECEIVER_PATH,
+        consecutiveFailures: 0,
+        chatKindsV: 0,
+        updatedAt: NOW,
+      });
+      vi.mocked(StorageService.ensureChatDevicePrefs).mockResolvedValue({
+        ownerPubky: OWNER,
+        receiptsEnabled: false,
+        typingEnabled: true,
+        upgradeAt: 1,
+        updatedAt: 1,
+      });
+      vi.mocked(StorageService.getLinkReadCursor).mockResolvedValue(NOW);
+      vi.mocked(StorageService.getLinkMessagesForConversation).mockResolvedValue([
+        {
+          ownerPubky: OWNER,
+          eventId: EVENT_ID,
+          conversationId,
+          peerPubky: PEER,
+          senderPubky: PEER,
+          direction: "received",
+          kind: CHAT_MESSAGE_KIND,
+          rawJson: "{}",
+          body: "hi",
+          sentAt: NOW,
+          receivedAt: NOW,
+          deliveryState: "delivered",
+        },
+      ]);
+
+      await LinkService.ensureLinkWith(PEER);
+      await new Promise<void>((resolve) => {
+        queueMicrotask(resolve);
+      });
+      await new Promise<void>((resolve) => {
+        queueMicrotask(resolve);
+      });
+
+      expect(StorageService.enqueueControlPam).not.toHaveBeenCalled();
+    });
+
+    it("does not replay read receipts to a declined peer", async () => {
+      getMarker.mockResolvedValue(v1Marker());
+      getLink.mockResolvedValue({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        role: "initiator",
+        status: "established",
+        snapshot: "HC1.opaque",
+        remoteNoisePublicKey: "peer-noise",
+        localReceiverPath: LINK_RECEIVER_PATH,
+        remoteReceiverPath: LINK_RECEIVER_PATH,
+        consecutiveFailures: 0,
+        chatKindsV: 0,
+        updatedAt: NOW,
+      });
+      getMessageRequest.mockResolvedValue({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        createdAt: NOW,
+        updatedAt: NOW,
+        status: "declined",
+      });
+      vi.mocked(StorageService.getLinkReadCursor).mockResolvedValue(NOW);
+      vi.mocked(StorageService.getLinkMessagesForConversation).mockResolvedValue([
+        {
+          ownerPubky: OWNER,
+          eventId: EVENT_ID,
+          conversationId,
+          peerPubky: PEER,
+          senderPubky: PEER,
+          direction: "received",
+          kind: CHAT_MESSAGE_KIND,
+          rawJson: "{}",
+          body: "hi",
+          sentAt: NOW,
+          receivedAt: NOW,
+          deliveryState: "delivered",
+        },
+      ]);
+
+      await LinkService.ensureLinkWith(PEER);
+      await new Promise<void>((resolve) => {
+        queueMicrotask(resolve);
+      });
+      await new Promise<void>((resolve) => {
+        queueMicrotask(resolve);
+      });
+
+      expect(StorageService.enqueueControlPam).not.toHaveBeenCalled();
+    });
+
+    it("resolves inbox sync with a v1 peer and queues a delivered receipt", async () => {
+      const inboundId = "11111111-1111-4111-8111-111111111111";
+      const rawJson = JSON.stringify({
+        version: 1,
+        kind: CHAT_MESSAGE_KIND,
+        event_id: inboundId,
+        sent_at: NOW,
+        body: "hello",
+      });
+      getMarker.mockResolvedValue({
+        noisePublicKey: "peer-noise",
+        capabilitiesJson: JSON.stringify({ chat_kinds_v: 1 }),
+      });
+      probeInbound.mockResolvedValue({ result: "none" });
+      restoreLink.mockResolvedValue({ linkId: "handle-1" });
+      getLink.mockReset().mockResolvedValue({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        role: "initiator",
+        status: "established",
+        snapshot: "HC1.opaque",
+        remoteNoisePublicKey: "peer-noise",
+        localReceiverPath: LINK_RECEIVER_PATH,
+        remoteReceiverPath: LINK_RECEIVER_PATH,
+        consecutiveFailures: 0,
+        lastSeenPeerMarkerPk: "peer-noise",
+        chatKindsV: 1,
+        updatedAt: NOW,
+      });
+      vi.mocked(StorageService.enqueueControlPam).mockReset();
+      vi.mocked(StorageService.ensureChatDevicePrefs).mockResolvedValue({
+        ownerPubky: OWNER,
+        receiptsEnabled: true,
+        typingEnabled: true,
+        upgradeAt: 1,
+        updatedAt: 1,
+      });
+      vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+      vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+        {
+          id: "stream-1",
+          ownerPubky: OWNER,
+          peerPubky: PEER,
+          kind: CHAT_MESSAGE_KIND,
+          rawJson,
+          receivedAt: NOW,
+          processed: false,
+        },
+      ]);
+      receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-v1" });
+
+      const received = await Promise.race([
+        LinkService.syncInbox([PEER]),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error("syncInbox re-entered withQueue")), 1000);
+        }),
+      ]);
+
+      expect(Array.isArray(received)).toBe(true);
+      expect(StorageService.enqueueControlPam).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientPubky: PEER,
+          payload: expect.stringContaining(CHAT_RECEIPT_KIND),
+        }),
+      );
     });
   });
 });

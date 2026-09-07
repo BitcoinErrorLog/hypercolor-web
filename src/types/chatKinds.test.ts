@@ -248,6 +248,26 @@ describe("chat kinds v1.1 vectors", () => {
     }), ctx)).toEqual({ error: "invalid-label" });
   });
 
+  it("rejects control, bidi, zero-width, and invisible tag labels", () => {
+    const wrap = (label: string) =>
+      JSON.stringify({
+        version: 1,
+        kind: CHAT_TAG_KIND,
+        event_id: uuid,
+        sent_at: ts,
+        target_event_id: uuid,
+        target_author_pubky: pk,
+        label,
+        op: "add",
+      });
+    expect(parseChatTagV0(wrap("\u200E"), ctx)).toEqual({ error: "invalid-label" });
+    expect(parseChatTagV0(wrap("\u202E"), ctx)).toEqual({ error: "invalid-label" });
+    expect(parseChatTagV0(wrap("\u200B"), ctx)).toEqual({ error: "invalid-label" });
+    expect(parseChatTagV0(wrap("\u200D"), ctx)).toEqual({ error: "invalid-label" });
+    expect(parseChatTagV0(wrap("\uFE0F"), ctx)).toEqual({ error: "invalid-label" });
+    expect("ok" in parseChatTagV0(wrap("👍"), ctx)).toBe(true);
+  });
+
   it("self-attack: receipt as presence still requires the peer link (gated)", () => {
     const json = JSON.stringify({
       version: 1,

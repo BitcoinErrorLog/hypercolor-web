@@ -10,6 +10,7 @@ import {
   parseLinkSentAt,
 } from "./link";
 import { GROUP_INVITE_KIND, parseFounderBoundChannelId } from "./group";
+import { isInvisibleOrControlCodePoint } from "../utils/displaySanitize";
 
 export const CHAT_KIND_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -195,6 +196,17 @@ function graphemeCount(value: string): number {
   return [...value].length;
 }
 
+function isAllowedEmojiTagLabel(label: string): boolean {
+  if (graphemeCount(label) !== 1) return false;
+  for (const ch of label) {
+    const code = ch.codePointAt(0);
+    if (code === undefined) return false;
+    if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) continue;
+    if (isInvisibleOrControlCodePoint(code)) return false;
+  }
+  return /\p{Extended_Pictographic}/u.test(label);
+}
+
 export function normalizeChatTagLabel(raw: string): string | null {
   const label = nfcTrim(raw);
   if (label.length === 0) return null;
@@ -202,9 +214,9 @@ export function normalizeChatTagLabel(raw: string): string | null {
     if (utf8Bytes(label) > CHAT_TAG_LABEL_UTF8_MAX) return null;
     return label;
   }
-  if (graphemeCount(label) !== 1) return null;
   if (utf8Bytes(label) > CHAT_TAG_LABEL_UTF8_MAX) return null;
   if (/[A-Za-z0-9_]/.test(label) && !CHAT_KIND_WORD_LABEL.test(label)) return null;
+  if (!isAllowedEmojiTagLabel(label)) return null;
   return label;
 }
 

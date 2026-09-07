@@ -5,7 +5,9 @@ import { openMemoryDb } from "../../db/__tests__/betterSqliteAdapter";
 import { StorageService } from "../StorageService";
 import { applyKnownChatKind } from "./applyChatInbound";
 import { buildChatReceiptEnvelope, buildChatTagEnvelope, dmScopeKey } from "../../types/chatKinds";
-import { CHAT_MESSAGE_KIND, buildDmConversationId, type LinkMessage } from "../../types/link";
+import { CHAT_DELETE_KIND, CHAT_MESSAGE_KIND, buildDmConversationId, type LinkMessage } from "../../types/link";
+import { GROUP_MESSAGE_KIND } from "../../types/group";
+import { LocalChatState } from "../localChatState";
 
 const OWNER = "o".repeat(52);
 const PEER = "p".repeat(52);
@@ -98,5 +100,156 @@ describe("apply chat.tag.v0 / chat.receipt.v0", () => {
       rawJson: selfReceipt.json,
     });
     expect(self).toEqual({ error: "wrong-author" });
+  });
+
+  it("rejects group tags and receipts from a removed member", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const channelId = `${OWNER}:${uuid}`;
+    const groupEvent = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    await StorageService.upsertGroupMember({
+      ownerPubky: OWNER,
+      channelId,
+      memberPubky: PEER,
+      role: "member",
+      addedAt: ts,
+      removedAt: ts,
+      status: "removed",
+    });
+    await StorageService.saveGroupMessage({
+      ownerPubky: OWNER,
+      channelId,
+      eventId: groupEvent,
+      senderPubky: OWNER,
+      kind: GROUP_MESSAGE_KIND,
+      body: "hi",
+      rawJson: "{}",
+      sentAt: ts,
+      receivedAt: ts,
+      deliveryState: "sent",
+      replyToEventId: null,
+      replyToAuthorPubky: null,
+      targetEventId: null,
+      targetAuthorPubky: null,
+      editedAt: null,
+      deleted: false,
+    });
+    const tag = buildChatTagEnvelope({
+      eventId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      sentAt: ts,
+      targetEventId: groupEvent,
+      targetAuthorPubky: OWNER,
+      label: "ok",
+      op: "add",
+      channelId,
+    });
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: tag.json,
+      }),
+    ).toEqual({ error: "not-member" });
+    expect(await StorageService.listChatTagsForScope(OWNER, channelId)).toHaveLength(0);
+    const receipt = buildChatReceiptEnvelope({
+      eventId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      sentAt: ts,
+      status: "read",
+      eventIds: [groupEvent],
+      channelId,
+    });
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: receipt.json,
+      }),
+    ).toEqual({ error: "not-member" });
+    const row = await StorageService.findGroupMessageByEventId(OWNER, channelId, groupEvent);
+    expect(row?.deliveryState).toBe("sent");
+  });
+
+  it("rejects cross-thread DM tag and receipt targets", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const other = "q".repeat(52);
+    await StorageService.saveLinkMessage(
+      dm({ conversationId: buildDmConversationId(other), peerPubky: other }),
+    );
+    const tag = buildChatTagEnvelope({
+      eventId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      sentAt: ts,
+      targetEventId: uuid,
+      targetAuthorPubky: OWNER,
+      label: "ok",
+      op: "add",
+    });
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: tag.json,
+      }),
+    ).toBe("deferred");
+    const receipt = buildChatReceiptEnvelope({
+      eventId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      sentAt: ts,
+      status: "read",
+      eventIds: [uuid],
+    });
+    const applied = await applyKnownChatKind({
+      ownerPubky: OWNER,
+      senderPubky: PEER,
+      peerPubky: PEER,
+      rawJson: receipt.json,
+    });
+    expect(applied).toEqual({ error: "wrong-author" });
+    const row = await StorageService.findLinkMessageByEventId(OWNER, uuid);
+    expect(row?.deliveryState).toBe("sent");
+  });
+
+  it("tombstones a DM unsend and drops FTS plus backup export", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage(dm({ body: "secret unsend token", rawJson: JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: uuid,
+      sent_at: ts,
+      body: "secret unsend token",
+    }), senderPubky: PEER, direction: "received" }));
+    expect((await LocalChatState.searchMessages(OWNER, "unsend")).length).toBe(1);
+    const del = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      sent_at: ts,
+      target_event_id: uuid,
+    });
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: del,
+      }),
+    ).toBe("applied");
+    const row = await StorageService.findLinkMessageInConversation(
+      OWNER,
+      buildDmConversationId(PEER),
+      uuid,
+    );
+    expect(row?.body).toBe("");
+    expect(row?.rawJson).toContain('"deleted":true');
+    expect(row?.rawJson).not.toContain("secret");
+    expect((await LocalChatState.searchMessages(OWNER, "unsend")).length).toBe(0);
+    const snap = await StorageService.collectOwnerBackup(OWNER);
+    expect(snap.linkMessages.some((m) => m.eventId === uuid)).toBe(false);
   });
 });

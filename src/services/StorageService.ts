@@ -1064,6 +1064,7 @@ export const StorageService = {
       ]).rows ?? []
     )
       .map(rowToLinkMessage)
+      .filter((message) => !isTombstonedLinkMessage(message))
       .map(message => ({
         ...message,
         rawJson: persistRawJson(message.kind, message.rawJson),
@@ -1990,6 +1991,46 @@ export const StorageService = {
     });
   },
 
+  async tombstoneLinkMessage(input: {
+    ownerPubky: PubkyKey;
+    conversationId: string;
+    eventId: string;
+    senderPubky: PubkyKey;
+  }): Promise<void> {
+    const db = await getDb();
+    const existing = await StorageService.findLinkMessageInConversation(
+      input.ownerPubky,
+      input.conversationId,
+      input.eventId,
+    );
+    if (!existing || existing.senderPubky !== input.senderPubky) return;
+    const tombstoneJson = JSON.stringify({
+      version: 1,
+      kind: existing.kind,
+      event_id: existing.eventId,
+      sent_at: existing.sentAt,
+      body: '',
+      deleted: true,
+    });
+    transact(db, () => {
+      db.executeSync(
+        `UPDATE link_messages
+         SET body = '', raw_json = ?, updated_at = ?
+         WHERE owner_pubky = ? AND conversation_id = ? AND event_id = ? AND sender_pubky = ?`,
+        [
+          tombstoneJson,
+          now(),
+          input.ownerPubky,
+          input.conversationId,
+          input.eventId,
+          input.senderPubky,
+        ],
+      );
+      db.executeSync('DELETE FROM delivery_queue WHERE message_id = ?', [input.eventId]);
+      removeSearchMessage(db, input.ownerPubky, dmThreadKey(input.conversationId), input.eventId);
+    });
+  },
+
   async tombstoneGroupMessage(
     ownerPubky: PubkyKey,
     channelId: string,
@@ -2480,6 +2521,22 @@ export const StorageService = {
     return row ? rowToLinkMessage(row) : null;
   },
 
+  async findLinkMessageInConversation(
+    ownerPubky: PubkyKey,
+    conversationId: string,
+    eventId: string,
+  ): Promise<LinkMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM link_messages
+       WHERE owner_pubky = ? AND conversation_id = ? AND event_id = ?
+       LIMIT 1`,
+      [ownerPubky, conversationId, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToLinkMessage(row) : null;
+  },
+
   async findGroupMessageByEventId(
     ownerPubky: PubkyKey,
     channelId: string,
@@ -2878,6 +2935,16 @@ function conversationPreview(kind: string, body: string): string {
  * decode failure, which would otherwise persist live-looking key material.
  */
 const ATTACHMENT_RAW_TOMBSTONE = JSON.stringify({ kind: CHAT_ATTACHMENT_KIND });
+
+function isTombstonedLinkMessage(message: LinkMessage): boolean {
+  if (message.body.length > 0) return false;
+  try {
+    const parsed = JSON.parse(message.rawJson) as { deleted?: unknown };
+    return parsed.deleted === true;
+  } catch {
+    return false;
+  }
+}
 
 function persistRawJson(kind: string | null | undefined, rawJson: string): string {
   if (kind === CHAT_ATTACHMENT_KIND || peekEnvelopeKind(rawJson) === CHAT_ATTACHMENT_KIND) {
