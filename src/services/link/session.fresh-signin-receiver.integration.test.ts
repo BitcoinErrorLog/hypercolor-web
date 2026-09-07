@@ -44,6 +44,7 @@ vi.mock("./PaykitLinkWeb", () => ({
     noisePublicKeyFromSecret: vi.fn(async (secret: Uint8Array) => noisePkFromSecretBytes(secret)),
     publishReceiverMarker: vi.fn(async () => undefined),
     getReceiverMarker: vi.fn(async () => null),
+    putPublic: vi.fn(async () => undefined),
   },
 }));
 

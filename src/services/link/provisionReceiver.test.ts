@@ -11,6 +11,7 @@ const generateNoiseSecretKey = vi.fn();
 const noisePublicKeyFromSecret = vi.fn();
 const publishReceiverMarker = vi.fn();
 const getReceiverMarker = vi.fn();
+const putPublic = vi.fn();
 
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
@@ -19,6 +20,7 @@ vi.mock("./PaykitLinkWeb", () => ({
       noisePublicKeyFromSecret(...args),
     publishReceiverMarker: (...args: unknown[]) => publishReceiverMarker(...args),
     getReceiverMarker: (...args: unknown[]) => getReceiverMarker(...args),
+    putPublic: (...args: unknown[]) => putPublic(...args),
   },
 }));
 
@@ -46,6 +48,7 @@ describe("provisionReceiver", () => {
     noisePublicKeyFromSecret.mockReset();
     publishReceiverMarker.mockReset();
     getReceiverMarker.mockReset().mockResolvedValue(null);
+    putPublic.mockReset().mockResolvedValue(undefined);
     useReceiverRoleStore.getState().reset();
   });
 
@@ -73,6 +76,15 @@ describe("provisionReceiver", () => {
     expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
       persisted,
     );
+    expect(putPublic).toHaveBeenCalledWith(
+      session,
+      "/pub/paykit.app/v0/receiver.json",
+      expect.any(Uint8Array),
+    );
+    const advertised = JSON.parse(
+      new TextDecoder().decode(putPublic.mock.calls[0]![2] as Uint8Array),
+    ) as { chat_kinds_v: number };
+    expect(advertised.chat_kinds_v).toBe(1);
     expect(publishReceiverMarker).toHaveBeenCalledWith(
       session,
       LINK_RECEIVER_PATH,
@@ -270,6 +282,7 @@ describe("provisionReceiver", () => {
     const result = await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
     expect(result.receiverRole).toBe("standby");
     expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect(putPublic).not.toHaveBeenCalled();
     expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("standby");
   });
 
@@ -290,6 +303,7 @@ describe("provisionReceiver", () => {
     getReceiverMarker.mockResolvedValue({ noisePublicKey: "other-device", capabilitiesJson: "{}" });
     await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
     expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect(putPublic).not.toHaveBeenCalled();
     expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(false);
   });
 
@@ -303,6 +317,15 @@ describe("provisionReceiver", () => {
     const result = await takeoverReceiver({ pubky: () => OWNER } as never, OWNER);
     expect(result.receiverRole).toBe("active");
     expect(publishReceiverMarker).toHaveBeenCalledTimes(1);
+    expect(putPublic).toHaveBeenCalledWith(
+      expect.anything(),
+      "/pub/paykit.app/v0/receiver.json",
+      expect.any(Uint8Array),
+    );
+    const advertised = JSON.parse(
+      new TextDecoder().decode(putPublic.mock.calls.at(-1)![2] as Uint8Array),
+    ) as { chat_kinds_v: number };
+    expect(advertised.chat_kinds_v).toBe(1);
     expect((await StorageService.getLinkReceiver(OWNER))?.receiverRole).toBe("active");
   });
 

@@ -9,6 +9,7 @@ import {
 } from "@/types/link";
 import type { PubkyKey } from "@/types";
 import { PaykitLinkWeb, type SessionHandle } from "./PaykitLinkWeb";
+import { putChatKindsVReceiverJson } from "./chatKindsAdvertisement";
 import { getLiveSession, persistReceiverPath } from "./session";
 import { setReceiverRoleState } from "./receiverRoleStore";
 
@@ -205,6 +206,7 @@ export async function provisionReceiver(
   }
 
   if (published.kind === "present" && published.noisePublicKey === noisePublicKey) {
+    await putChatKindsVReceiverJson(session, noisePublicKey);
     await persistReceiverRow(pubky, receiverPath, true, "active", published.noisePublicKey);
     await persistReceiverPath(pubky, receiverPath);
     return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
@@ -212,6 +214,7 @@ export async function provisionReceiver(
 
   try {
     await publishOwnMarker(session, receiverPath, noisePublicKey);
+    await putChatKindsVReceiverJson(session, noisePublicKey);
   } catch (error) {
     if (rollbackOnFailure) await rollbackUnpublishedReceiver(pubky);
     throw error;
@@ -281,6 +284,7 @@ export async function takeoverReceiver(
     zeroizeBytes(secret);
   }
   await publishOwnMarker(session, receiverPath, noisePublicKey);
+  await putChatKindsVReceiverJson(session, noisePublicKey);
   await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
   await persistReceiverPath(pubky, receiverPath);
   setReceiverRoleState("active", TAKEOVER_TOAST);

@@ -404,6 +404,8 @@ export interface LinkRecord {
   remoteReceiverPath: string;
   consecutiveFailures: number;
   lastSeenPeerMarkerPk: string | null;
+  /** Peer's advertised `chat_kinds_v` from receiver.json. Absent/0 = pre-v1. */
+  chatKindsV?: number;
   updatedAt: number;
 }
 

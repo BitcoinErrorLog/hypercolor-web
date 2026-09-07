@@ -36,6 +36,8 @@ import { GROUP_MESSAGE_KIND, decodeGroupEnvelope, isGroupWireKind, LINK_GROUP_FA
 import { applyGroupInbound } from "../group/applyGroupInbound";
 import { applyKnownChatKind } from "../chat/applyChatInbound";
 import { buildChatReceiptEnvelope, buildChatTagEnvelope, CHAT_RECEIPT_EVENT_IDS_CAP, dmScopeKey } from "../../types/chatKinds";
+import { CHAT_KINDS_V, normalizeChatKindsV } from "../../types/receiverMarker";
+import { persistPeerChatKindsVFromMarker } from "./chatKindsAdvertisement";
 import { classifyInboundPeer, wotInputFromContact } from "./wotGate";
 import {
   attachmentKeyRef,
@@ -1003,7 +1005,7 @@ async function ensureLinkLocked(
 
   let marker: ReceiverMarker | null | undefined;
   try {
-    marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, localPath);
+    marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, localPath);
     if (marker) {
       if (stored) {
         await StorageService.recordLastSeenPeerMarkerPk(
@@ -1241,7 +1243,7 @@ async function maybeAdoptEstablishedRekey(
   markPeerMarkerRefreshed(ownerPubky, peerPubky);
   let marker: ReceiverMarker | null | undefined;
   try {
-    marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, localPath);
+    marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, localPath);
   } catch {
     return blockedEstablishedRekeyOutcome(stored);
   }
@@ -1562,7 +1564,7 @@ async function advanceLiveHandshake(
     }
 
     if (live.role === "initiator" && ownerPubky < peerPubky) {
-      const marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, LINK_RECEIVER_PATH);
+      const marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, LINK_RECEIVER_PATH);
       if (marker) {
         const inbound = await probeInbound(
           activeSession,
@@ -1677,6 +1679,12 @@ async function initiateHandshake(
     consecutiveFailures: 0,
     lastSeenPeerMarkerPk: marker.noisePublicKey,
   });
+  await persistPeerChatKindsVFromMarker(
+    ownerPubky,
+    peerPubky,
+    marker,
+    replayReadReceiptsAfterV1Upgrade,
+  );
   liveHandles.set(linkKey(ownerPubky, peerPubky), {
     status: "handshaking",
     linkId: initiated.linkId,
@@ -1746,6 +1754,12 @@ async function adoptInboundHandshake(
       consecutiveFailures: 0,
       lastSeenPeerMarkerPk: marker.noisePublicKey,
     });
+    await persistPeerChatKindsVFromMarker(
+      ownerPubky,
+      peerPubky,
+      marker,
+      replayReadReceiptsAfterV1Upgrade,
+    );
     liveHandles.set(key, { status: "established", linkId: inbound.linkId });
     return "ready";
   }
@@ -1762,6 +1776,12 @@ async function adoptInboundHandshake(
     consecutiveFailures: 0,
     lastSeenPeerMarkerPk: marker.noisePublicKey,
   });
+  await persistPeerChatKindsVFromMarker(
+    ownerPubky,
+    peerPubky,
+    marker,
+    replayReadReceiptsAfterV1Upgrade,
+  );
   liveHandles.set(key, { status: "handshaking", linkId: inbound.linkId, role: "responder" });
   return "handshaking-responder";
 }
@@ -1829,7 +1849,7 @@ async function recoverWedgedLink(
   const protocol = isLinkNativeError(cause) && cause.code === "protocol";
   if (protocol) {
     try {
-      const marker = await PaykitLinkWeb.getReceiverMarker(stored.peerPubky, LINK_RECEIVER_PATH);
+      const marker = await fetchPeerReceiverMarker(stored.ownerPubky, stored.peerPubky, LINK_RECEIVER_PATH);
       if (
         marker &&
         stored.remoteNoisePublicKey &&
@@ -1939,7 +1959,7 @@ async function maybeRecoverInitiatorMarkerRotation(
 
   let marker: ReceiverMarker | null;
   try {
-    marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, LINK_RECEIVER_PATH);
+    marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, LINK_RECEIVER_PATH);
   } catch {
     return null;
   }
@@ -2157,7 +2177,7 @@ async function rejectDeclinedInbound(ownerPubky: PubkyKey, peerPubky: PubkyKey):
   const receiver = await StorageService.getLinkReceiver(ownerPubky);
   if (!receiver) return;
   try {
-    const marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, LINK_RECEIVER_PATH);
+    const marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, LINK_RECEIVER_PATH);
     if (!marker) return;
     await PaykitLinkWeb.clearLinkOutbox(
       lookup.handle,
@@ -3258,10 +3278,51 @@ async function sendControlPam(input: {
   }
 }
 
+async function fetchPeerReceiverMarker(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  receiverPath: string,
+): Promise<ReceiverMarker | null> {
+  const marker = await PaykitLinkWeb.getReceiverMarker(peerPubky, receiverPath);
+  if (!marker) return null;
+  await persistPeerChatKindsVFromMarker(
+    ownerPubky,
+    peerPubky,
+    marker,
+    replayReadReceiptsAfterV1Upgrade,
+  );
+  return marker;
+}
+
+async function replayReadReceiptsAfterV1Upgrade(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+): Promise<void> {
+  const conversationId = buildDmConversationId(peerPubky);
+  const cursor = await StorageService.getLinkReadCursor(ownerPubky, conversationId);
+  if (cursor == null || cursor <= 0) return;
+  const messages = await StorageService.getLinkMessagesForConversation(
+    ownerPubky,
+    conversationId,
+    200,
+  );
+  const ids = messages
+    .filter((row) => row.senderPubky !== ownerPubky && row.sentAt <= cursor)
+    .map((row) => row.eventId);
+  await emitReceiptsToAuthor({
+    ownerPubky,
+    authorPubky: peerPubky,
+    status: "read",
+    eventIds: ids,
+    peerKnownV1: true,
+  });
+}
+
 async function canEmitReceipts(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
   const prefs = await StorageService.ensureChatDevicePrefs(ownerPubky);
   if (!prefs.receiptsEnabled) return false;
-  return StorageService.peerHasV1Kind(ownerPubky, peerPubky);
+  const link = await StorageService.getLink(ownerPubky, peerPubky);
+  return normalizeChatKindsV(link?.chatKindsV) >= CHAT_KINDS_V;
 }
 
 async function emitReceiptsToAuthor(input: {
@@ -3270,11 +3331,12 @@ async function emitReceiptsToAuthor(input: {
   status: "delivered" | "read";
   eventIds: string[];
   channelId?: string;
+  peerKnownV1?: boolean;
 }): Promise<void> {
   const ids = input.eventIds.filter((id) => id.length > 0).slice(0, CHAT_RECEIPT_EVENT_IDS_CAP);
   if (ids.length === 0) return;
   if (input.authorPubky === input.ownerPubky) return;
-  if (!(await canEmitReceipts(input.ownerPubky, input.authorPubky))) return;
+  if (!input.peerKnownV1 && !(await canEmitReceipts(input.ownerPubky, input.authorPubky))) return;
   const built = buildChatReceiptEnvelope({
     eventId: crypto.randomUUID(),
     sentAt: Date.now(),

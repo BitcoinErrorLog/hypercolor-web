@@ -72,6 +72,10 @@ async function exerciseStorage(db: ReturnType<typeof openMemoryDb>): Promise<voi
   setDbForTests(db);
   await runMigrations(db);
   expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(CURRENT_VERSION);
+  const linkCols = (db.executeSync("PRAGMA table_info(links)").rows ?? []).map((row) =>
+    String(row.name),
+  );
+  expect(linkCols).toContain("chat_kinds_v");
 
   await expect(StorageService.listLinkConversations(OWNER)).resolves.toEqual([]);
   await expect(StorageService.countPendingMessageRequests(OWNER)).resolves.toBe(0);

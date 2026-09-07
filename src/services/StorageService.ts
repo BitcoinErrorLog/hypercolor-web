@@ -26,7 +26,8 @@ import type {
   LinkStreamItemInput,
   StoredLinkStatus,
 } from '../types/link';
-import { CHAT_MESSAGE_KIND, CHAT_RECEIPT_KIND, CHAT_TAG_KIND, CHAT_TYPING_KIND } from '../types/link';
+import { CHAT_MESSAGE_KIND } from '../types/link';
+import { normalizeChatKindsV } from '../types/receiverMarker';
 import {
   CHAT_TAG_LIVE_CAP_PER_TARGET,
   dmScopeKey,
@@ -628,6 +629,25 @@ export const StorageService = {
        SET last_seen_peer_marker_pk = ?
        WHERE owner_pubky = ? AND peer_pubky = ?`,
       [noisePublicKey, ownerPubky, peerPubky],
+    );
+  },
+
+  /**
+   * Records the peer's advertised `chat_kinds_v` without bumping
+   * `links.updated_at` (same clock rule as last-seen marker pk).
+   */
+  async recordPeerChatKindsV(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    chatKindsV: number,
+  ): Promise<void> {
+    const value = normalizeChatKindsV(chatKindsV);
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET chat_kinds_v = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [value, ownerPubky, peerPubky],
     );
   },
 
@@ -2376,18 +2396,6 @@ export const StorageService = {
     );
   },
 
-  async peerHasV1Kind(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
-    const db = await getDb();
-    const result = db.executeSync(
-      `SELECT 1 FROM link_stream_items
-       WHERE owner_pubky = ? AND peer_pubky = ?
-         AND kind IN (?, ?, ?)
-       LIMIT 1`,
-      [ownerPubky, peerPubky, CHAT_TAG_KIND, CHAT_RECEIPT_KIND, CHAT_TYPING_KIND],
-    );
-    return (result.rows?.length ?? 0) > 0;
-  },
-
   async upsertChatTag(row: ChatTagRow): Promise<'inserted' | 'duplicate' | 'cap'> {
     const db = await getDb();
     const live = db.executeSync(
@@ -2678,6 +2686,7 @@ function rowToLink(row: any): LinkRecord {
     consecutiveFailures: row.consecutive_failures,
     lastSeenPeerMarkerPk:
       typeof row.last_seen_peer_marker_pk === 'string' ? row.last_seen_peer_marker_pk : null,
+    chatKindsV: normalizeChatKindsV(row.chat_kinds_v),
     updatedAt: row.updated_at,
   };
 }

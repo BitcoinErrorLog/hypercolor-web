@@ -1,10 +1,12 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/schema.ts
 // pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
- * Schema v17 — chat kinds v1 device prefs, tags, pins, and pending invites.
+ * Schema v17 — chat kinds v1 device prefs, tags, pins, pending invites,
+ * and additive `links.chat_kinds_v` for R7 emit-gating.
  * Additive only. Frozen v1–v16 SQL is not rewritten.
  */
 export const SCHEMA_V17_STATEMENTS: readonly string[] = [
+  `ALTER TABLE links ADD COLUMN chat_kinds_v INTEGER NOT NULL DEFAULT 0`,
   `CREATE TABLE IF NOT EXISTS chat_device_prefs (
     owner_pubky TEXT NOT NULL PRIMARY KEY,
     receipts_enabled INTEGER NOT NULL DEFAULT 1,
