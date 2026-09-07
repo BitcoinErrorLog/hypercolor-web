@@ -26,7 +26,13 @@ import type {
   LinkStreamItemInput,
   StoredLinkStatus,
 } from '../types/link';
-import { CHAT_MESSAGE_KIND } from '../types/link';
+import { CHAT_MESSAGE_KIND, CHAT_RECEIPT_KIND, CHAT_TAG_KIND, CHAT_TYPING_KIND } from '../types/link';
+import {
+  CHAT_TAG_LIVE_CAP_PER_TARGET,
+  dmScopeKey,
+  type ChatDevicePrefs,
+  type ChatTagRow,
+} from '../types/chatKinds';
 import type {
   GroupChannel,
   GroupDeferredEvent,
@@ -1255,6 +1261,10 @@ export const StorageService = {
       db.executeSync('DELETE FROM contacts WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contact_nicknames WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM thread_local_state WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_tags WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_pins WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_group_invites WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_device_prefs WHERE owner_pubky = ?', [ownerPubky]);
       removeSearchForOwner(db, ownerPubky);
     });
   },
@@ -2329,6 +2339,209 @@ export const StorageService = {
     );
     return (result.rows ?? []).map(rowToTipEndpoint);
   },
+
+  async ensureChatDevicePrefs(ownerPubky: PubkyKey, nowMs = Date.now()): Promise<ChatDevicePrefs> {
+    const existing = await StorageService.getChatDevicePrefs(ownerPubky);
+    if (existing) return existing;
+    const db = await getDb();
+    db.executeSync(
+      `INSERT OR IGNORE INTO chat_device_prefs
+        (owner_pubky, receipts_enabled, typing_enabled, upgrade_at, updated_at)
+       VALUES (?, 1, 1, ?, ?)`,
+      [ownerPubky, nowMs, nowMs],
+    );
+    return (await StorageService.getChatDevicePrefs(ownerPubky))!;
+  },
+
+  async getChatDevicePrefs(ownerPubky: PubkyKey): Promise<ChatDevicePrefs | null> {
+    const db = await getDb();
+    const row = db.executeSync(`SELECT * FROM chat_device_prefs WHERE owner_pubky = ?`, [ownerPubky])
+      .rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky,
+      receiptsEnabled: Number(row.receipts_enabled) !== 0,
+      typingEnabled: Number(row.typing_enabled) !== 0,
+      upgradeAt: Number(row.upgrade_at),
+      updatedAt: Number(row.updated_at),
+    };
+  },
+
+  async setReceiptsEnabled(ownerPubky: PubkyKey, enabled: boolean): Promise<void> {
+    await StorageService.ensureChatDevicePrefs(ownerPubky);
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE chat_device_prefs SET receipts_enabled = ?, updated_at = ? WHERE owner_pubky = ?`,
+      [enabled ? 1 : 0, now(), ownerPubky],
+    );
+  },
+
+  async peerHasV1Kind(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT 1 FROM link_stream_items
+       WHERE owner_pubky = ? AND peer_pubky = ?
+         AND kind IN (?, ?, ?)
+       LIMIT 1`,
+      [ownerPubky, peerPubky, CHAT_TAG_KIND, CHAT_RECEIPT_KIND, CHAT_TYPING_KIND],
+    );
+    return (result.rows?.length ?? 0) > 0;
+  },
+
+  async upsertChatTag(row: ChatTagRow): Promise<'inserted' | 'duplicate' | 'cap'> {
+    const db = await getDb();
+    const live = db.executeSync(
+      `SELECT COUNT(*) AS n FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ?`,
+      [row.ownerPubky, row.scopeKey, row.targetAuthorPubky, row.targetEventId, row.taggerPubky],
+    ).rows?.[0];
+    const count = Number(live?.n ?? 0);
+    const existing = db.executeSync(
+      `SELECT 1 FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ? AND label = ?
+       LIMIT 1`,
+      [row.ownerPubky, row.scopeKey, row.targetAuthorPubky, row.targetEventId, row.taggerPubky, row.label],
+    );
+    if ((existing.rows?.length ?? 0) > 0) return 'duplicate';
+    if (count >= CHAT_TAG_LIVE_CAP_PER_TARGET) return 'cap';
+    db.executeSync(
+      `INSERT INTO chat_tags
+        (owner_pubky, conversation_id, channel_id, scope_key, target_event_id,
+         target_author_pubky, tagger_pubky, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.ownerPubky,
+        row.conversationId,
+        row.channelId,
+        row.scopeKey,
+        row.targetEventId,
+        row.targetAuthorPubky,
+        row.taggerPubky,
+        row.label,
+        row.createdAt,
+      ],
+    );
+    return 'inserted';
+  },
+
+  async deleteChatTag(input: {
+    ownerPubky: PubkyKey;
+    scopeKey: string;
+    targetAuthorPubky: string;
+    targetEventId: string;
+    taggerPubky: string;
+    label: string;
+  }): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `DELETE FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ? AND label = ?`,
+      [
+        input.ownerPubky,
+        input.scopeKey,
+        input.targetAuthorPubky,
+        input.targetEventId,
+        input.taggerPubky,
+        input.label,
+      ],
+    );
+  },
+
+  async listChatTagsForScope(ownerPubky: PubkyKey, scopeKey: string): Promise<ChatTagRow[]> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM chat_tags WHERE owner_pubky = ? AND scope_key = ? ORDER BY created_at ASC`,
+      [ownerPubky, scopeKey],
+    );
+    return (result.rows ?? []).map(rowToChatTag);
+  },
+
+  async findLinkMessageByEventId(
+    ownerPubky: PubkyKey,
+    eventId: string,
+  ): Promise<LinkMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM link_messages WHERE owner_pubky = ? AND event_id = ? LIMIT 1`,
+      [ownerPubky, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToLinkMessage(row) : null;
+  },
+
+  async findGroupMessageByEventId(
+    ownerPubky: PubkyKey,
+    channelId: string,
+    eventId: string,
+  ): Promise<GroupMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM group_messages
+       WHERE owner_pubky = ? AND channel_id = ? AND event_id = ?
+       LIMIT 1`,
+      [ownerPubky, channelId, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToGroupMessage(row) : null;
+  },
+
+  async upgradeMessageDelivery(
+    ownerPubky: PubkyKey,
+    eventId: string,
+    next: 'delivered' | 'read',
+    channelId?: string,
+  ): Promise<void> {
+    const db = await getDb();
+    if (channelId) {
+      const row = await StorageService.findGroupMessageByEventId(ownerPubky, channelId, eventId);
+      if (!row) return;
+      const current = row.deliveryState;
+      if (next === 'delivered' && (current === 'delivered' || current === 'read')) return;
+      if (next === 'read' && current === 'read') return;
+      db.executeSync(
+        `UPDATE group_messages SET delivery_state = ?
+         WHERE owner_pubky = ? AND channel_id = ? AND event_id = ?`,
+        [next, ownerPubky, channelId, eventId],
+      );
+      return;
+    }
+    const row = await StorageService.findLinkMessageByEventId(ownerPubky, eventId);
+    if (!row) return;
+    if (next === 'delivered' && (row.deliveryState === 'delivered' || row.deliveryState === 'read')) return;
+    if (next === 'read' && row.deliveryState === 'read') return;
+    db.executeSync(
+      `UPDATE link_messages SET delivery_state = ?, updated_at = ?
+       WHERE owner_pubky = ? AND event_id = ?`,
+      [next, now(), ownerPubky, eventId],
+    );
+  },
+
+  async enqueueControlPam(item: DeliveryQueueItem): Promise<void> {
+    const db = await getDb();
+    insertQueueItem(db, item);
+  },
+
+  async finalizeControlSend(input: {
+    ownerPubky: PubkyKey;
+    peerPubky: PubkyKey;
+    snapshot: string;
+    queueId: string;
+  }): Promise<void> {
+    const db = await getDb();
+    const ts = now();
+    transact(db, () => {
+      db.executeSync(
+        `UPDATE links
+         SET snapshot = ?, status = 'established', consecutive_failures = 0, updated_at = ?
+         WHERE owner_pubky = ? AND peer_pubky = ?`,
+        [input.snapshot, ts, input.ownerPubky, input.peerPubky],
+      );
+      db.executeSync('DELETE FROM delivery_queue WHERE id = ?', [input.queueId]);
+    });
+  },
 };
 
 // ─── Row mappers ──────────────────────────────────────────────────────────
@@ -2484,6 +2697,20 @@ function rowToLinkMessage(row: any): LinkMessage {
     sentAt: row.sent_at,
     receivedAt: row.received_at ?? null,
     deliveryState: row.delivery_state as LinkDeliveryState,
+  };
+}
+
+function rowToChatTag(row: Record<string, unknown>): ChatTagRow {
+  return {
+    ownerPubky: String(row.owner_pubky),
+    conversationId: row.conversation_id == null ? null : String(row.conversation_id),
+    channelId: row.channel_id == null ? null : String(row.channel_id),
+    scopeKey: String(row.scope_key),
+    targetEventId: String(row.target_event_id),
+    targetAuthorPubky: String(row.target_author_pubky),
+    taggerPubky: String(row.tagger_pubky),
+    label: String(row.label),
+    createdAt: Number(row.created_at),
   };
 }
 

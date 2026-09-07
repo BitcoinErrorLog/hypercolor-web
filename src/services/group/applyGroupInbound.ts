@@ -1,6 +1,7 @@
 // Copied from BitcoinErrorLog/hypercolor services/group/applyGroupInbound.ts
 // pin c7157aaa1b338dd1d8545e82f639007cba945631
 import { StorageService } from '../StorageService';
+import { applyChatTagAliasFromReaction } from '../chat/applyChatInbound';
 import type { PubkyKey } from '../../types';
 import {
   GROUP_DELETE_KIND,
@@ -349,6 +350,18 @@ async function applyTargetedIfReady(
   }
 
   await persistAdmitted(ownerPubky, senderPubky, envelope, rawJson, receivedAt);
+  if (envelope.kind === GROUP_REACTION_KIND) {
+    await applyChatTagAliasFromReaction({
+      ownerPubky,
+      senderPubky,
+      peerPubky: senderPubky,
+      emoji: envelope.emoji,
+      targetEventId: envelope.target_event_id,
+      targetAuthorPubky: envelope.target_author_pubky,
+      channelId: envelope.channel_id,
+      sentAt: envelope.sent_at,
+    });
+  }
   if (envelope.kind === GROUP_EDIT_KIND) {
     await StorageService.applyGroupMessageEdit(
       ownerPubky,

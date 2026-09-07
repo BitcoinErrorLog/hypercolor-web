@@ -18,8 +18,11 @@ import {
   buildChatMessageEnvelope,
   buildDmConversationId,
   CHAT_MESSAGE_KIND,
+  CHAT_RECEIPT_KIND,
+  CHAT_TAG_KIND,
   coerceReceiverPath,
   decodeLinkEnvelope,
+  parseDmConversationId,
   type LinkDeliveryState,
   type LinkMessage,
   type LinkReceiver,
@@ -29,13 +32,10 @@ import {
   type LinkStreamItemInput,
 } from "../../types/link";
 import type { DeliveryQueueItem, PubkyKey } from "../../types";
-import {
-  decodeGroupEnvelope,
-  isGroupWireKind,
-  LINK_GROUP_FANOUT_PAYLOAD_TYPE,
-  peekEnvelopeKind,
-} from "../../types/group";
+import { GROUP_MESSAGE_KIND, decodeGroupEnvelope, isGroupWireKind, LINK_GROUP_FANOUT_PAYLOAD_TYPE, peekEnvelopeKind } from "../../types/group";
 import { applyGroupInbound } from "../group/applyGroupInbound";
+import { applyKnownChatKind } from "../chat/applyChatInbound";
+import { buildChatReceiptEnvelope, buildChatTagEnvelope, CHAT_RECEIPT_EVENT_IDS_CAP, dmScopeKey } from "../../types/chatKinds";
 import { classifyInboundPeer, wotInputFromContact } from "./wotGate";
 import {
   attachmentKeyRef,
@@ -73,6 +73,7 @@ import {
  */
 
 export const LINK_RETRY_PAYLOAD_TYPE = "link.chat.message";
+export const LINK_CONTROL_PAYLOAD_TYPE = "link.chat.control";
 
 export { LINK_GROUP_FANOUT_PAYLOAD_TYPE };
 
@@ -140,7 +141,17 @@ interface GroupFanoutRetryPayload {
   secretFingerprint?: string;
 }
 
-type AnyLinkRetryPayload = LinkRetryPayload | GroupFanoutRetryPayload;
+interface ControlRetryPayload {
+  type: typeof LINK_CONTROL_PAYLOAD_TYPE;
+  ownerPubky: PubkyKey;
+  peerPubky: PubkyKey;
+  senderPubky: PubkyKey;
+  kind: string;
+  eventId: string;
+  rawJson: string;
+}
+
+type AnyLinkRetryPayload = LinkRetryPayload | GroupFanoutRetryPayload | ControlRetryPayload;
 
 type ActiveSession = { handle: SessionHandle; pubky: string };
 type LiveHandle =
@@ -661,6 +672,78 @@ export const LinkService = {
     const owner = await KeyStore.getPubky();
     if (!owner) return;
     await StorageService.setLinkReadCursor(owner, conversationId, readAt);
+    const dm = parseDmConversationId(conversationId);
+    if (dm) {
+      await emitReceiptsForOpenThread({
+        ownerPubky: owner,
+        peerPubky: dm.counterpartyPubky,
+        status: "read",
+      });
+      return;
+    }
+    if (conversationId.startsWith("group:")) {
+      const channelId = conversationId.slice("group:".length);
+      await emitGroupReadReceipts(owner, channelId);
+    }
+  },
+
+  async sendTag(input: {
+    peerPubky: PubkyKey;
+    targetEventId: string;
+    targetAuthorPubky: PubkyKey;
+    label: string;
+    op: "add" | "remove";
+    channelId?: string;
+  }): Promise<void> {
+    const ownerPubky = await requireOwner();
+    const built = buildChatTagEnvelope({
+      eventId: crypto.randomUUID(),
+      sentAt: Date.now(),
+      targetEventId: input.targetEventId,
+      targetAuthorPubky: input.targetAuthorPubky,
+      label: input.label,
+      op: input.op,
+      channelId: input.channelId,
+    });
+    if (input.op === "remove") {
+      await StorageService.deleteChatTag({
+        ownerPubky,
+        scopeKey: input.channelId ?? dmScopeKey(input.peerPubky),
+        targetAuthorPubky: input.targetAuthorPubky,
+        targetEventId: input.targetEventId,
+        taggerPubky: ownerPubky,
+        label: built.envelope.label,
+      });
+    } else {
+      await StorageService.upsertChatTag({
+        ownerPubky,
+        conversationId: input.channelId ? null : buildDmConversationId(input.peerPubky),
+        channelId: input.channelId ?? null,
+        scopeKey: input.channelId ?? dmScopeKey(input.peerPubky),
+        targetEventId: input.targetEventId,
+        targetAuthorPubky: input.targetAuthorPubky,
+        taggerPubky: ownerPubky,
+        label: built.envelope.label,
+        createdAt: built.envelope.sent_at,
+      });
+    }
+    await sendControlPam({
+      ownerPubky,
+      peerPubky: input.peerPubky,
+      kind: CHAT_TAG_KIND,
+      eventId: built.envelope.event_id,
+      rawJson: built.json,
+    });
+  },
+
+  async sendControlJson(
+    peerPubky: PubkyKey,
+    kind: string,
+    eventId: string,
+    rawJson: string,
+  ): Promise<void> {
+    const ownerPubky = await requireOwner();
+    await sendControlPam({ ownerPubky, peerPubky, kind, eventId, rawJson });
   },
 
   async collectInboxCandidates(): Promise<PubkyKey[]> {
@@ -2214,6 +2297,18 @@ async function routeUnprocessedStreamItems(
       await StorageService.markLinkStreamItemProcessed(item.id);
       continue;
     }
+    const kindOutcome = await applyKnownChatKind({
+      ownerPubky,
+      senderPubky: peerPubky,
+      peerPubky,
+      rawJson: item.rawJson,
+    });
+    if (kindOutcome !== "unprocessed") {
+      if (kindOutcome !== "deferred") {
+        await StorageService.markLinkStreamItemProcessed(item.id);
+      }
+      continue;
+    }
     if (peeked !== null && isGroupWireKind(peeked)) {
       const groupEnvelope = decodeGroupEnvelope(item.rawJson);
       if (groupEnvelope) {
@@ -2224,6 +2319,15 @@ async function routeUnprocessedStreamItems(
           rawJson: item.rawJson,
           receivedAt: item.receivedAt,
         });
+        if (groupEnvelope.kind === GROUP_MESSAGE_KIND) {
+          void emitReceiptsToAuthor({
+            ownerPubky,
+            authorPubky: peerPubky,
+            status: "delivered",
+            eventIds: [groupEnvelope.event_id],
+            channelId: groupEnvelope.channel_id,
+          });
+        }
       }
       await StorageService.markLinkStreamItemProcessed(item.id);
       continue;
@@ -2259,6 +2363,12 @@ async function routeUnprocessedStreamItems(
     await StorageService.saveLinkMessage(row);
     await StorageService.markLinkStreamItemProcessed(item.id);
     received.push(row);
+    void emitReceiptsToAuthor({
+      ownerPubky,
+      authorPubky: peerPubky,
+      status: "delivered",
+      eventIds: [envelope.event_id],
+    });
   }
   return received;
 }
@@ -2455,6 +2565,11 @@ async function deliverQueuedPayloadLocked(
       await markFailed(payload, { excludeItemId: item.id });
       return "failed";
     }
+  } else if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
+    if (isRetired(item)) {
+      await parkRetiredItem(item);
+      return "failed";
+    }
   } else {
     const row = await StorageService.getGroupMessage(
       payload.ownerPubky,
@@ -2505,7 +2620,7 @@ async function deliverQueuedPayloadLocked(
       payload.ownerPubky,
       payload.senderPubky,
       payload.eventId,
-      payload.secretFingerprint,
+      "secretFingerprint" in payload ? payload.secretFingerprint : undefined,
     );
     // R4-F2 / F5 hardening: re-scan immediately before the encrypt, after
     // attachment reconstruction, so this path is scan-adjacent-to-encrypt
@@ -2551,6 +2666,13 @@ async function deliverQueuedPayloadLocked(
           );
         }
       }
+    } else if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
+      await StorageService.finalizeControlSend({
+        ownerPubky: payload.ownerPubky,
+        peerPubky: payload.peerPubky,
+        snapshot,
+        queueId: item.id,
+      });
     } else {
       await StorageService.finalizeLinkSend({
         ownerPubky: payload.ownerPubky,
@@ -2599,6 +2721,7 @@ async function markFailed(
   payload: AnyLinkRetryPayload,
   options?: { excludeItemId?: string },
 ): Promise<void> {
+  if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) return;
   if (payload.type === LINK_GROUP_FANOUT_PAYLOAD_TYPE) {
     const remaining = await StorageService.countDeliveryQueueForMessage(payload.eventId, {
       excludeItemId: options?.excludeItemId,
@@ -2914,7 +3037,7 @@ async function fingerprintForRetryHeal(
 function secretFingerprintFromQueuedPayload(payloadJson: string, kind: string): string | undefined {
   if (kind !== CHAT_ATTACHMENT_KIND) return undefined;
   const payload = parseRetryPayload(payloadJson);
-  return payload?.secretFingerprint;
+  return payload && "secretFingerprint" in payload ? payload.secretFingerprint : undefined;
 }
 
 function requireQueuedAttachmentFingerprint(payloadJson: string, kind: string): string | undefined {
@@ -3092,6 +3215,125 @@ async function dispatchPreparedDm(input: {
   }
 }
 
+async function sendControlPam(input: {
+  ownerPubky: PubkyKey;
+  peerPubky: PubkyKey;
+  kind: string;
+  eventId: string;
+  rawJson: string;
+}): Promise<void> {
+  const queueId = crypto.randomUUID();
+  const ts = Date.now();
+  const payload: ControlRetryPayload = {
+    type: LINK_CONTROL_PAYLOAD_TYPE,
+    ownerPubky: input.ownerPubky,
+    peerPubky: input.peerPubky,
+    senderPubky: input.ownerPubky,
+    kind: input.kind,
+    eventId: input.eventId,
+    rawJson: input.rawJson,
+  };
+  await StorageService.enqueueControlPam({
+    id: queueId,
+    messageId: input.eventId,
+    recipientPubky: input.peerPubky,
+    payload: JSON.stringify(payload),
+    attempts: 0,
+    nextRetryAt: ts,
+    createdAt: ts,
+  });
+  try {
+    const outcome = await ensureLinkLocked(input.peerPubky, true, false, "auto");
+    if (outcome !== "ready") return;
+    const handle = requireEstablishedHandle(input.ownerPubky, input.peerPubky);
+    const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, input.rawJson);
+    await StorageService.finalizeControlSend({
+      ownerPubky: input.ownerPubky,
+      peerPubky: input.peerPubky,
+      snapshot,
+      queueId,
+    });
+  } catch (err) {
+    console.warn(`[LinkService] Control PAM send deferred for ${input.peerPubky}:`, errorMessage(err));
+  }
+}
+
+async function canEmitReceipts(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<boolean> {
+  const prefs = await StorageService.ensureChatDevicePrefs(ownerPubky);
+  if (!prefs.receiptsEnabled) return false;
+  return StorageService.peerHasV1Kind(ownerPubky, peerPubky);
+}
+
+async function emitReceiptsToAuthor(input: {
+  ownerPubky: PubkyKey;
+  authorPubky: PubkyKey;
+  status: "delivered" | "read";
+  eventIds: string[];
+  channelId?: string;
+}): Promise<void> {
+  const ids = input.eventIds.filter((id) => id.length > 0).slice(0, CHAT_RECEIPT_EVENT_IDS_CAP);
+  if (ids.length === 0) return;
+  if (input.authorPubky === input.ownerPubky) return;
+  if (!(await canEmitReceipts(input.ownerPubky, input.authorPubky))) return;
+  const built = buildChatReceiptEnvelope({
+    eventId: crypto.randomUUID(),
+    sentAt: Date.now(),
+    status: input.status,
+    eventIds: ids,
+    channelId: input.channelId,
+  });
+  await sendControlPam({
+    ownerPubky: input.ownerPubky,
+    peerPubky: input.authorPubky,
+    kind: CHAT_RECEIPT_KIND,
+    eventId: built.envelope.event_id,
+    rawJson: built.json,
+  });
+}
+
+async function emitReceiptsForOpenThread(input: {
+  ownerPubky: PubkyKey;
+  peerPubky: PubkyKey;
+  status: "read";
+}): Promise<void> {
+  const conversationId = buildDmConversationId(input.peerPubky);
+  const messages = await StorageService.getLinkMessagesForConversation(
+    input.ownerPubky,
+    conversationId,
+    200,
+  );
+  const ids = messages
+    .filter((message) => message.senderPubky === input.peerPubky)
+    .map((message) => message.eventId);
+  await emitReceiptsToAuthor({
+    ownerPubky: input.ownerPubky,
+    authorPubky: input.peerPubky,
+    status: input.status,
+    eventIds: ids,
+  });
+}
+
+async function emitGroupReadReceipts(ownerPubky: PubkyKey, channelId: string): Promise<void> {
+  const messages = await StorageService.listGroupMessages(ownerPubky, channelId, 200);
+  const byAuthor = new Map<string, string[]>();
+  for (const message of messages) {
+    if (message.senderPubky === ownerPubky) continue;
+    if (message.kind !== GROUP_MESSAGE_KIND) continue;
+    const list = byAuthor.get(message.senderPubky) ?? [];
+    if (list.length < CHAT_RECEIPT_EVENT_IDS_CAP) list.push(message.eventId);
+    byAuthor.set(message.senderPubky, list);
+  }
+  for (const [authorPubky, eventIds] of byAuthor) {
+    await emitReceiptsToAuthor({
+      ownerPubky,
+      authorPubky,
+      status: "read",
+      eventIds,
+      channelId,
+    });
+  }
+}
+
 function parseRetryPayload(payload: string): AnyLinkRetryPayload | null {
   let value: unknown;
   try {
@@ -3121,6 +3363,17 @@ function parseRetryPayload(payload: string): AnyLinkRetryPayload | null {
       channelId: candidate.channelId,
       rawJson: candidate.rawJson,
       ...(secretFingerprint ? { secretFingerprint } : {}),
+    };
+  }
+  if (candidate.type === LINK_CONTROL_PAYLOAD_TYPE) {
+    return {
+      type: LINK_CONTROL_PAYLOAD_TYPE,
+      ownerPubky: candidate.ownerPubky,
+      peerPubky: candidate.peerPubky,
+      senderPubky: candidate.senderPubky,
+      kind: candidate.kind,
+      eventId: candidate.eventId,
+      rawJson: candidate.rawJson,
     };
   }
   if (candidate.type !== LINK_RETRY_PAYLOAD_TYPE) return null;
