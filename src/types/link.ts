@@ -80,13 +80,25 @@ export const CHAT_MESSAGE_KIND = 'chat.message.v0';
  */
 export const PUBKY_APP_DM_KIND = 'pubky_app.dm.v0';
 
-/** Reserved kind for delivery/read receipts. No receipt logic exists yet. */
 export const CHAT_RECEIPT_KIND = 'chat.receipt.v0';
+export const CHAT_TAG_KIND = 'chat.tag.v0';
+export const CHAT_TYPING_KIND = 'chat.typing.v0';
+export const CHAT_EDIT_KIND = 'chat.edit.v0';
+export const CHAT_DELETE_KIND = 'chat.delete.v0';
+export const CHAT_PIN_KIND = 'chat.pin.v0';
 
-/** Reserved kind for message reactions. No reaction logic exists yet. */
+/** Decode alias only: inbound DM reaction ≡ `chat.tag.v0` add. */
 export const CHAT_REACTION_KIND = 'chat.reaction.v0';
 
-export type LinkWireKind = typeof CHAT_MESSAGE_KIND | typeof PUBKY_APP_DM_KIND;
+export type LinkWireKind =
+  | typeof CHAT_MESSAGE_KIND
+  | typeof PUBKY_APP_DM_KIND
+  | typeof CHAT_RECEIPT_KIND
+  | typeof CHAT_TAG_KIND
+  | typeof CHAT_TYPING_KIND
+  | typeof CHAT_EDIT_KIND
+  | typeof CHAT_DELETE_KIND
+  | typeof CHAT_PIN_KIND;
 
 // ─── Chat message envelope ──────────────────────────────────────────────────
 
@@ -177,6 +189,10 @@ export function buildChatMessageEnvelope(input: {
  * or an ISO-8601 datetime string. Returns `null` when neither matches.
  */
 const ISO_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export function isLinkSentAtUnixMs(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
 
 export function parseLinkSentAt(value: unknown): number | null {
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) {

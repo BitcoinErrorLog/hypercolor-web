@@ -1,6 +1,56 @@
 // Copied from BitcoinErrorLog/hypercolor src/db/schema.ts
 // pin 6185a6a8e6bf3a52831515cb85131a7020704396
 /**
+ * Schema v17 — chat kinds v1 device prefs, tags, pins, and pending invites.
+ * Additive only. Frozen v1–v16 SQL is not rewritten.
+ */
+export const SCHEMA_V17_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS chat_device_prefs (
+    owner_pubky TEXT NOT NULL PRIMARY KEY,
+    receipts_enabled INTEGER NOT NULL DEFAULT 1,
+    typing_enabled INTEGER NOT NULL DEFAULT 1,
+    upgrade_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_tags (
+    owner_pubky TEXT NOT NULL,
+    conversation_id TEXT,
+    channel_id TEXT,
+    scope_key TEXT NOT NULL,
+    target_event_id TEXT NOT NULL,
+    target_author_pubky TEXT NOT NULL,
+    tagger_pubky TEXT NOT NULL,
+    label TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    CHECK ((channel_id IS NULL) != (conversation_id IS NULL)),
+    PRIMARY KEY (owner_pubky, scope_key, target_author_pubky, target_event_id, tagger_pubky, label)
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_pins (
+    owner_pubky TEXT NOT NULL,
+    conversation_id TEXT,
+    channel_id TEXT,
+    scope_key TEXT NOT NULL,
+    target_event_id TEXT NOT NULL,
+    target_author_pubky TEXT NOT NULL,
+    pinned_by TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    CHECK ((channel_id IS NULL) != (conversation_id IS NULL)),
+    PRIMARY KEY (owner_pubky, scope_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_group_invites (
+    owner_pubky TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    invite_id TEXT NOT NULL,
+    sender_pubky TEXT NOT NULL,
+    name TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY (owner_pubky, invite_id)
+  )`,
+];
+
+/**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the
  * engine supports it; LIKE + body_norm index is the always-on path.

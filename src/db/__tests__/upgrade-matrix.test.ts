@@ -28,6 +28,7 @@ import {
   SCHEMA_V14_STATEMENTS,
   SCHEMA_V15_STATEMENTS,
   SCHEMA_V16_STATEMENTS,
+  SCHEMA_V17_STATEMENTS,
 } from "../schema";
 import { openMemoryDb } from "./betterSqliteAdapter";
 
@@ -51,6 +52,7 @@ const BY_VERSION: readonly (readonly string[])[] = [
   SCHEMA_V14_STATEMENTS,
   SCHEMA_V15_STATEMENTS,
   SCHEMA_V16_STATEMENTS,
+  SCHEMA_V17_STATEMENTS,
 ];
 
 function applyThrough(version: number): ReturnType<typeof openMemoryDb> {
@@ -104,7 +106,7 @@ describe("upgrade matrix: historical schema → current migrations → StorageSe
     await exerciseStorage(openMemoryDb());
   });
 
-  for (let version = 1; version <= 16; version += 1) {
+  for (let version = 1; version <= 17; version += 1) {
     it(`upgrades from frozen schema v${version}`, async () => {
       await exerciseStorage(applyThrough(version));
     });
