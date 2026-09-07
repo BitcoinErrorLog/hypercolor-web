@@ -40,6 +40,17 @@ vi.mock("@/services/StorageService", () => ({
     countPendingMessageRequests: vi.fn(() => Promise.resolve(0)),
     getUnprocessedLinkStreamItems: vi.fn(() => Promise.resolve([])),
     listAttachmentsForChannel: vi.fn(() => Promise.resolve([])),
+    ensureChatDevicePrefs: vi.fn(() =>
+      Promise.resolve({
+        ownerPubky: "x",
+        receiptsEnabled: true,
+        typingEnabled: true,
+        upgradeAt: 1,
+        updatedAt: 1,
+      }),
+    ),
+    setReceiptsEnabled: vi.fn(() => Promise.resolve()),
+    listChatTagsForScope: vi.fn(() => Promise.resolve([])),
   },
 }));
 

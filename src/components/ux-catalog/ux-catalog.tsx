@@ -21,6 +21,7 @@ import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { SiteNav } from "@/components/site-nav";
 import { TabLockBanner } from "@/components/tab-lock-banner";
 import { ThreadView } from "@/components/thread-view";
+import { TagPicker } from "@/components/tag-picker";
 import { WelcomePage } from "@/components/welcome-page";
 import { buildAttachmentLocation, CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
 import type { Contact } from "@/types";
@@ -366,6 +367,8 @@ function channelFixture(state: string): ChannelsPageFixture["channelDetail"] {
     deleteMessage: asyncNoop,
     retryFailed: asyncNoop,
     reload: asyncNoop,
+    tagsByTarget: new Map(),
+    toggleTag: asyncNoop,
   };
 }
 
@@ -458,11 +461,13 @@ function settingsFixture(state: string): SettingsPageFixture {
     return {
       recoveryCode: "alpha bravo charlie delta echo foxtrot golf hotel",
       confirmedSaved: state === "recovery-ready",
+      receiptsEnabled: true,
     };
   }
   if (state === "restore-success") {
     return {
       restoreNote: "Restore complete. History is local. Enable messaging again so links re-handshake.",
+      receiptsEnabled: true,
     };
   }
   if (state === "error") {
@@ -470,9 +475,10 @@ function settingsFixture(state: string): SettingsPageFixture {
       backupError: "Could not create a backup.",
       restoreCode: "alpha bravo",
       restoreError: "That recovery code did not work.",
+      receiptsEnabled: true,
     };
   }
-  return {};
+  return { receiptsEnabled: true };
 }
 
 function sessionStatusForScene(scene: UxCatalogScene): SessionUiStatus {
@@ -521,6 +527,13 @@ function ThreadFixture({ state }: { state: string }) {
           message({ eventId: "11111111-1111-4111-8111-111111111111" }),
           message({ eventId: "22222222-2222-4222-8222-222222222222", senderPubky: OWNER, direction: "sent", body: "Looks good.", deliveryState: state === "failed-retry" ? "failed" : "sent", sentAt: NOW + 60_000 }),
           ...(state === "delivery-labels" ? [message({ eventId: "99999999-9999-4999-8999-999999999999", senderPubky: OWNER, direction: "sent", body: "Delivered state.", deliveryState: "delivered", sentAt: NOW + 120_000 })] : []),
+          ...(state === "receipt-states"
+            ? [
+                message({ eventId: "r1111111-1111-4111-8111-111111111111", senderPubky: OWNER, direction: "sent", body: "Sent state.", deliveryState: "sent", sentAt: NOW + 60_000 }),
+                message({ eventId: "r2222222-2222-4222-8222-222222222222", senderPubky: OWNER, direction: "sent", body: "Delivered state.", deliveryState: "delivered", sentAt: NOW + 90_000 }),
+                message({ eventId: "r3333333-3333-4333-8333-333333333333", senderPubky: OWNER, direction: "sent", body: "Read state.", deliveryState: "read", sentAt: NOW + 120_000 }),
+              ]
+            : []),
           ...(payment ? [message({ eventId: "55555555-5555-4555-8555-555555555555", ...payment, sentAt: NOW + 120_000 })] : []),
           ...(state === "populated" ? [message({ eventId: "44444444-4444-4444-8444-444444444444", kind: CHAT_ATTACHMENT_KIND, body: "Attachment", sentAt: NOW + 180_000 })] : []),
           ...(state === "day-separators"
@@ -554,6 +567,20 @@ function ThreadFixture({ state }: { state: string }) {
       onRetry={noop}
       onResolved={noop}
       now={NOW}
+      tagsByTarget={
+        state === "tagged"
+          ? new Map([
+              [
+                `${ASTER}:11111111-1111-4111-8111-111111111111`,
+                [
+                  { label: "👍", count: 2, mine: true },
+                  { label: "design", count: 1, mine: false },
+                ],
+              ],
+            ])
+          : undefined
+      }
+      onToggleTag={state === "tagged" ? () => undefined : undefined}
     />
   );
 }
@@ -665,6 +692,9 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
     );
   }
   if (scene.surface.includes("chats-list")) return <ChatsFixture state={scene.state} />;
+  if (scene.surface === "tag-picker") {
+    return <TagPicker open onClose={noop} onPick={noop} />;
+  }
   if (scene.surface === "thread") return <ThreadFixture state={scene.state} />;
   if (scene.surface === "requests") return <RequestsPage fixture={requestsFixture(scene.state)} now={NOW} />;
   if (scene.surface.startsWith("channels") || scene.surface === "channel" || scene.surface === "public-topic") {

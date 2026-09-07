@@ -14,6 +14,7 @@ import type { AttachmentRecord } from "@/types/attachment";
 import type { Contact } from "@/types";
 import type { GroupChannel, GroupMember, GroupMessage } from "@/types/group";
 import { GROUP_REACTION_KIND, isGroupTimelineVisible } from "@/types/group";
+import { aggregateChatTags, type ChatTagAggregate } from "@/types/chatKinds";
 import { parsePubky } from "@/utils/pubkyId";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
@@ -34,6 +35,7 @@ export function useChannel(channelId: string | null) {
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(Boolean(channelId));
   const [error, setError] = useState<string | null>(null);
+  const [tagsByTarget, setTagsByTarget] = useState<Map<string, ChatTagAggregate[]>>(new Map());
 
   const reload = useCallback(async () => {
     if (!channelId || !localPubky) {
@@ -57,13 +59,14 @@ export function useChannel(channelId: string | null) {
       setLoading(false);
       return;
     }
-    const [ch, msgs, mems, atts, people, links] = await Promise.all([
+    const [ch, msgs, mems, atts, people, links, tagRows] = await Promise.all([
       GroupService.getChannel(channelId),
       GroupService.listMessages(channelId),
       GroupService.listMembers(channelId),
       StorageService.listAttachmentsForChannel(localPubky, channelId),
       StorageService.getAllContacts(localPubky),
       StorageService.getAllLinks(localPubky),
+      StorageService.listChatTagsForScope(localPubky, channelId),
     ]);
     setChannel(ch);
     setMessages(msgs.filter(isGroupTimelineVisible));
@@ -71,6 +74,7 @@ export function useChannel(channelId: string | null) {
     setMembers(mems);
     setAttachments(atts);
     setContacts(people);
+    setTagsByTarget(aggregateChatTags(tagRows, localPubky));
     setEstablishedPeers(
       links.filter((link) => link.status === "established").map((link) => link.peerPubky),
     );
@@ -261,6 +265,46 @@ export function useChannel(channelId: string | null) {
     }
   }, [reload]);
 
+  const toggleTag = useCallback(
+    async (message: GroupMessage, label: string, mine: boolean) => {
+      if (!channelId || !localPubky) return;
+      const peer = members.find((member) => member.memberPubky !== localPubky && member.status === "active");
+      const peerPubky = peer?.memberPubky;
+      if (!peerPubky) return;
+      try {
+        await LinkService.sendTag({
+          peerPubky,
+          channelId,
+          targetEventId: message.eventId,
+          targetAuthorPubky: message.senderPubky,
+          label,
+          op: mine ? "remove" : "add",
+        });
+        const others = members.filter(
+          (member) =>
+            member.status === "active" &&
+            member.memberPubky !== localPubky &&
+            member.memberPubky !== peerPubky,
+        );
+        for (const member of others) {
+          await LinkService.sendTag({
+            peerPubky: member.memberPubky,
+            channelId,
+            targetEventId: message.eventId,
+            targetAuthorPubky: message.senderPubky,
+            label,
+            op: mine ? "remove" : "add",
+          });
+        }
+        await reload();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not tag this message.");
+        emitCoarseError("channel", err);
+      }
+    },
+    [channelId, localPubky, members, reload],
+  );
+
   return {
     localPubky,
     status,
@@ -292,5 +336,7 @@ export function useChannel(channelId: string | null) {
     deleteMessage,
     retryFailed,
     reload,
+    tagsByTarget,
+    toggleTag,
   };
 }

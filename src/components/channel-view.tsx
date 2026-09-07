@@ -233,6 +233,8 @@ export function ChannelView({
                 onCopy={() => {
                   void navigator.clipboard.writeText(message.body);
                 }}
+                tags={channel.tagsByTarget.get(`${message.senderPubky}:${message.eventId}`) ?? []}
+                onToggleTag={(label, mine) => void channel.toggleTag(message, label, mine)}
               />
             );
           })

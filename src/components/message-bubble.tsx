@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useState } from "react";
 import { MessageBody } from "@/components/message-body";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "@/lib/format";
@@ -8,6 +9,8 @@ import { TruncatedPubky } from "@/components/truncated-pubky";
 import { formatDeliveryStatus, isFailedDelivery } from "@/lib/delivery-status";
 import { CHAT_ATTACHMENT_KIND } from "@/types/attachment";
 import type { LinkMessage } from "@/types/link";
+import type { ChatTagAggregate } from "@/types/chatKinds";
+import { TagChips, TagPicker } from "@/components/tag-picker";
 import {
   GROUP_MESSAGE_KIND,
   GROUP_MEMBERSHIP_KIND,
@@ -33,29 +36,48 @@ export function DmMessageBubble({
   mine,
   onRetry,
   onCopy,
+  tags = [],
+  onToggleTag,
 }: {
   message: LinkMessage;
   attachmentSlot?: ReactNode;
   mine: boolean;
   onRetry?: () => void;
   onCopy?: () => void;
+  tags?: readonly ChatTagAggregate[];
+  onToggleTag?: (label: string, mine: boolean) => void;
 }) {
   const failed = mine && isFailedDelivery(message.deliveryState);
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage" data-surface="message-bubble">
       <div
         className={`group hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setPickerOpen(true);
+        }}
       >
         {attachmentSlot ?? (
           <MessageBody text={message.body} />
         )}
+        <TagChips tags={tags} onToggle={onToggleTag} />
         <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
         </p>
         <div className="flex flex-wrap gap-1">
+          {onToggleTag ? (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+              onClick={() => setPickerOpen((open) => !open)}
+            >
+              Tag
+            </button>
+          ) : null}
           {onCopy ? (
             <button
               type="button"
@@ -66,6 +88,11 @@ export function DmMessageBubble({
             </button>
           ) : null}
         </div>
+        <TagPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={(label) => onToggleTag?.(label, false)}
+        />
         {failed && onRetry ? (
           <Button type="button" size="sm" variant="outline" onClick={onRetry}>
             Retry
@@ -89,6 +116,8 @@ export function GroupMessageBubble({
   onCopy,
   pressedEmojis,
   quotedBody,
+  tags = [],
+  onToggleTag,
 }: {
   message: GroupMessage;
   attachmentSlot?: ReactNode;
@@ -102,7 +131,10 @@ export function GroupMessageBubble({
   onCopy?: () => void;
   pressedEmojis?: readonly string[];
   quotedBody?: string | null;
+  tags?: readonly ChatTagAggregate[];
+  onToggleTag?: (label: string, mine: boolean) => void;
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   if (message.kind === GROUP_MEMBERSHIP_KIND) {
     return (
       <p className="text-center text-xs text-muted-foreground" data-testid="groupMembership">
@@ -127,6 +159,10 @@ export function GroupMessageBubble({
         className={`group hc-bubble space-y-2 ${
           mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setPickerOpen(true);
+        }}
       >
         {!mine ? <TruncatedPubky pubky={message.senderPubky} className="font-mono text-xs opacity-80" /> : null}
         {quotedBody ? (
@@ -141,6 +177,7 @@ export function GroupMessageBubble({
             <MessageBody text={message.body} />
           )
         )}
+        <TagChips tags={tags} onToggle={onToggleTag} />
         <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {message.editedAt ? " · edited" : ""}
@@ -200,8 +237,22 @@ export function GroupMessageBubble({
                 Copy
               </button>
             ) : null}
+            {onToggleTag ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+                onClick={() => setPickerOpen((open) => !open)}
+              >
+                Tag
+              </button>
+            ) : null}
           </div>
         ) : null}
+        <TagPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={(label) => onToggleTag?.(label, false)}
+        />
         {failed && onRetry ? (
           <Button type="button" size="sm" variant="outline" onClick={onRetry}>
             Retry

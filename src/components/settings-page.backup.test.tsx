@@ -44,6 +44,19 @@ vi.mock("@/services/link/LinkService", () => ({
   LinkService: { clearSession: vi.fn(async () => undefined) },
 }));
 
+vi.mock("@/services/StorageService", () => ({
+  StorageService: {
+    ensureChatDevicePrefs: vi.fn(async () => ({
+      ownerPubky: "x",
+      receiptsEnabled: true,
+      typingEnabled: true,
+      upgradeAt: 1,
+      updatedAt: 1,
+    })),
+    setReceiptsEnabled: vi.fn(async () => undefined),
+  },
+}));
+
 vi.mock("@/services/vibeware/collector", () => ({
   emit: vi.fn(async () => undefined),
 }));

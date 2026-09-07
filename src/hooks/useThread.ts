@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { parseDmConversationId } from "@/types/link";
+import { parseDmConversationId, type LinkMessage } from "@/types/link";
+import { aggregateChatTags, dmScopeKey, type ChatTagAggregate } from "@/types/chatKinds";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { loadInboxRows, useInboxStore } from "@/stores/inboxStore";
@@ -38,6 +39,7 @@ export function useThread(conversationId: string | null) {
   const [linkStatus, setLinkStatus] = useState<string | null>(null);
   const [linkSnapshot, setLinkSnapshot] = useState<string | null>(null);
   const [linkReady, setLinkReady] = useState(false);
+  const [tagsByTarget, setTagsByTarget] = useState<Map<string, ChatTagAggregate[]>>(new Map());
   const receiverRole = useReceiverRoleStore((s) => s.role);
 
   const reload = useCallback(async () => {
@@ -47,15 +49,17 @@ export function useThread(conversationId: string | null) {
       return;
     }
     try {
-      const [msgs, atts, link, serviceStatus] = await Promise.all([
+      const [msgs, atts, link, serviceStatus, tagRows] = await Promise.all([
         StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
         StorageService.listAttachmentsForConversation(localPubky, conversationId),
         StorageService.getLink(localPubky, participantPubky),
         LinkService.getLinkStatus(participantPubky).catch(() => null),
+        StorageService.listChatTagsForScope(localPubky, dmScopeKey(participantPubky)),
       ]);
       setLinkStatus(serviceStatus ?? link?.status ?? null);
       setLinkSnapshot(link?.snapshot ?? null);
       setLinkReady(serviceStatus === "ready");
+      setTagsByTarget(aggregateChatTags(tagRows, localPubky));
       useThreadStore.getState().setSnapshot(conversationId, msgs, atts);
       setLoading(false);
       if (getTabLock().mode === "writer") {
@@ -198,6 +202,27 @@ export function useThread(conversationId: string | null) {
     [participantPubky, sending, reload, receiverRole, linkStatus, linkSnapshot, linkReady],
   );
 
+  const toggleTag = useCallback(
+    async (message: LinkMessage, label: string, mine: boolean) => {
+      if (!participantPubky) return;
+      try {
+        await LinkService.sendTag({
+          peerPubky: participantPubky,
+          targetEventId: message.eventId,
+          targetAuthorPubky: message.senderPubky,
+          label,
+          op: mine ? "remove" : "add",
+        });
+        await reload();
+      } catch (err) {
+        if (!isReadOnlyTabError(err)) {
+          setError(err instanceof Error ? err.message : "Could not tag this message.");
+        }
+      }
+    },
+    [participantPubky, reload],
+  );
+
   return {
     localPubky,
     participantPubky,
@@ -218,5 +243,7 @@ export function useThread(conversationId: string | null) {
     linkStatus,
     linkSnapshot,
     linkReady,
+    tagsByTarget,
+    toggleTag,
   };
 }

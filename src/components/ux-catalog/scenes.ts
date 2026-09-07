@@ -103,6 +103,9 @@ export const UX_CATALOG_SCENES: readonly UxCatalogScene[] = [
   { id: "chats-archived", journey: "chats", surface: "chats-list", state: "archived", expectedSurface: "chats-page" },
   { id: "attachment-failed", journey: "composer", surface: "attachment", state: "failed", expectedSurface: "attachment-bubble" },
   { id: "attachment-unavailable", journey: "composer", surface: "attachment", state: "unavailable", expectedSurface: "attachment-bubble" },
+  { id: "thread-tagged", journey: "chats", surface: "thread", state: "tagged", expectedSurface: "thread-view" },
+  { id: "thread-tag-picker", journey: "chats", surface: "tag-picker", state: "open", expectedSurface: "tag-picker" },
+  { id: "thread-receipt-states", journey: "chats", surface: "thread", state: "receipt-states", expectedSurface: "thread-view" },
 ] as const;
 
 export function findUxCatalogScene(id: string | null): UxCatalogScene {

@@ -98,6 +98,8 @@ export function ThreadViewHost({ conversationId }: { conversationId: string | nu
         await thread.reload();
         if (thread.draft.trim()) await thread.send();
       }}
+      tagsByTarget={thread.tagsByTarget}
+      onToggleTag={(message, label, mine) => void thread.toggleTag(message, label, mine)}
     />
   );
 }

@@ -29,6 +29,7 @@ import {
 } from "@/lib/list-detail-focus";
 import { CHAT_ATTACHMENT_KIND, type AttachmentRecord } from "@/types/attachment";
 import type { LinkMessage, ReceiverRole } from "@/types/link";
+import type { ChatTagAggregate } from "@/types/chatKinds";
 import {
   decodePaymentEnvelope,
   displayPaymentStatus,
@@ -138,6 +139,8 @@ export function ThreadView({
   gifConfigured = false,
   onPickGif,
   onOfferAttach,
+  tagsByTarget,
+  onToggleTag,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -178,6 +181,8 @@ export function ThreadView({
   gifConfigured?: boolean;
   onPickGif?: (hit: { id: string; width: number; height: number }) => void;
   onOfferAttach?: (file: File) => void;
+  tagsByTarget?: Map<string, ChatTagAggregate[]>;
+  onToggleTag?: (message: LinkMessage, label: string, mine: boolean) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const origin = useSyncExternalStore(
@@ -350,6 +355,12 @@ export function ThreadView({
                 onCopy={() => {
                   void navigator.clipboard.writeText(message.body);
                 }}
+                tags={tagsByTarget?.get(`${message.senderPubky}:${message.eventId}`) ?? []}
+                onToggleTag={
+                  onToggleTag
+                    ? (label, mine) => onToggleTag(message, label, mine)
+                    : undefined
+                }
               />
             );
           })

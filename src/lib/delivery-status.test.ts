@@ -13,8 +13,8 @@ describe("formatDeliveryStatus", () => {
   const cases: Array<[LinkDeliveryState, string]> = [
     ["sending", "Queued"],
     ["sent", "Sent"],
-    ["delivered", "Sent"],
-    ["read", "Sent"],
+    ["delivered", "Delivered"],
+    ["read", "Read"],
     ["failed", "Failed"],
   ];
 
@@ -22,12 +22,9 @@ describe("formatDeliveryStatus", () => {
     expect(formatDeliveryStatus(state)).toBe(label);
   });
 
-  it("never emits delivered or read", () => {
-    for (const state of ["sending", "sent", "delivered", "read", "failed"] as const) {
-      const label = formatDeliveryStatus(state);
-      expect(label.toLowerCase()).not.toBe("delivered");
-      expect(label.toLowerCase()).not.toBe("read");
-    }
+  it("maps delivered and read after receipts ship", () => {
+    expect(formatDeliveryStatus("delivered")).toBe("Delivered");
+    expect(formatDeliveryStatus("read")).toBe("Read");
   });
 
   it("maps unknown states to Queued so Sent is never claimed before ready", () => {

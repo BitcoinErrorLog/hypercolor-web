@@ -1,6 +1,6 @@
 import type { LinkDeliveryState } from "@/types/link";
 
-export type DeliveryStatusLabel = "Queued" | "Sent" | "Failed";
+export type DeliveryStatusLabel = "Queued" | "Sent" | "Delivered" | "Read" | "Failed";
 
 export const QUEUED_HANDSHAKE_SUBTITLE =
   "Waiting for the other person — retrying if they switched devices.";
@@ -34,8 +34,7 @@ export function isStandbyNewChatBlocked(
 
 /**
  * The only formatter that may produce outbound message status words.
- * Storage may still hold `delivered` / `read`; those fold into Sent until
- * CHAT_RECEIPT_KIND ships.
+ * Storage holds `delivered` / `read` after `chat.receipt.v0`.
  */
 export function formatDeliveryStatus(
   state: LinkDeliveryState | string,
@@ -46,9 +45,11 @@ export function formatDeliveryStatus(
     case "failed":
       return "Failed";
     case "sent":
-    case "delivered":
-    case "read":
       return "Sent";
+    case "delivered":
+      return "Delivered";
+    case "read":
+      return "Read";
     default:
       return "Queued";
   }

@@ -23,6 +23,7 @@ import {
 } from "@/lib/backup-gate";
 import { BACKUP_CUSTODY_LINE, CUSTODY_LINE, sessionStatusLabel } from "@/lib/session-ui";
 import { BackupService } from "@/services/backup/BackupService";
+import { StorageService } from "@/services/StorageService";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
@@ -37,6 +38,7 @@ export type SettingsPageFixture = {
   restoreCode?: string;
   restoreError?: string | null;
   restoreNote?: string | null;
+  receiptsEnabled?: boolean;
 };
 
 export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}) {
@@ -58,6 +60,7 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
   const [repairBusy, setRepairBusy] = useState(false);
   const [repairError, setRepairError] = useState<string | null>(null);
   const [repairNote, setRepairNote] = useState<string | null>(null);
+  const [receiptsEnabled, setReceiptsEnabled] = useState(fixture?.receiptsEnabled ?? true);
 
   useLeaveOnce(
     "settings-backup",
@@ -70,6 +73,13 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
   useEffect(() => {
     setBackupGate({ recoveryCode, confirmedSaved });
   }, [recoveryCode, confirmedSaved]);
+
+  useEffect(() => {
+    if (!pubky || fixture?.receiptsEnabled !== undefined) return;
+    void StorageService.ensureChatDevicePrefs(pubky).then((prefs) => {
+      setReceiptsEnabled(prefs.receiptsEnabled);
+    });
+  }, [pubky, fixture?.receiptsEnabled]);
 
   useEffect(() => {
     if (!__HYPERCOLOR_E2E_HARNESS__ || typeof window === "undefined") return;
@@ -120,6 +130,22 @@ export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}
         </h2>
         <p className="text-sm">{sessionStatusLabel(status)}</p>
         <EnableMessagingCta testId="settingsEnableMessaging" layout="panel" />
+        <label className="flex min-h-11 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            data-testid="settingsReceipts"
+            checked={receiptsEnabled}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              setReceiptsEnabled(enabled);
+              if (pubky) void StorageService.setReceiptsEnabled(pubky, enabled);
+            }}
+          />
+          Send read receipts
+        </label>
+        <p className="text-sm text-muted-foreground">
+          When this is on, this device tells the other person when their messages are delivered and read. Receipts never go to anyone except that conversation’s peer.
+        </p>
       </section>
 
       <section className="space-y-3">
