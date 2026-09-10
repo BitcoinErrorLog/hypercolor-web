@@ -93,6 +93,7 @@ vi.mock("@/services/StorageService", () => ({
     saveLinkStreamItems: vi.fn(),
     markLinkStreamItemProcessed: vi.fn(),
     saveLinkMessage: vi.fn(),
+    findLinkMessageInConversation: vi.fn(async () => null),
     hasLinkMessage: vi.fn(async () => false),
     getLinkMessage: vi.fn(),
     listPaymentRequestsWithPendingEvent: vi.fn(async () => []),
@@ -178,7 +179,7 @@ import {
   buildPreparedSendIntent,
   resetLinkServiceHarnessState,
 } from "./LinkService";
-import { CHAT_MESSAGE_KIND, CHAT_RECEIPT_KIND, LINK_RECEIVER_PATH } from "../../types/link";
+import { CHAT_DELETE_KIND, CHAT_MESSAGE_KIND, CHAT_RECEIPT_KIND, LINK_RECEIVER_PATH } from "../../types/link";
 import { resetChatKindsUpgradeReplayedForTests } from "./chatKindsAdvertisement";
 import { CHAT_ATTACHMENT_KIND } from "../../types/attachment";
 
@@ -1590,6 +1591,66 @@ describe("LinkService inbound accept gate", () => {
     expect(received).toEqual([]);
     expect(StorageService.upsertMessageRequest).not.toHaveBeenCalled();
     expect(receivePrivate).toHaveBeenCalledWith("handle-1");
+  });
+
+  it("expires a delete deferred beyond its TTL", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "11111111-1111-4111-8111-111111111111",
+      sent_at: NOW,
+      target_event_id: EVENT_ID,
+    });
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+      {
+        id: "expired-delete",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_DELETE_KIND,
+        rawJson,
+        receivedAt: NOW - 48 * 60 * 60 * 1000 - 1,
+        processed: false,
+      },
+    ]);
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(StorageService.markLinkStreamItemProcessed).toHaveBeenCalledWith(
+      "expired-delete",
+    );
+  });
+
+  it("keeps a short-latency deferred delete available for its target", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "22222222-2222-4222-8222-222222222222",
+      sent_at: NOW,
+      target_event_id: EVENT_ID,
+    });
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+      {
+        id: "short-delete",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_DELETE_KIND,
+        rawJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+    ]);
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(StorageService.markLinkStreamItemProcessed).not.toHaveBeenCalledWith(
+      "short-delete",
+    );
   });
 });
 

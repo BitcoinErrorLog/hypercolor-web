@@ -1310,8 +1310,7 @@ export const StorageService = {
         }
       } else if (targetKind === 'cache') {
         try {
-          await deleteCacheFiles([target]);
-          ok = true;
+          ok = (await deleteCacheFiles([target])).length === 0;
         } catch {
           ok = false;
         }
@@ -2004,6 +2003,22 @@ export const StorageService = {
       input.eventId,
     );
     if (!existing || existing.senderPubky !== input.senderPubky) return;
+    const attachment = await StorageService.getAttachment(
+      input.ownerPubky,
+      input.senderPubky,
+      input.eventId,
+    );
+    const attachmentService = attachment
+      ? KeyStore.attachmentKeyService(input.ownerPubky, input.senderPubky, input.eventId)
+      : null;
+    const attachmentKeyDeleted = attachmentService
+      ? await KeyStore.deleteAttachmentSecretByService(input.ownerPubky, attachmentService)
+      : true;
+    let cacheCleanupFailed = false;
+    if (attachment?.localCachePath) {
+      cacheCleanupFailed =
+        (await deleteCacheFiles([attachment.localCachePath])).length > 0;
+    }
     const tombstoneJson = JSON.stringify({
       version: 1,
       kind: existing.kind,
@@ -2026,7 +2041,57 @@ export const StorageService = {
           input.senderPubky,
         ],
       );
+      const streamRows = db.executeSync(
+        `SELECT id, kind, raw_json FROM link_stream_items
+         WHERE owner_pubky = ? AND peer_pubky = ?`,
+        [input.ownerPubky, existing.peerPubky],
+      ).rows ?? [];
+      for (const row of streamRows) {
+        let parsed: { event_id?: unknown; kind?: unknown; sent_at?: unknown };
+        try {
+          parsed = JSON.parse(String(row.raw_json)) as typeof parsed;
+        } catch {
+          continue;
+        }
+        if (parsed.event_id !== input.eventId) continue;
+        db.executeSync(
+          `UPDATE link_stream_items SET raw_json = ? WHERE id = ?`,
+          [
+            JSON.stringify({
+              kind: typeof parsed.kind === "string" ? parsed.kind : row.kind,
+              event_id: input.eventId,
+              sent_at: typeof parsed.sent_at === "number" ? parsed.sent_at : existing.sentAt,
+              deleted: true,
+            }),
+            row.id,
+          ],
+        );
+      }
       db.executeSync('DELETE FROM delivery_queue WHERE message_id = ?', [input.eventId]);
+      if (attachment) {
+        if (cacheCleanupFailed && attachment.localCachePath) {
+          db.executeSync(
+            `INSERT OR IGNORE INTO pending_cleanup
+              (owner_pubky, target_kind, target, created_at)
+             VALUES (?, 'cache', ?, ?)`,
+            [input.ownerPubky, attachment.localCachePath, now()],
+          );
+        }
+        db.executeSync(
+          `UPDATE attachments
+           SET resolve_state = 'unavailable-from-backup', local_cache_path = NULL, updated_at = ?
+           WHERE owner_pubky = ? AND sender_pubky = ? AND event_id = ?`,
+          [now(), input.ownerPubky, input.senderPubky, input.eventId],
+        );
+        if (!attachmentKeyDeleted && attachmentService) {
+          db.executeSync(
+            `INSERT OR IGNORE INTO pending_cleanup
+              (owner_pubky, target_kind, target, created_at)
+             VALUES (?, 'keystore', ?, ?)`,
+            [input.ownerPubky, attachmentService, now()],
+          );
+        }
+      }
       removeSearchMessage(db, input.ownerPubky, dmThreadKey(input.conversationId), input.eventId);
     });
   },

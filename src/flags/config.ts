@@ -53,6 +53,9 @@ export const GROUP_DEFERRED_QUOTA_PER_SENDER = 32;
  */
 export const GROUP_DEFERRED_TTL_MS = 48 * 60 * 60 * 1000;
 
+/** Delete controls whose DM target never arrives are retained for this long. */
+export const CHAT_DELETE_DEFERRED_TTL_MS = 48 * 60 * 60 * 1000;
+
 /**
  * v1 ciphertext is read/written as a base64 string across the RN JSON bridge.
  * 8 MiB plaintext is a conservative cap (~10.7 MiB base64). Chunking and

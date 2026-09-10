@@ -17,6 +17,7 @@ import {
   assertValidReceiverPath,
   buildChatMessageEnvelope,
   buildDmConversationId,
+  CHAT_DELETE_KIND,
   CHAT_MESSAGE_KIND,
   CHAT_RECEIPT_KIND,
   CHAT_TAG_KIND,
@@ -54,6 +55,7 @@ import {
 import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
+import { CHAT_DELETE_DEFERRED_TTL_MS } from "../../flags/config";
 import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver, healMissingReceiverRow } from "./provisionReceiver";
 import { STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
 import { LinkSendError } from "./LinkSendError";
@@ -2275,6 +2277,7 @@ async function routeUnprocessedStreamItems(
   const items = await StorageService.getUnprocessedLinkStreamItems(ownerPubky, peerPubky);
   const received: LinkMessage[] = [];
   const seenInBatch = new Set<string>();
+  let deferred = false;
   for (const item of items) {
     if (shouldDropOversizedKnownInbound(item.rawJson, item.kind)) {
       const peekedOver = peekEnvelopeKind(item.rawJson);
@@ -2326,6 +2329,13 @@ async function routeUnprocessedStreamItems(
     if (kindOutcome !== "unprocessed") {
       if (kindOutcome !== "deferred") {
         await StorageService.markLinkStreamItemProcessed(item.id);
+      } else if (
+        peeked === CHAT_DELETE_KIND &&
+        Date.now() - item.receivedAt >= CHAT_DELETE_DEFERRED_TTL_MS
+      ) {
+        await StorageService.markLinkStreamItemProcessed(item.id);
+      } else {
+        deferred = true;
       }
       continue;
     }
@@ -2389,6 +2399,9 @@ async function routeUnprocessedStreamItems(
       status: "delivered",
       eventIds: [envelope.event_id],
     });
+  }
+  if (deferred && received.length > 0) {
+    return [...received, ...(await routeUnprocessedStreamItems(ownerPubky, peerPubky))];
   }
   return received;
 }

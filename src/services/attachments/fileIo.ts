@@ -184,12 +184,21 @@ async function existsOpfs(path: string): Promise<boolean> {
   }
 }
 
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    error.name === "NotFoundError"
+  );
+}
+
 async function deleteOpfs(path: string): Promise<void> {
   try {
     const { dir, name } = await opfsWalk(splitPath(path), false);
     await dir.removeEntry(name);
-  } catch {
-    // Best-effort cache wipe.
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
   }
 }
 
@@ -261,7 +270,8 @@ export async function cacheFileExists(path: string): Promise<boolean> {
 
 export async function deleteCacheFiles(
   paths: readonly (string | null | undefined)[],
-): Promise<void> {
+): Promise<string[]> {
+  const failed: string[] = [];
   for (const path of paths) {
     if (!path) continue;
     try {
@@ -271,7 +281,8 @@ export async function deleteCacheFiles(
         await fs.rm(path, { force: true });
       }
     } catch {
-      // Best-effort cache wipe.
+      failed.push(path);
     }
   }
+  return failed;
 }

@@ -242,14 +242,14 @@ async function applyDeleteEnvelope(
   senderPubky: PubkyKey,
   peerPubky: PubkyKey,
   envelope: { target_event_id: string },
-): Promise<"applied" | "processed" | { error: ChatKindParseReason }> {
+): Promise<"applied" | "processed" | "deferred" | { error: ChatKindParseReason }> {
   const conversationId = buildDmConversationId(peerPubky);
   const target = await StorageService.findLinkMessageInConversation(
     ownerPubky,
     conversationId,
     envelope.target_event_id,
   );
-  if (!target) return "processed";
+  if (!target) return "deferred";
   if (target.senderPubky !== senderPubky) return { error: "wrong-author" };
   await StorageService.tombstoneLinkMessage({
     ownerPubky,

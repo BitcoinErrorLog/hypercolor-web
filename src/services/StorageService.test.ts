@@ -3,7 +3,7 @@
  * (fake-indexeddb). Mobile mocks KeyStore; web exercises the async methods.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { setDbForTests } from "../db";
 import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
 import { CURRENT_VERSION, runMigrations } from "../db/migrations";
@@ -11,6 +11,12 @@ import { CHAT_MESSAGE_KIND } from "../types/link";
 import { GROUP_MESSAGE_KIND } from "../types/group";
 import { KeyStore } from "./KeyStore";
 import { StorageService } from "./StorageService";
+
+const deleteCacheFilesMock = vi.hoisted(() => vi.fn());
+vi.mock("./attachments/fileIo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./attachments/fileIo")>()),
+  deleteCacheFiles: deleteCacheFilesMock,
+}));
 
 const OWNER = "a".repeat(52);
 const PEER = "z".repeat(52);
@@ -31,6 +37,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
 
   beforeEach(async () => {
     await KeyStore.clear();
+    deleteCacheFilesMock.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -735,5 +742,160 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(txn.filter((sql) => /^COMMIT\b/i.test(sql))).toHaveLength(1);
     expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
     expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toEqual([]);
+  });
+
+  it("redacts retained stream data and evicts attachment material on tombstone", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({
+        version: 1,
+        kind: CHAT_MESSAGE_KIND,
+        event_id: ATTACH_EVENT,
+        sent_at: 1,
+        body: "stream-secret",
+      }),
+      body: "stream-secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT),
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      localCachePath: null,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+    await StorageService.saveLinkStreamItems([
+      {
+        id: "stream-target",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: JSON.stringify({
+          kind: CHAT_MESSAGE_KIND,
+          event_id: ATTACH_EVENT,
+          sent_at: 1,
+          body: "stream-secret",
+        }),
+        receivedAt: 1,
+      },
+    ]);
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).toBeNull();
+    expect(await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT)).toEqual(
+      expect.objectContaining({ resolveState: "unavailable-from-backup" }),
+    );
+    const stream = await StorageService.getUnprocessedLinkStreamItems(OWNER, PEER);
+    expect(stream[0]?.rawJson).not.toContain("stream-secret");
+    expect(stream[0]?.rawJson).toContain('"deleted":true');
+  });
+
+  it("journals a failed attachment cache deletion before clearing its path", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const cachePath = "/tmp/plaintext-attachment";
+    deleteCacheFilesMock.mockResolvedValueOnce([cachePath]);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: "attachment-key",
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      localCachePath: cachePath,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([{ target_kind: "cache", target: cachePath }]);
+    expect((await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT))?.localCachePath).toBeNull();
+  });
+
+  it("drains an already-absent cache cleanup row", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const cachePath = "/tmp/already-absent-attachment";
+    db.executeSync(
+      `INSERT INTO pending_cleanup (owner_pubky, target_kind, target, created_at)
+       VALUES (?, 'cache', ?, 1)`,
+      [OWNER, cachePath],
+    );
+
+    await StorageService.retryPendingCleanup();
+
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([]);
+    expect(deleteCacheFilesMock).toHaveBeenCalledWith([cachePath]);
   });
 });

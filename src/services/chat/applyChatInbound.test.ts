@@ -252,4 +252,69 @@ describe("apply chat.tag.v0 / chat.receipt.v0", () => {
     const snap = await StorageService.collectOwnerBackup(OWNER);
     expect(snap.linkMessages.some((m) => m.eventId === uuid)).toBe(false);
   });
+
+  it("defers an inbound delete until its target arrives", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const del = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "11111111-1111-4111-8111-111111111111",
+      sent_at: ts,
+      target_event_id: uuid,
+    });
+
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: del,
+      }),
+    ).toBe("deferred");
+
+    await StorageService.saveLinkMessage(
+      dm({
+        senderPubky: PEER,
+        direction: "received",
+        body: "arrived after delete",
+      }),
+    );
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: del,
+      }),
+    ).toBe("applied");
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, buildDmConversationId(PEER), uuid))
+        ?.rawJson,
+    ).toContain('"deleted":true');
+  });
+
+  it("rejects an inbound delete from a non-authorized sender", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage(dm({ senderPubky: OWNER }));
+    const del = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "22222222-2222-4222-8222-222222222222",
+      sent_at: ts,
+      target_event_id: uuid,
+    });
+
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: del,
+      }),
+    ).toEqual({ error: "wrong-author" });
+  });
 });
