@@ -77,6 +77,7 @@ vi.mock("@/services/StorageService", () => ({
     enqueue: vi.fn(),
     hasQueueItemForMessage: vi.fn(async () => false),
     getLinkMessageByEventId: vi.fn(),
+    tombstoneLinkMessage: vi.fn(),
     clearPaymentPendingEvent: vi.fn(),
     removeQueueItemsForRecipient: vi.fn(),
     removeQueueItemsAndAbandonOwedForPeer: vi.fn(),
@@ -1651,6 +1652,284 @@ describe("LinkService inbound accept gate", () => {
     expect(StorageService.markLinkStreamItemProcessed).not.toHaveBeenCalledWith(
       "short-delete",
     );
+  });
+
+  it("does not return a message tombstoned during deferred same-batch routing", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const targetEventId = "33333333-3333-4333-8333-333333333333";
+    const deleteJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "44444444-4444-4444-8444-444444444444",
+      sent_at: NOW,
+      target_event_id: targetEventId,
+    });
+    const messageJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: targetEventId,
+      sent_at: NOW,
+      body: "should be tombstoned",
+    });
+    const target = {
+      ownerPubky: OWNER,
+      eventId: targetEventId,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: messageJson,
+      body: "should be tombstoned",
+      sentAt: NOW,
+      receivedAt: NOW,
+      deliveryState: "delivered" as const,
+    };
+    const deleteItem = {
+      id: "delete-before-target",
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      kind: CHAT_DELETE_KIND,
+      rawJson: deleteJson,
+      receivedAt: NOW,
+      processed: false,
+    };
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems)
+      .mockResolvedValueOnce([
+      {
+        ...deleteItem,
+      },
+      {
+        id: "same-batch-target",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: messageJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+      ])
+      .mockResolvedValueOnce([deleteItem])
+      .mockResolvedValue([]);
+    let targetStored = false;
+    let targetTombstoned = false;
+    vi.mocked(StorageService.findLinkMessageInConversation).mockImplementation(async () => {
+      if (!targetStored) {
+        targetStored = true;
+        return null;
+      }
+      return targetTombstoned
+        ? { ...target, body: "", rawJson: JSON.stringify({ deleted: true }) }
+        : target;
+    });
+    vi.mocked(StorageService.saveLinkMessage).mockImplementationOnce(async () => {
+      targetStored = true;
+    });
+    vi.mocked(StorageService.tombstoneLinkMessage).mockImplementationOnce(async () => {
+      targetTombstoned = true;
+    });
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+    expect(StorageService.tombstoneLinkMessage).toHaveBeenCalledWith({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: targetEventId,
+      senderPubky: PEER,
+    });
+  });
+
+  it("does not return a message tombstoned by a later delete in the same pass", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const targetEventId = "55555555-5555-4555-8555-555555555555";
+    const messageJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: targetEventId,
+      sent_at: NOW,
+      body: "should not be returned",
+    });
+    const deleteJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "66666666-6666-4666-8666-666666666666",
+      sent_at: NOW,
+      target_event_id: targetEventId,
+    });
+    const target = {
+      ownerPubky: OWNER,
+      eventId: targetEventId,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: messageJson,
+      body: "should not be returned",
+      sentAt: NOW,
+      receivedAt: NOW,
+      deliveryState: "delivered" as const,
+    };
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+      {
+        id: "target-before-delete",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: messageJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+      {
+        id: "delete-after-target",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_DELETE_KIND,
+        rawJson: deleteJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+    ]);
+    let tombstoned = false;
+    vi.mocked(StorageService.findLinkMessageInConversation).mockImplementation(async () =>
+      tombstoned ? { ...target, body: "", rawJson: JSON.stringify({ deleted: true }) } : target,
+    );
+    vi.mocked(StorageService.tombstoneLinkMessage).mockImplementationOnce(async () => {
+      tombstoned = true;
+    });
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+    expect(StorageService.tombstoneLinkMessage).toHaveBeenCalledWith({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: targetEventId,
+      senderPubky: PEER,
+    });
+  });
+
+  it("does not return plaintext when same-pass reconciliation cannot find the current row", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const targetEventId = "77777777-7777-4777-8777-777777777777";
+    const messageJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: targetEventId,
+      sent_at: NOW,
+      body: "must not leak",
+    });
+    const deleteJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "88888888-8888-4888-8888-888888888888",
+      sent_at: NOW,
+      target_event_id: targetEventId,
+    });
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+      {
+        id: "missing-target-message",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: messageJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+      {
+        id: "missing-target-delete",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_DELETE_KIND,
+        rawJson: deleteJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+    ]);
+    vi.mocked(StorageService.findLinkMessageInConversation)
+      .mockResolvedValueOnce({
+        ownerPubky: OWNER,
+        eventId: targetEventId,
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: PEER,
+        direction: "received",
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: messageJson,
+        body: "must not leak",
+        sentAt: NOW,
+        receivedAt: NOW,
+        deliveryState: "delivered",
+      })
+      .mockResolvedValueOnce(null);
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+  });
+
+  it("does not return plaintext when same-pass reconciliation cannot parse the current row", async () => {
+    getLink.mockResolvedValue(establishedLink);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(1);
+    const targetEventId = "99999999-9999-4999-8999-999999999999";
+    const messageJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_MESSAGE_KIND,
+      event_id: targetEventId,
+      sent_at: NOW,
+      body: "must not leak",
+    });
+    const deleteJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      sent_at: NOW,
+      target_event_id: targetEventId,
+    });
+    const target = {
+      ownerPubky: OWNER,
+      eventId: targetEventId,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: messageJson,
+      body: "must not leak",
+      sentAt: NOW,
+      receivedAt: NOW,
+      deliveryState: "delivered" as const,
+    };
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockResolvedValue([
+      {
+        id: "unparseable-target-message",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: messageJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+      {
+        id: "unparseable-target-delete",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_DELETE_KIND,
+        rawJson: deleteJson,
+        receivedAt: NOW,
+        processed: false,
+      },
+    ]);
+    vi.mocked(StorageService.findLinkMessageInConversation)
+      .mockResolvedValueOnce(target)
+      .mockResolvedValueOnce({
+        ...target,
+        rawJson: "{not-json",
+      });
+    receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
   });
 });
 

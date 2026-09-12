@@ -802,6 +802,14 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
         }),
         receivedAt: 1,
       },
+      {
+        id: "stream-malformed",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: "{malformed historical row",
+        receivedAt: 1,
+      },
     ]);
 
     await StorageService.tombstoneLinkMessage({
@@ -816,8 +824,13 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       expect.objectContaining({ resolveState: "unavailable-from-backup" }),
     );
     const stream = await StorageService.getUnprocessedLinkStreamItems(OWNER, PEER);
-    expect(stream[0]?.rawJson).not.toContain("stream-secret");
-    expect(stream[0]?.rawJson).toContain('"deleted":true');
+    expect(stream.find((row) => row.id === "stream-target")?.rawJson).not.toContain(
+      "stream-secret",
+    );
+    expect(stream.find((row) => row.id === "stream-target")?.rawJson).toContain('"deleted":true');
+    expect(stream.find((row) => row.id === "stream-malformed")?.rawJson).toBe(
+      "{malformed historical row",
+    );
   });
 
   it("journals a failed attachment cache deletion before clearing its path", async () => {
@@ -874,6 +887,135 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       ).rows,
     ).toEqual([{ target_kind: "cache", target: cachePath }]);
     expect((await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT))?.localCachePath).toBeNull();
+  });
+
+  it("journals a failed attachment key deletion after tombstoning", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    const service = KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT);
+    const deleteSpy = vi
+      .spyOn(KeyStore, "deleteAttachmentSecretByService")
+      .mockResolvedValueOnce(false);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: ATTACH_EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: service,
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      createdAt: 1,
+      updatedAt: 1,
+      localCachePath: null,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, `dm:${PEER}`, ATTACH_EVENT))?.body,
+    ).toBe("");
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).not.toBeNull();
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([{ target_kind: "keystore", target: service }]);
+    deleteSpy.mockRestore();
+  });
+
+  it("rolls back SQLite tombstone changes after deleting the attachment key", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    const service = KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: ATTACH_EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: service,
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      createdAt: 1,
+      updatedAt: 1,
+      localCachePath: null,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+    const originalExecute = db.executeSync.bind(db);
+    let failed = false;
+    db.executeSync = (query, params = []) => {
+      if (!failed && /^UPDATE link_messages\s/i.test(query.trim())) {
+        failed = true;
+        throw new Error("injected SQLite transaction failure");
+      }
+      return originalExecute(query, params);
+    };
+
+    await expect(
+      StorageService.tombstoneLinkMessage({
+        ownerPubky: OWNER,
+        conversationId: `dm:${PEER}`,
+        eventId: ATTACH_EVENT,
+        senderPubky: PEER,
+      }),
+    ).rejects.toThrow("injected SQLite transaction failure");
+    db.executeSync = originalExecute;
+
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, `dm:${PEER}`, ATTACH_EVENT))?.body,
+    ).toBe("secret");
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).toBeNull();
   });
 
   it("drains an already-absent cache cleanup row", async () => {

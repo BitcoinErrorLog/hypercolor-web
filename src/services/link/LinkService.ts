@@ -2278,6 +2278,7 @@ async function routeUnprocessedStreamItems(
   const received: LinkMessage[] = [];
   const seenInBatch = new Set<string>();
   let deferred = false;
+  let deleteApplied = false;
   for (const item of items) {
     if (shouldDropOversizedKnownInbound(item.rawJson, item.kind)) {
       const peekedOver = peekEnvelopeKind(item.rawJson);
@@ -2327,6 +2328,9 @@ async function routeUnprocessedStreamItems(
       rawJson: item.rawJson,
     });
     if (kindOutcome !== "unprocessed") {
+      if (kindOutcome === "applied" && peeked === CHAT_DELETE_KIND) {
+        deleteApplied = true;
+      }
       if (kindOutcome !== "deferred") {
         await StorageService.markLinkStreamItemProcessed(item.id);
       } else if (
@@ -2400,8 +2404,29 @@ async function routeUnprocessedStreamItems(
       eventIds: [envelope.event_id],
     });
   }
-  if (deferred && received.length > 0) {
-    return [...received, ...(await routeUnprocessedStreamItems(ownerPubky, peerPubky))];
+  if ((deferred || deleteApplied) && received.length > 0) {
+    const routed = deferred ? await routeUnprocessedStreamItems(ownerPubky, peerPubky) : [];
+    const reconciled: LinkMessage[] = [];
+    for (const row of received) {
+      const current = await StorageService.findLinkMessageInConversation(
+        ownerPubky,
+        row.conversationId,
+        row.eventId,
+      );
+      if (!current) {
+        throw new Error(`Link message disappeared during deferred routing: ${row.eventId}`);
+      }
+      let deleted = false;
+      try {
+        const parsed = JSON.parse(current.rawJson) as { deleted?: unknown };
+        deleted = parsed.deleted === true;
+      } catch {
+        // An unparseable current row cannot prove that plaintext is still live.
+        throw new Error(`Link message reconciliation failed: ${row.eventId}`);
+      }
+      if (!deleted) reconciled.push(row);
+    }
+    return [...reconciled, ...routed];
   }
   return received;
 }

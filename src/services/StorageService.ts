@@ -2051,6 +2051,7 @@ export const StorageService = {
         try {
           parsed = JSON.parse(String(row.raw_json)) as typeof parsed;
         } catch {
+          // Malformed historical rows remain residuals because attribution is unprovable.
           continue;
         }
         if (parsed.event_id !== input.eventId) continue;
