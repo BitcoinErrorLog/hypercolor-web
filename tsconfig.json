@@ -32,8 +32,6 @@
     "vitest.config.mts",
     "playwright.config.ts",
     "next.config.ts",
-    "scripts/vibeware-evidence.d.ts",
-    "scripts/vibeware-evidence.d.mts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],

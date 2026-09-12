@@ -50,6 +50,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# copied from @sqlite.org/sqlite-wasm on postinstall / prebuild
-/public/sqlite3.wasm

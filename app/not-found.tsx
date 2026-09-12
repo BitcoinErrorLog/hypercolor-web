@@ -1,5 +1,5 @@
 import { UnavailablePage } from "@/components/unavailable-page";
 
-export default function HomePage() {
+export default function NotFound() {
   return <UnavailablePage />;
 }
