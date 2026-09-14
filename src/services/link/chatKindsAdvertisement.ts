@@ -13,18 +13,34 @@ import { StorageService } from "../StorageService";
 import { PaykitLinkWeb, type ReceiverMarker, type SessionHandle } from "./PaykitLinkWeb";
 
 const chatKindsUpgradeReplayed = new Set<string>();
-const CAPABILITY_REQUEST_BUDGET_MS = 15_000;
+export const CAPABILITY_REQUEST_BUDGET_MS = 15_000;
 
 function withCapabilityBudget<T>(promise: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
     promise,
     new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error("capability request timed out")), CAPABILITY_REQUEST_BUDGET_MS);
+      timer = setTimeout(
+        () => reject(Object.assign(new Error("capability request timed out"), { capabilityFailure: "transient" })),
+        CAPABILITY_REQUEST_BUDGET_MS,
+      );
     }),
   ]).finally(() => {
     if (timer !== undefined) clearTimeout(timer);
   });
+}
+
+function terminalCapabilityError(message: string): Error {
+  return Object.assign(new Error(message), { capabilityFailure: "terminal" });
+}
+
+export function isTerminalCapabilityFailure(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "capabilityFailure" in error &&
+      error.capabilityFailure === "terminal",
+  );
 }
 
 export function resetChatKindsUpgradeReplayedForTests(): void {
@@ -36,10 +52,12 @@ export async function putChatKindsVReceiverJson(
   noisePublicKey: string,
 ): Promise<void> {
   const body = buildCapabilitiesJson();
-  await PaykitLinkWeb.putPublic(
-    session,
-    capabilityPath(noisePublicKey),
-    new TextEncoder().encode(body),
+  await withCapabilityBudget(
+    PaykitLinkWeb.putPublic(
+      session,
+      capabilityPath(noisePublicKey),
+      new TextEncoder().encode(body),
+    ),
   );
 }
 
@@ -72,24 +90,22 @@ export async function ensureChatKindsVReceiverJson(
     PaykitLinkWeb.getReceiverMarker(ownerPubky, receiverPath),
   );
   if (!marker || marker.noisePublicKey !== noisePublicKey) {
-    throw new Error("receiver marker changed before capability publish");
+    throw terminalCapabilityError("receiver marker changed before capability publish");
   }
   const current = await readChatKindsCapability(ownerPubky, noisePublicKey);
   if (current.kind === "valid" && current.chatKindsV >= CHAT_KINDS_V) return;
   if (current.kind === "invalid" || current.kind === "too-large") {
-    throw new Error("invalid capability document");
+    throw terminalCapabilityError("invalid capability document");
   }
   await putChatKindsVReceiverJson(session, noisePublicKey);
   const [reconciledCapability, reconciledMarker] = await Promise.all([
     readChatKindsCapability(ownerPubky, noisePublicKey),
     withCapabilityBudget(PaykitLinkWeb.getReceiverMarker(ownerPubky, receiverPath)),
   ]);
-  if (
-    reconciledCapability.kind !== "valid" ||
-    reconciledCapability.chatKindsV < CHAT_KINDS_V ||
-    !reconciledMarker ||
-    reconciledMarker.noisePublicKey !== noisePublicKey
-  ) {
+  if (!reconciledMarker || reconciledMarker.noisePublicKey !== noisePublicKey) {
+    throw terminalCapabilityError("capability publish was not confirmed");
+  }
+  if (reconciledCapability.kind !== "valid" || reconciledCapability.chatKindsV < CHAT_KINDS_V) {
     throw new Error("capability publish was not confirmed");
   }
 }
@@ -121,7 +137,9 @@ async function resolvePeerChatKindsVResult(
     return { available: false, value: 0 };
   }
   try {
-    const legacy = await PaykitLinkWeb.publicGet(peerPubky, LEGACY_RECEIVER_JSON_STORAGE_PATH);
+    const legacy = await withCapabilityBudget(
+      PaykitLinkWeb.publicGet(peerPubky, LEGACY_RECEIVER_JSON_STORAGE_PATH),
+    );
     if (!legacy) return { available: true, value: 0 };
     const value = parseLegacyChatKindsVDetailed(new TextDecoder().decode(legacy));
     return value === null ? { available: false, value: 0 } : { available: true, value };

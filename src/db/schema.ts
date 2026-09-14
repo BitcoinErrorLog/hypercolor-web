@@ -63,6 +63,13 @@ export const SCHEMA_V18_STATEMENTS: readonly string[] = [
   )`,
 ];
 
+/** Schema v19 — distinguish unconfirmed marker and capability publication. */
+export const SCHEMA_V19_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_receiver_retries
+     ADD COLUMN stage TEXT NOT NULL DEFAULT 'marker'
+     CHECK (stage IN ('marker', 'capability'))`,
+];
+
 /**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the

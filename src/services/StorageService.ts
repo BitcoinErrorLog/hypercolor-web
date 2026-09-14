@@ -542,6 +542,7 @@ export const StorageService = {
       ownerPubky: String(row.owner_pubky),
       sessionAlias: String(row.session_alias),
       noisePublicKey: String(row.noise_public_key),
+      stage: row.stage === 'capability' ? 'capability' : 'marker',
       nextRetryAt: Number(row.next_retry_at),
       attempts: Number(row.attempts),
     };
@@ -551,17 +552,19 @@ export const StorageService = {
     const db = await getDb();
     db.executeSync(
       `INSERT INTO link_receiver_retries
-        (owner_pubky, session_alias, noise_public_key, next_retry_at, attempts)
-       VALUES (?, ?, ?, ?, ?)
+        (owner_pubky, session_alias, noise_public_key, stage, next_retry_at, attempts)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky) DO UPDATE SET
          session_alias = excluded.session_alias,
          noise_public_key = excluded.noise_public_key,
+         stage = excluded.stage,
          next_retry_at = excluded.next_retry_at,
          attempts = excluded.attempts`,
       [
         retry.ownerPubky,
         retry.sessionAlias,
         retry.noisePublicKey,
+        retry.stage,
         retry.nextRetryAt,
         retry.attempts,
       ],

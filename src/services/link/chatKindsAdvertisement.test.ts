@@ -19,6 +19,7 @@ vi.mock("./PaykitLinkWeb", () => ({
 
 import {
   ensureChatKindsVReceiverJson,
+  isTerminalCapabilityFailure,
   persistPeerChatKindsVFromMarker,
   resolvePeerChatKindsV,
 } from "./chatKindsAdvertisement";
@@ -214,6 +215,15 @@ describe("key-bound Hypercolor capability discovery", () => {
     await expect(
       ensureChatKindsVReceiverJson({ pubky: () => OWNER } as never, OWNER, "hypercolor/wallet", PK),
     ).rejects.toThrow("not confirmed");
+  });
+
+  it("treats an absent post-PUT capability reconciliation as transient", async () => {
+    publicGet.mockResolvedValue(undefined);
+    getReceiverMarker.mockResolvedValue(marker);
+
+    await expect(
+      ensureChatKindsVReceiverJson({ pubky: () => OWNER } as never, OWNER, "hypercolor/wallet", PK),
+    ).rejects.toSatisfy((error: unknown) => !isTerminalCapabilityFailure(error));
   });
 
   it("rejects a stale marker without writing the capability", async () => {

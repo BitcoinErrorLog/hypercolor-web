@@ -200,6 +200,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       ownerPubky: OWNER,
       sessionAlias: "hypercolor/wallet",
       noisePublicKey: "noise",
+      stage: "marker",
       nextRetryAt: 10,
       attempts: 1,
     });

@@ -428,6 +428,7 @@ export interface LinkReceiverRetry {
   ownerPubky: PubkyKey;
   sessionAlias: string;
   noisePublicKey: string;
+  stage: "marker" | "capability";
   nextRetryAt: number;
   attempts: number;
 }

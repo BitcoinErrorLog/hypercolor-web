@@ -22,7 +22,7 @@ describe("idempotent migration guards", () => {
     );
   });
 
-  it("creates the owner-bound receiver retry table", async () => {
+  it("creates the owner-bound receiver retry table with its purpose stage", async () => {
     const db = openMemoryDb();
     await runMigrations(db);
     expect(
@@ -30,5 +30,8 @@ describe("idempotent migration guards", () => {
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'link_receiver_retries'",
       ).rows,
     ).toHaveLength(1);
+    expect(
+      db.executeSync("PRAGMA table_info(link_receiver_retries)").rows?.some((row) => row.name === "stage"),
+    ).toBe(true);
   });
 });

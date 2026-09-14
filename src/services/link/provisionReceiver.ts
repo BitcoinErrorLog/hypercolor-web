@@ -9,7 +9,10 @@ import {
 } from "@/types/link";
 import type { PubkyKey } from "@/types";
 import { PaykitLinkWeb, type SessionHandle } from "./PaykitLinkWeb";
-import { ensureChatKindsVReceiverJson } from "./chatKindsAdvertisement";
+import {
+  ensureChatKindsVReceiverJson,
+  isTerminalCapabilityFailure,
+} from "./chatKindsAdvertisement";
 import { getLiveSession, persistReceiverPath } from "./session";
 import { setReceiverRoleState } from "./receiverRoleStore";
 import { MAX_ATTEMPTS, nextAttemptAt } from "../RetryQueue";
@@ -121,14 +124,57 @@ async function retainPublishUnknown(
   ownerPubky: PubkyKey,
   noisePublicKey: string,
   attempts: number,
+  stage: "marker" | "capability" = "marker",
 ): Promise<void> {
   await StorageService.upsertLinkReceiverRetry({
     ownerPubky,
     sessionAlias: RECEIVER_NOISE_ALIAS,
     noisePublicKey,
+    stage,
     nextRetryAt: nextAttemptAt(attempts),
     attempts: attempts + 1,
   });
+}
+
+async function enqueueCapabilityRetry(ownerPubky: PubkyKey, noisePublicKey: string): Promise<void> {
+  await StorageService.upsertLinkReceiverRetry({
+    ownerPubky,
+    sessionAlias: RECEIVER_NOISE_ALIAS,
+    noisePublicKey,
+    stage: "capability",
+    nextRetryAt: Date.now(),
+    attempts: 0,
+  });
+}
+
+let capabilityRetryDrain: Promise<void> | null = null;
+
+function drainCapabilityRetryInBackground(): Promise<void> {
+  const run = drainReceiverPublishRetry()
+    .catch((error) => {
+      console.warn("[provisionReceiver] capability retry failed:", error);
+    })
+    .then(() => undefined);
+  capabilityRetryDrain = run;
+  void run.finally(() => {
+    if (capabilityRetryDrain === run) capabilityRetryDrain = null;
+  });
+  return run;
+}
+
+export async function waitForCapabilityRetryDrainForTests(): Promise<void> {
+  await capabilityRetryDrain;
+}
+
+async function confirmActiveReceiver(
+  pubky: PubkyKey,
+  receiverPath: string,
+  noisePublicKey: string,
+): Promise<void> {
+  await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
+  await persistReceiverPath(pubky, receiverPath);
+  await enqueueCapabilityRetry(pubky, noisePublicKey);
+  drainCapabilityRetryInBackground();
 }
 
 async function existingRetryAttempts(ownerPubky: PubkyKey): Promise<number> {
@@ -213,15 +259,7 @@ export async function provisionReceiver(
   }
 
   if (published.kind === "present" && published.noisePublicKey === noisePublicKey) {
-    try {
-      await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
-    } catch (error) {
-      await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
-      throw error;
-    }
-    await StorageService.deleteLinkReceiverRetry(pubky);
-    await persistReceiverRow(pubky, receiverPath, true, "active", published.noisePublicKey);
-    await persistReceiverPath(pubky, receiverPath);
+    await confirmActiveReceiver(pubky, receiverPath, noisePublicKey);
     return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
   }
 
@@ -238,16 +276,7 @@ export async function provisionReceiver(
     await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
     throw new Error("receiver marker publish was not confirmed");
   }
-  try {
-    await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
-  } catch (error) {
-    await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
-    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
-    throw error;
-  }
-  await StorageService.deleteLinkReceiverRetry(pubky);
-  await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
-  await persistReceiverPath(pubky, receiverPath);
+  await confirmActiveReceiver(pubky, receiverPath, noisePublicKey);
   return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
 }
 
@@ -320,15 +349,7 @@ export async function takeoverReceiver(
     await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
     throw new Error("takeover marker publish was not confirmed");
   }
-  try {
-    await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
-  } catch (error) {
-    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
-    throw error;
-  }
-  await StorageService.deleteLinkReceiverRetry(pubky);
-  await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
-  await persistReceiverPath(pubky, receiverPath);
+  await confirmActiveReceiver(pubky, receiverPath, noisePublicKey);
   setReceiverRoleState("active", TAKEOVER_TOAST);
   return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
 }
@@ -391,9 +412,52 @@ export async function drainReceiverPublishRetry(nowMs = Date.now()): Promise<boo
     return false;
   }
   try {
-    await provisionReceiver(live.handle, live.pubky);
+    if (retry.stage === "marker") {
+      const result = await provisionReceiver(live.handle, retry.ownerPubky);
+      if (result.receiverRole === "standby") {
+        await StorageService.deleteLinkReceiverRetry(retry.ownerPubky);
+        return false;
+      }
+      return true;
+    }
+    const published = await inspectOwnPublishedMarker(retry.ownerPubky, LINK_RECEIVER_PATH);
+    if (published.kind === "absent") {
+      const receiver = await StorageService.getLinkReceiver(retry.ownerPubky);
+      if (receiver?.markerPublished === false) {
+        const current = getLiveSession();
+        if (!current || current.pubky !== retry.ownerPubky || current.handle.pubky() !== retry.ownerPubky) return false;
+        await retainPublishUnknown(retry.ownerPubky, retry.noisePublicKey, retry.attempts);
+        await provisionReceiver(current.handle, retry.ownerPubky);
+        return true;
+      }
+    }
+    await ensureChatKindsVReceiverJson(
+      live.handle,
+      retry.ownerPubky,
+      LINK_RECEIVER_PATH,
+      retry.noisePublicKey,
+    );
+    await StorageService.deleteLinkReceiverRetry(retry.ownerPubky);
     return true;
-  } catch {
+  } catch (error) {
+    const current = getLiveSession();
+    if (!current || current.pubky !== retry.ownerPubky || current.handle.pubky() !== retry.ownerPubky) return false;
+    try {
+      if (isTerminalCapabilityFailure(error)) {
+        await StorageService.deleteLinkReceiverRetry(retry.ownerPubky);
+        return false;
+      }
+      const currentRetry = await StorageService.getLinkReceiverRetry(retry.ownerPubky);
+      if (!currentRetry) return false;
+      await retainPublishUnknown(
+        currentRetry.ownerPubky,
+        currentRetry.noisePublicKey,
+        currentRetry.attempts,
+        currentRetry.stage,
+      );
+    } catch (retainError) {
+      console.warn("[provisionReceiver] capability retry retain failed:", retainError);
+    }
     return false;
   }
 }
