@@ -27,7 +27,13 @@ vi.mock("./PaykitLinkWeb", async () => {
       putPublic: vi.fn(),
       deletePublic: vi.fn(),
       getReceiverMarker: (...args: unknown[]) => getMarker(...args),
-      publicGet: vi.fn(async () => undefined),
+      publicGet: vi.fn(async (_peer: string, path: string) =>
+        path.includes("/capabilities.json")
+          ? new TextEncoder().encode(
+              '{"version":1,"kind":"hypercolor.receiver.capabilities","receiver_path":"hypercolor/wallet","chat_kinds_v":1}',
+            )
+          : undefined,
+      ),
       initiateLink: (...args: unknown[]) => initiateLink(...args),
       probeInboundLink: (...args: unknown[]) => probeInbound(...args),
       advanceHandshake: (...args: unknown[]) => advanceHandshake(...args),
@@ -161,6 +167,7 @@ vi.mock("../attachments/redaction", () => ({
   fingerprintStoredAttachmentSecret: vi.fn(async () => "fp-test"),
 }));
 vi.mock("./provisionReceiver", () => ({
+  drainReceiverPublishRetry: vi.fn(async () => false),
   provisionReceiver: vi.fn(),
   syncOwnReceiverRole: vi.fn(),
   takeoverReceiver: vi.fn(),
@@ -205,8 +212,7 @@ describe("LinkService persist-then-send", () => {
     probeInbound.mockReset().mockResolvedValue({ result: "none" });
     getMarker.mockReset().mockResolvedValue({
       noisePublicKey: "peer-noise",
-      capabilitiesJson: "{}",
-    });
+          });
     getMessageRequest.mockReset().mockResolvedValue(null);
     getPubky.mockReset().mockResolvedValue(OWNER);
     vi.mocked(StorageService.enqueueControlPam).mockReset();
@@ -1503,8 +1509,7 @@ describe("LinkService inbound accept gate", () => {
     });
     getMarker.mockReset().mockResolvedValue({
       noisePublicKey: "peer-noise",
-      capabilitiesJson: "{}",
-    });
+          });
     getMessageRequest.mockReset().mockResolvedValue(null);
     getPubky.mockReset().mockResolvedValue(OWNER);
     vi.mocked(StorageService.enqueueControlPam).mockReset();
@@ -1980,8 +1985,7 @@ describe("LinkService established re-key marker compare", () => {
     });
     getMarker.mockResolvedValue({
       noisePublicKey: "new-peer-pk",
-      capabilitiesJson: "{}",
-    });
+          });
 
     await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
 
@@ -2003,8 +2007,7 @@ describe("LinkService established re-key marker compare", () => {
     });
     getMarker.mockResolvedValue({
       noisePublicKey: "old-peer-pk",
-      capabilitiesJson: "{}",
-    });
+          });
 
     await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
 
@@ -2019,8 +2022,7 @@ describe("LinkService established re-key marker compare", () => {
     });
     getMarker.mockResolvedValue({
       noisePublicKey: "new-peer-pk",
-      capabilitiesJson: "{}",
-    });
+          });
 
     await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
 
@@ -2063,8 +2065,7 @@ describe("LinkService parked established re-key on ensureLink", () => {
     finalizeSend.mockReset().mockResolvedValue(undefined);
     getMarker.mockReset().mockResolvedValue({
       noisePublicKey: "new-peer-pk",
-      capabilitiesJson: "{}",
-    });
+          });
     getMessageRequest.mockReset().mockResolvedValue({
       ownerPubky: OWNER,
       peerPubky: PEER,
@@ -2199,7 +2200,7 @@ describe("LinkService parked established re-key on ensureLink", () => {
     for (let cycle = 1; cycle <= 3; cycle += 1) {
       vi.spyOn(Date, "now").mockReturnValue(NOW + cycle * (PEER_MARKER_REFRESH_TTL_MS + 1));
       const newPk = `peer-pk-${cycle}`;
-      getMarker.mockResolvedValue({ noisePublicKey: newPk, capabilitiesJson: "{}" });
+      getMarker.mockResolvedValue({ noisePublicKey: newPk });
       probeInbound.mockResolvedValue({
         result: "pending",
         linkId: `rekey-hs-${cycle}`,
@@ -2425,8 +2426,7 @@ describe("LinkService parked established re-key on ensureLink", () => {
     function v1Marker() {
       return {
         noisePublicKey: "peer-noise",
-        capabilitiesJson: JSON.stringify({ chat_kinds_v: 1 }),
-      };
+              };
     }
 
     it("does not emit chat.receipt.v0 to a pre-v1 peer", async () => {
@@ -2696,8 +2696,7 @@ describe("LinkService parked established re-key on ensureLink", () => {
       });
       getMarker.mockResolvedValue({
         noisePublicKey: "peer-noise",
-        capabilitiesJson: JSON.stringify({ chat_kinds_v: 1 }),
-      });
+              });
       probeInbound.mockResolvedValue({ result: "none" });
       restoreLink.mockResolvedValue({ linkId: "handle-1" });
       getLink.mockReset().mockResolvedValue({

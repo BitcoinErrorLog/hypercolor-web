@@ -52,6 +52,17 @@ export const SCHEMA_V17_STATEMENTS: readonly string[] = [
   )`,
 ];
 
+/** Schema v18 — owner-bound receiver marker/capability publish retry state. */
+export const SCHEMA_V18_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS link_receiver_retries (
+    owner_pubky       TEXT NOT NULL PRIMARY KEY,
+    session_alias     TEXT NOT NULL,
+    noise_public_key  TEXT NOT NULL,
+    next_retry_at     INTEGER NOT NULL,
+    attempts          INTEGER NOT NULL DEFAULT 0
+  )`,
+];
+
 /**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the

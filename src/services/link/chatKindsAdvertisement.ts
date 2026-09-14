@@ -1,16 +1,31 @@
 import type { PubkyKey } from "../../types";
 import {
+  CAPABILITY_MAX_BYTES,
   CHAT_KINDS_V,
-  RECEIVER_JSON_STORAGE_PATH,
-  buildReceiverMarkerPutBody,
-  chatKindsVFromMarker,
+  capabilityPath,
+  buildCapabilitiesJson,
+  LEGACY_RECEIVER_JSON_STORAGE_PATH,
   normalizeChatKindsV,
-  parseReceiverMarkerJson,
+  parseCapabilitiesJson,
+  parseLegacyChatKindsVDetailed,
 } from "../../types/receiverMarker";
 import { StorageService } from "../StorageService";
 import { PaykitLinkWeb, type ReceiverMarker, type SessionHandle } from "./PaykitLinkWeb";
 
 const chatKindsUpgradeReplayed = new Set<string>();
+const CAPABILITY_REQUEST_BUDGET_MS = 15_000;
+
+function withCapabilityBudget<T>(promise: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("capability request timed out")), CAPABILITY_REQUEST_BUDGET_MS);
+    }),
+  ]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
+}
 
 export function resetChatKindsUpgradeReplayedForTests(): void {
   chatKindsUpgradeReplayed.clear();
@@ -20,43 +35,116 @@ export async function putChatKindsVReceiverJson(
   session: SessionHandle,
   noisePublicKey: string,
 ): Promise<void> {
-  const body = buildReceiverMarkerPutBody({ noisePublicKey });
+  const body = buildCapabilitiesJson();
   await PaykitLinkWeb.putPublic(
     session,
-    RECEIVER_JSON_STORAGE_PATH,
+    capabilityPath(noisePublicKey),
     new TextEncoder().encode(body),
   );
 }
 
-async function fetchPeerReceiverJsonChatKindsV(peerPubky: PubkyKey): Promise<number> {
+export async function readChatKindsCapability(
+  peerPubky: PubkyKey,
+  noisePublicKey: string,
+): Promise<{ kind: "absent" | "valid" | "invalid" | "too-large"; chatKindsV: number }> {
   try {
-    const bytes = await PaykitLinkWeb.publicGet(peerPubky, RECEIVER_JSON_STORAGE_PATH);
-    if (!bytes || bytes.length === 0) return 0;
-    const parsed = parseReceiverMarkerJson(new TextDecoder().decode(bytes));
-    return parsed?.chatKindsV ?? 0;
+    const bytes = await withCapabilityBudget(
+      PaykitLinkWeb.publicGet(peerPubky, capabilityPath(noisePublicKey)),
+    );
+    if (!bytes) return { kind: "absent", chatKindsV: 0 };
+    if (bytes.byteLength > CAPABILITY_MAX_BYTES) return { kind: "too-large", chatKindsV: 0 };
+    const parsed = parseCapabilitiesJson(new TextDecoder().decode(bytes));
+    return parsed
+      ? { kind: "valid", chatKindsV: parsed.chatKindsV }
+      : { kind: "invalid", chatKindsV: 0 };
   } catch {
-    return 0;
+    throw new Error("capability unavailable");
+  }
+}
+
+export async function ensureChatKindsVReceiverJson(
+  session: SessionHandle,
+  ownerPubky: PubkyKey,
+  receiverPath: string,
+  noisePublicKey: string,
+): Promise<void> {
+  const marker = await withCapabilityBudget(
+    PaykitLinkWeb.getReceiverMarker(ownerPubky, receiverPath),
+  );
+  if (!marker || marker.noisePublicKey !== noisePublicKey) {
+    throw new Error("receiver marker changed before capability publish");
+  }
+  const current = await readChatKindsCapability(ownerPubky, noisePublicKey);
+  if (current.kind === "valid" && current.chatKindsV >= CHAT_KINDS_V) return;
+  if (current.kind === "invalid" || current.kind === "too-large") {
+    throw new Error("invalid capability document");
+  }
+  await putChatKindsVReceiverJson(session, noisePublicKey);
+  const [reconciledCapability, reconciledMarker] = await Promise.all([
+    readChatKindsCapability(ownerPubky, noisePublicKey),
+    withCapabilityBudget(PaykitLinkWeb.getReceiverMarker(ownerPubky, receiverPath)),
+  ]);
+  if (
+    reconciledCapability.kind !== "valid" ||
+    reconciledCapability.chatKindsV < CHAT_KINDS_V ||
+    !reconciledMarker ||
+    reconciledMarker.noisePublicKey !== noisePublicKey
+  ) {
+    throw new Error("capability publish was not confirmed");
   }
 }
 
 export async function resolvePeerChatKindsV(
   peerPubky: PubkyKey,
-  marker: ReceiverMarker & { chatKindsV?: unknown },
+  marker: ReceiverMarker,
+  ownerPubky?: PubkyKey,
 ): Promise<number> {
-  const fromMarker = chatKindsVFromMarker(marker);
-  if (fromMarker >= 1) return fromMarker;
-  return fetchPeerReceiverJsonChatKindsV(peerPubky);
+  const result = await resolvePeerChatKindsVResult(peerPubky, marker, ownerPubky);
+  return result.value;
+}
+
+type PeerChatKindsVResult = { available: boolean; value: number };
+
+async function resolvePeerChatKindsVResult(
+  peerPubky: PubkyKey,
+  marker: ReceiverMarker,
+  ownerPubky?: PubkyKey,
+): Promise<PeerChatKindsVResult> {
+  try {
+    const capability = await readChatKindsCapability(peerPubky, marker.noisePublicKey);
+    if (capability.kind !== "absent") return { available: true, value: capability.chatKindsV };
+  } catch {
+    if (ownerPubky) {
+      const stored = await StorageService.getLink(ownerPubky, peerPubky);
+      return { available: false, value: normalizeChatKindsV(stored?.chatKindsV) };
+    }
+    return { available: false, value: 0 };
+  }
+  try {
+    const legacy = await PaykitLinkWeb.publicGet(peerPubky, LEGACY_RECEIVER_JSON_STORAGE_PATH);
+    if (!legacy) return { available: true, value: 0 };
+    const value = parseLegacyChatKindsVDetailed(new TextDecoder().decode(legacy));
+    return value === null ? { available: false, value: 0 } : { available: true, value };
+  } catch {
+    if (ownerPubky) {
+      const stored = await StorageService.getLink(ownerPubky, peerPubky);
+      return { available: false, value: normalizeChatKindsV(stored?.chatKindsV) };
+    }
+    return { available: false, value: 0 };
+  }
 }
 
 export async function persistPeerChatKindsVFromMarker(
   ownerPubky: PubkyKey,
   peerPubky: PubkyKey,
-  marker: ReceiverMarker & { chatKindsV?: unknown },
+  marker: ReceiverMarker,
   onUpgrade: (owner: PubkyKey, peer: PubkyKey) => Promise<void>,
 ): Promise<number> {
-  const next = await resolvePeerChatKindsV(peerPubky, marker);
   const stored = await StorageService.getLink(ownerPubky, peerPubky);
   const prev = stored ? normalizeChatKindsV(stored.chatKindsV) : 0;
+  const resolved = await resolvePeerChatKindsVResult(peerPubky, marker, ownerPubky);
+  if (!resolved.available) return prev;
+  const next = resolved.value;
   await StorageService.recordPeerChatKindsV(ownerPubky, peerPubky, next);
   const upgradeKey = `${ownerPubky}:${peerPubky}`;
   if (prev < CHAT_KINDS_V && next >= CHAT_KINDS_V && !chatKindsUpgradeReplayed.has(upgradeKey)) {

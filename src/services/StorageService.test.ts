@@ -3,6 +3,7 @@
  * (fake-indexeddb). Mobile mocks KeyStore; web exercises the async methods.
  */
 import "fake-indexeddb/auto";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { setDbForTests } from "../db";
 import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
@@ -31,6 +32,29 @@ const ATTACHMENT_SECRET = {
 };
 
 describe("StorageService (v13 SQL + KeyStore)", () => {
+  it("keeps every owner-scoped schema table in the sign-out wipe", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const tables = (db.executeSync(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    ).rows ?? [])
+      .filter((row) => String(row.sql).includes("owner_pubky"))
+      .map((row) => String(row.name))
+      .filter((name) => name !== "message_search_fts");
+    const storageSource = readFileSync(new URL("./StorageService.ts", import.meta.url), "utf8");
+    const wipedTables = new Set(
+      [...storageSource.matchAll(/DELETE FROM ([a-z0-9_]+) WHERE owner_pubky/g)].map(
+        (match) => match[1],
+      ),
+    );
+    wipedTables.add("message_search");
+    const intentionallyRetained = new Set(["pending_cleanup"]);
+    expect(
+      tables.filter((table) => !wipedTables.has(table) && !intentionallyRetained.has(table)),
+    ).toEqual([]);
+  });
+
   beforeAll(async () => {
     await KeyStore.initKeyStore();
   });
@@ -172,6 +196,13 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       remoteReceiverPath: "hypercolor/wallet",
       consecutiveFailures: 0,
     });
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: "hypercolor/wallet",
+      noisePublicKey: "noise",
+      nextRetryAt: 10,
+      attempts: 1,
+    });
 
     db.executeSync(
       `INSERT INTO contact_nicknames (owner_pubky, peer_pubky, nickname, updated_at)
@@ -208,6 +239,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
 
     expect(await StorageService.getContact(PEER, OWNER)).toBeNull();
     expect(await StorageService.getLink(OWNER, PEER)).toBeNull();
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull();
     expect(await StorageService.getContact(PEER, OTHER)).toEqual(
       expect.objectContaining({ ownerPubky: OTHER, isFollower: true }),
     );

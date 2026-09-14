@@ -256,7 +256,7 @@ describe("session restore classification", () => {
     await restoreSessionOnLoad();
     vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
     noisePublicKeyFromSecret.mockResolvedValue("local-pk");
-    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk", capabilitiesJson: "{}" });
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk" });
     await signOut();
     expect(removeReceiverMarker).not.toHaveBeenCalled();
     expect(signOutSession).toHaveBeenCalled();
@@ -271,7 +271,7 @@ describe("session restore classification", () => {
     await restoreSessionOnLoad();
     vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
     noisePublicKeyFromSecret.mockResolvedValue("local-pk");
-    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk", capabilitiesJson: "{}" });
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
     await signOut();
     expect(removeReceiverMarker).toHaveBeenCalledTimes(1);
   });

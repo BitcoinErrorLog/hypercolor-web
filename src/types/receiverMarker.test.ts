@@ -1,60 +1,59 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  CHAT_KINDS_V,
-  CHAT_KINDS_V_KEY,
-  buildReceiverMarkerPutBody,
-  chatKindsVFromMarker,
-  normalizeChatKindsV,
+  capabilityPath,
+  parseCapabilitiesJsonDetailed,
+  parseCapabilitiesJson,
+  parseLegacyChatKindsVDetailed,
+  parseLegacyChatKindsV,
   parseReceiverMarkerJson,
 } from "./receiverMarker";
 
-describe("receiver.json chat_kinds_v parser", () => {
-  it("treats absent and 0 as pre-v1", () => {
-    expect(parseReceiverMarkerJson('{"noisePublicKey":"abc"}')?.chatKindsV).toBe(0);
-    expect(parseReceiverMarkerJson(`{"${CHAT_KINDS_V_KEY}":0}`)?.chatKindsV).toBe(0);
-    expect(normalizeChatKindsV(undefined)).toBe(0);
-  });
+const fixture = (name: string) =>
+  readFileSync(new URL(`../test/fixtures/receiver-marker/${name}`, import.meta.url), "utf8");
 
-  it("reads integer 1", () => {
-    expect(parseReceiverMarkerJson(`{"${CHAT_KINDS_V_KEY}":1,"noisePublicKey":"n"}`)).toEqual({
-      chatKindsV: 1,
-      noisePublicKey: "n",
+describe("strict receiver marker and capability documents", () => {
+  it("accepts the production marker fixture", () => {
+    expect(parseReceiverMarkerJson(fixture("receiver-marker.valid.json"))).toMatchObject({
+      version: 1,
+      receiverPath: "hypercolor/wallet",
+      noisePublicKey: expect.any(String),
     });
   });
 
-  it("ignores unknown marker fields", () => {
-    const parsed = parseReceiverMarkerJson(
-      JSON.stringify({
-        noisePublicKey: "pk",
-        [CHAT_KINDS_V_KEY]: 1,
-        extra_future: { nested: true },
-        another: "x",
-      }),
+  it("rejects unknown fields and the wrong receiver path", () => {
+    expect(parseReceiverMarkerJson(fixture("receiver-marker.unknown-field.json"))).toBeNull();
+    expect(parseReceiverMarkerJson(fixture("receiver-marker.wrong-receiver-path.json"))).toBeNull();
+    expect(parseReceiverMarkerJson('{"version":1,"version":1}')).toBeNull();
+  });
+
+  it("accepts only the canonical capability fixture", () => {
+    expect(parseCapabilitiesJson(fixture("capability.valid.json"))).toMatchObject({
+      version: 1,
+      chatKindsV: 1,
+    });
+    expect(parseCapabilitiesJson(fixture("capability.invalid.json"))).toBeNull();
+    expect(parseCapabilitiesJson(fixture("capability.wrong-version.json"))).toBeNull();
+    expect(parseCapabilitiesJson(fixture("capability.oversized.json"))).toBeNull();
+    expect(parseCapabilitiesJsonDetailed(fixture("capability.oversized.json"))).toEqual({
+      ok: false,
+      error: "TOO_LARGE",
+    });
+  });
+
+  it("keeps legacy parsing isolated to chat_kinds_v", () => {
+    expect(parseLegacyChatKindsV('{"chat_kinds_v":1,"noise_public_key":"ignored"}')).toBe(1);
+    expect(capabilityPath("noise")).toBe(
+      "/pub/hypercolor.app/v1/receivers/noise/capabilities.json",
     );
-    expect(parsed).toEqual({ chatKindsV: 1, noisePublicKey: "pk" });
   });
 
-  it("PUT body contains chat_kinds_v: 1", () => {
-    const body = JSON.parse(buildReceiverMarkerPutBody({ noisePublicKey: "noise" })) as {
-      chat_kinds_v: number;
-    };
-    expect(body[CHAT_KINDS_V_KEY]).toBe(CHAT_KINDS_V);
+  it("accepts version text in legacy values and nested keys", () => {
+    expect(parseLegacyChatKindsVDetailed('{"note":"\\"version\\": not a key"}')).toBe(0);
+    expect(parseLegacyChatKindsVDetailed('{"nested":{"version":1},"chat_kinds_v":1}')).toBe(1);
   });
 
-  it("treats malicious marker values as pre-v1", () => {
-    expect(normalizeChatKindsV("1")).toBe(0);
-    expect(normalizeChatKindsV("huge")).toBe(0);
-    expect(normalizeChatKindsV(Number.MAX_VALUE)).toBe(0);
-    expect(normalizeChatKindsV(2 ** 53)).toBe(0);
-    expect(normalizeChatKindsV(-1)).toBe(0);
-    expect(normalizeChatKindsV(-99)).toBe(0);
-    expect(parseReceiverMarkerJson(`{"${CHAT_KINDS_V_KEY}":"1"}`)?.chatKindsV).toBe(0);
-    expect(parseReceiverMarkerJson(`{"${CHAT_KINDS_V_KEY}":-3}`)?.chatKindsV).toBe(0);
-    expect(parseReceiverMarkerJson(`{"${CHAT_KINDS_V_KEY}":1e20}`)?.chatKindsV).toBe(0);
-  });
-
-  it("reads chatKindsV from the native marker object", () => {
-    expect(chatKindsVFromMarker({ capabilitiesJson: "{}", chatKindsV: 1 })).toBe(1);
-    expect(chatKindsVFromMarker({ capabilitiesJson: "{}" })).toBe(0);
+  it("rejects duplicate top-level legacy keys", () => {
+    expect(parseLegacyChatKindsVDetailed('{"chat_kinds_v":1,"chat_kinds_v":0}')).toBeNull();
   });
 });

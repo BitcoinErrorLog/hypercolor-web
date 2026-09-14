@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { applyMigrationStatement, runMigrations } from "../migrations";
 import { openMemoryDb } from "./betterSqliteAdapter";
-import { SCHEMA_V13_STATEMENTS, SCHEMA_V14_STATEMENTS } from "../schema";
+import { SCHEMA_V14_STATEMENTS } from "../schema";
 
 describe("idempotent migration guards", () => {
   it("skips ADD COLUMN when pragma table_info already lists the column", async () => {
@@ -20,5 +20,15 @@ describe("idempotent migration guards", () => {
     await expect(runMigrations(db, { allowUnguardedAlter: true })).rejects.toThrow(
       /Migration v14 failed:.*duplicate column name: receiver_role/i,
     );
+  });
+
+  it("creates the owner-bound receiver retry table", async () => {
+    const db = openMemoryDb();
+    await runMigrations(db);
+    expect(
+      db.executeSync(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'link_receiver_retries'",
+      ).rows,
+    ).toHaveLength(1);
   });
 });

@@ -106,7 +106,6 @@ export function toLinkNativeError(err: unknown): LinkNativeError {
 
 export interface ReceiverMarker {
   noisePublicKey: string;
-  capabilitiesJson: string;
 }
 
 export interface LinkInitiateResult {
@@ -514,15 +513,23 @@ export const PaykitLinkWeb = {
         receiverPath,
       )) as
         | {
+            version?: unknown;
+            kind?: unknown;
+            receiverPath?: unknown;
+            receiver_path?: unknown;
             noisePublicKey?: string;
-            capabilities?: unknown;
+            noise_public_key?: string;
           }
         | undefined
         | null;
-      if (!marker || typeof marker.noisePublicKey !== "string") return null;
+      if (!marker) return null;
+      const noisePublicKey =
+        typeof marker.noisePublicKey === "string"
+          ? marker.noisePublicKey
+          : marker.noise_public_key;
+      if (typeof noisePublicKey !== "string" || noisePublicKey.length === 0) return null;
       return {
-        noisePublicKey: marker.noisePublicKey,
-        capabilitiesJson: JSON.stringify(marker.capabilities ?? {}),
+        noisePublicKey,
       };
     });
   },

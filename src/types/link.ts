@@ -424,6 +424,14 @@ export type LinkRecordInput = Omit<LinkRecord, 'updatedAt' | 'lastSeenPeerMarker
   lastSeenPeerMarkerPk?: string | null;
 };
 
+export interface LinkReceiverRetry {
+  ownerPubky: PubkyKey;
+  sessionAlias: string;
+  noisePublicKey: string;
+  nextRetryAt: number;
+  attempts: number;
+}
+
 /**
  * Device-local message history (plaintext bodies — never log them). Dedup
  * key is `(owner_pubky, sender_pubky, kind, event_id)` so a peer cannot

@@ -56,7 +56,13 @@ import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
 import { CHAT_DELETE_DEFERRED_TTL_MS } from "../../flags/config";
-import { provisionReceiver, syncOwnReceiverRole, takeoverReceiver, healMissingReceiverRow } from "./provisionReceiver";
+import {
+  drainReceiverPublishRetry,
+  provisionReceiver,
+  syncOwnReceiverRole,
+  takeoverReceiver,
+  healMissingReceiverRow,
+} from "./provisionReceiver";
 import { STANDBY_COMPOSER_NOTICE } from "@/lib/delivery-status";
 import { LinkSendError } from "./LinkSendError";
 import { shouldPersistWrites } from "@/services/tabLock";
@@ -608,6 +614,9 @@ export const LinkService = {
 
   async drainRetries(): Promise<void> {
     await withDrainPass(async () => {
+      await drainReceiverPublishRetry().catch((err) => {
+        console.warn("[LinkService] receiver marker retry failed:", errorMessage(err));
+      });
       let due: DeliveryQueueItem[] = [];
       try {
         due = await RetryQueue.getDue();

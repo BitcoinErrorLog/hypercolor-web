@@ -18,6 +18,7 @@ import type {
   HandshakeBudgetInput,
   LinkReceiver,
   LinkReceiverInput,
+  LinkReceiverRetry,
   LinkRecord,
   LinkRecordInput,
   LinkRole,
@@ -530,6 +531,48 @@ export const StorageService = {
     db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
   },
 
+  async getLinkReceiverRetry(ownerPubky: PubkyKey): Promise<LinkReceiverRetry | null> {
+    const db = await getDb();
+    const row = db.executeSync(
+      'SELECT * FROM link_receiver_retries WHERE owner_pubky = ?',
+      [ownerPubky],
+    ).rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky: String(row.owner_pubky),
+      sessionAlias: String(row.session_alias),
+      noisePublicKey: String(row.noise_public_key),
+      nextRetryAt: Number(row.next_retry_at),
+      attempts: Number(row.attempts),
+    };
+  },
+
+  async upsertLinkReceiverRetry(retry: LinkReceiverRetry): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `INSERT INTO link_receiver_retries
+        (owner_pubky, session_alias, noise_public_key, next_retry_at, attempts)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(owner_pubky) DO UPDATE SET
+         session_alias = excluded.session_alias,
+         noise_public_key = excluded.noise_public_key,
+         next_retry_at = excluded.next_retry_at,
+         attempts = excluded.attempts`,
+      [
+        retry.ownerPubky,
+        retry.sessionAlias,
+        retry.noisePublicKey,
+        retry.nextRetryAt,
+        retry.attempts,
+      ],
+    );
+  },
+
+  async deleteLinkReceiverRetry(ownerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync('DELETE FROM link_receiver_retries WHERE owner_pubky = ?', [ownerPubky]);
+  },
+
   async getHandshakeBudget(
     ownerPubky: PubkyKey,
     peerPubky: PubkyKey,
@@ -589,8 +632,8 @@ export const StorageService = {
       `INSERT INTO links
         (owner_pubky, peer_pubky, role, status, snapshot,
          remote_noise_public_key, local_receiver_path, remote_receiver_path,
-         consecutive_failures, last_seen_peer_marker_pk, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         consecutive_failures, last_seen_peer_marker_pk, chat_kinds_v, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
          role                      = excluded.role,
          status                    = excluded.status,
@@ -600,6 +643,7 @@ export const StorageService = {
          remote_receiver_path      = excluded.remote_receiver_path,
          consecutive_failures      = excluded.consecutive_failures,
          last_seen_peer_marker_pk  = COALESCE(excluded.last_seen_peer_marker_pk, last_seen_peer_marker_pk),
+         chat_kinds_v              = excluded.chat_kinds_v,
          updated_at                = excluded.updated_at`,
       [
         link.ownerPubky,
@@ -612,6 +656,7 @@ export const StorageService = {
         link.remoteReceiverPath,
         link.consecutiveFailures,
         link.lastSeenPeerMarkerPk ?? null,
+        normalizeChatKindsV(link.chatKindsV),
         now(),
         now(),
       ],
@@ -1278,6 +1323,7 @@ export const StorageService = {
       db.executeSync('DELETE FROM links_archive WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_handshake_budgets WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM link_receiver_retries WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM message_requests WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contacts WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contact_nicknames WHERE owner_pubky = ?', [ownerPubky]);

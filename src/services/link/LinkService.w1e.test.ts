@@ -150,6 +150,7 @@ vi.mock("../attachments/redaction", () => ({
   fingerprintStoredAttachmentSecret: vi.fn(async () => "fp"),
 }));
 vi.mock("./provisionReceiver", () => ({
+  drainReceiverPublishRetry: vi.fn(async () => false),
   provisionReceiver: vi.fn(),
   syncOwnReceiverRole: vi.fn(),
   takeoverReceiver: vi.fn(),
@@ -215,7 +216,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "est" });
     upsertArchivedLink.mockReset().mockResolvedValue(undefined);
     getArchivedLink.mockReset().mockResolvedValue(null);
-    getMarker.mockReset().mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    getMarker.mockReset().mockResolvedValue({ noisePublicKey: "old-pk" });
     probeInbound.mockReset().mockResolvedValue({ result: "none" });
     initiateLink.mockReset().mockResolvedValue({ linkId: "init-1", snapshot: "init-snap" });
     advanceHandshake.mockReset().mockResolvedValue({ status: "pending", snapshot: "snap-1" });
@@ -240,7 +241,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       status: "established",
       snapshot: "HC1.opaque",
     });
-    getMarker.mockResolvedValue({ noisePublicKey: "foreign-now", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "foreign-now" });
     const status = await LinkService.ensureLinkWith(PEER);
     expect(status).toBe("error");
     expect(restoreLink).toHaveBeenCalledWith(
@@ -279,7 +280,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
 
   it("initiator 3 no-advance polls + pk changed → wipe + re-initiate", async () => {
     getLink.mockResolvedValue(handshaking("old-pk"));
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     await LinkService.ensureLinkWith(PEER);
     await LinkService.ensureLinkWith(PEER);
     expect(initiateLink).not.toHaveBeenCalled();
@@ -298,7 +299,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
 
   it("pk unchanged → no re-initiate after 3 polls", async () => {
     getLink.mockResolvedValue(handshaking("old-pk"));
-    getMarker.mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk" });
     await LinkService.ensureLinkWith(PEER);
     await LinkService.ensureLinkWith(PEER);
     await LinkService.ensureLinkWith(PEER);
@@ -307,7 +308,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
 
   it("budget exhaustion stops re-initiate loops", async () => {
     getLink.mockResolvedValue(handshaking("old-pk"));
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     getBudget.mockResolvedValue({
       ownerPubky: OWNER,
       peerPubky: PEER,
@@ -368,8 +369,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     let flap = 0;
     getMarker.mockImplementation(async () => ({
       noisePublicKey: `flap-${flap++}`,
-      capabilitiesJson: "{}",
-    }));
+          }));
     advanceHandshake.mockImplementation(async () => ({
       status: "pending",
       snapshot: stored?.snapshot ?? "snap-1",
@@ -454,7 +454,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       status: "established",
       snapshot: "HC1.opaque",
     });
-    getMarker.mockResolvedValue({ noisePublicKey: "stored-peer-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "stored-peer-pk" });
     const persistIntent = vi.mocked(StorageService.persistLinkSendIntent);
     persistIntent.mockResolvedValue(undefined);
     vi.mocked(StorageService.finalizeLinkSend).mockResolvedValue(undefined);
@@ -496,7 +496,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
         updatedAt: NOW,
       } as ReturnType<typeof handshaking>;
     });
-    getMarker.mockResolvedValue({ noisePublicKey: "live-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "live-pk" });
     initiateLink.mockResolvedValue({ linkId: "init-2", snapshot: "init-snap-2" });
     advanceHandshake.mockResolvedValue({ status: "pending", snapshot: "init-snap-2" });
 
@@ -628,7 +628,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
         updatedAt: NOW,
       } as ReturnType<typeof handshaking>;
     });
-    getMarker.mockResolvedValue({ noisePublicKey: "live-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "live-pk" });
     initiateLink.mockResolvedValue({ linkId: "init-2", snapshot: "init-snap-2" });
     advanceHandshake.mockResolvedValue({ status: "pending", snapshot: "init-snap-2" });
 
@@ -674,7 +674,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "rolled-back-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "rolled-back-pk" });
     probeInbound.mockResolvedValue({
       result: "pending",
       linkId: "orphan-hs",
@@ -707,7 +707,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     });
     vi.mocked(StorageService.countLinkMessagesForPeer).mockResolvedValue(4);
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     probeInbound.mockResolvedValue({
       result: "pending",
       linkId: "rekey-hs",
@@ -746,7 +746,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     probeInbound.mockResolvedValue({
       result: "pending",
       linkId: "rekey-hs",
@@ -771,7 +771,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     probeInbound.mockResolvedValue({
       result: "established",
       linkId: "rekey-est",
@@ -830,7 +830,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk" });
     probeInbound.mockResolvedValue({
       result: "pending",
       linkId: "junk-hs",
@@ -851,7 +851,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     probeInbound.mockRejectedValue(createLinkNativeError("protocol", "undecryptable msg1"));
 
     await LinkService.syncInbox([PEER]);
@@ -875,7 +875,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       status: "declined",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "new-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
     probeInbound.mockResolvedValue({
       result: "pending",
       linkId: "hostile-hs",
@@ -895,7 +895,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
       snapshot: "est-old",
     });
     restoreLink.mockResolvedValue({ linkId: "est-live" });
-    getMarker.mockResolvedValue({ noisePublicKey: "old-pk", capabilitiesJson: "{}" });
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk" });
 
     await LinkService.syncInbox([PEER]);
     await LinkService.syncInbox([PEER]);

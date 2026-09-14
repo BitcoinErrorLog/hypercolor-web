@@ -9,9 +9,10 @@ import {
 } from "@/types/link";
 import type { PubkyKey } from "@/types";
 import { PaykitLinkWeb, type SessionHandle } from "./PaykitLinkWeb";
-import { putChatKindsVReceiverJson } from "./chatKindsAdvertisement";
+import { ensureChatKindsVReceiverJson } from "./chatKindsAdvertisement";
 import { getLiveSession, persistReceiverPath } from "./session";
 import { setReceiverRoleState } from "./receiverRoleStore";
+import { MAX_ATTEMPTS, nextAttemptAt } from "../RetryQueue";
 
 export const RECEIVER_NOISE_ALIAS = LINK_RECEIVER_PATH;
 export const RECEIVER_MARKER_PUBLISH_BUDGET_MS = 15_000;
@@ -98,19 +99,6 @@ async function publicKeyFromStoredSecret(alias: string): Promise<string | null> 
   }
 }
 
-async function rollbackUnpublishedReceiver(ownerPubky: PubkyKey): Promise<void> {
-  try {
-    await KeyStore.deleteReceiverNoiseSecret(RECEIVER_NOISE_ALIAS);
-  } catch {
-    // Best effort.
-  }
-  try {
-    await StorageService.deleteLinkReceiver(ownerPubky);
-  } catch {
-    // Best effort.
-  }
-}
-
 async function persistReceiverRow(
   pubky: PubkyKey,
   receiverPath: string,
@@ -127,6 +115,24 @@ async function persistReceiverRow(
     lastSeenOwnMarkerPk,
   });
   setReceiverRoleState(receiverRole, null);
+}
+
+async function retainPublishUnknown(
+  ownerPubky: PubkyKey,
+  noisePublicKey: string,
+  attempts: number,
+): Promise<void> {
+  await StorageService.upsertLinkReceiverRetry({
+    ownerPubky,
+    sessionAlias: RECEIVER_NOISE_ALIAS,
+    noisePublicKey,
+    nextRetryAt: nextAttemptAt(attempts),
+    attempts: attempts + 1,
+  });
+}
+
+async function existingRetryAttempts(ownerPubky: PubkyKey): Promise<number> {
+  return (await StorageService.getLinkReceiverRetry(ownerPubky))?.attempts ?? 0;
 }
 
 async function publishOwnMarker(
@@ -167,16 +173,17 @@ export async function provisionReceiver(
   session: SessionHandle,
   pubky: PubkyKey,
 ): Promise<ProvisionedReceiver> {
+  if (session.pubky() !== pubky) {
+    throw new Error("provisionReceiver: session owner mismatch");
+  }
   const receiverPath = assertValidReceiverPath(LINK_RECEIVER_PATH);
   await KeyStore.setPubky(pubky);
   const existing = await StorageService.getLinkReceiver(pubky);
   let noisePublicKey: string;
-  let rollbackOnFailure = true;
   if (existing) {
     const reused = await publicKeyFromStoredSecret(existing.receiverAlias);
     if (reused) {
       noisePublicKey = reused;
-      rollbackOnFailure = !existing.markerPublished;
     } else {
       await StorageService.deleteLinkReceiver(pubky);
       ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
@@ -185,7 +192,6 @@ export async function provisionReceiver(
     const reused = await publicKeyFromStoredSecret(RECEIVER_NOISE_ALIAS);
     if (reused) {
       noisePublicKey = reused;
-      rollbackOnFailure = false;
     } else {
       ({ noisePublicKey } = await mintReceiver(pubky, receiverPath));
     }
@@ -195,7 +201,8 @@ export async function provisionReceiver(
   try {
     published = await inspectOwnPublishedMarker(pubky, receiverPath);
   } catch (error) {
-    if (rollbackOnFailure) await rollbackUnpublishedReceiver(pubky);
+    await persistReceiverRow(pubky, receiverPath, false, "active", null);
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
     throw error;
   }
 
@@ -206,7 +213,13 @@ export async function provisionReceiver(
   }
 
   if (published.kind === "present" && published.noisePublicKey === noisePublicKey) {
-    await putChatKindsVReceiverJson(session, noisePublicKey);
+    try {
+      await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
+    } catch (error) {
+      await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
+      throw error;
+    }
+    await StorageService.deleteLinkReceiverRetry(pubky);
     await persistReceiverRow(pubky, receiverPath, true, "active", published.noisePublicKey);
     await persistReceiverPath(pubky, receiverPath);
     return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
@@ -214,11 +227,25 @@ export async function provisionReceiver(
 
   try {
     await publishOwnMarker(session, receiverPath, noisePublicKey);
-    await putChatKindsVReceiverJson(session, noisePublicKey);
   } catch (error) {
-    if (rollbackOnFailure) await rollbackUnpublishedReceiver(pubky);
+    await persistReceiverRow(pubky, receiverPath, false, "active", null);
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
     throw error;
   }
+  const reconciled = await inspectOwnPublishedMarker(pubky, receiverPath);
+  if (reconciled.kind !== "present" || reconciled.noisePublicKey !== noisePublicKey) {
+    await persistReceiverRow(pubky, receiverPath, false, "active", reconciled.kind === "present" ? reconciled.noisePublicKey : null);
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
+    throw new Error("receiver marker publish was not confirmed");
+  }
+  try {
+    await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
+  } catch (error) {
+    await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
+    throw error;
+  }
+  await StorageService.deleteLinkReceiverRetry(pubky);
   await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
   await persistReceiverPath(pubky, receiverPath);
   return { pubky, receiverPath, noisePublicKey, receiverRole: "active" };
@@ -270,6 +297,9 @@ export async function takeoverReceiver(
   session: SessionHandle,
   pubky: PubkyKey,
 ): Promise<ProvisionedReceiver> {
+  if (session.pubky() !== pubky) {
+    throw new Error("takeoverReceiver: session owner mismatch");
+  }
   const receiverPath = assertValidReceiverPath(LINK_RECEIVER_PATH);
   const existing = await StorageService.getLinkReceiver(pubky);
   const alias = existing?.receiverAlias ?? RECEIVER_NOISE_ALIAS;
@@ -284,7 +314,19 @@ export async function takeoverReceiver(
     zeroizeBytes(secret);
   }
   await publishOwnMarker(session, receiverPath, noisePublicKey);
-  await putChatKindsVReceiverJson(session, noisePublicKey);
+  const reconciled = await inspectOwnPublishedMarker(pubky, receiverPath);
+  if (reconciled.kind !== "present" || reconciled.noisePublicKey !== noisePublicKey) {
+    await persistReceiverRow(pubky, receiverPath, false, "active", reconciled.kind === "present" ? reconciled.noisePublicKey : null);
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
+    throw new Error("takeover marker publish was not confirmed");
+  }
+  try {
+    await ensureChatKindsVReceiverJson(session, pubky, receiverPath, noisePublicKey);
+  } catch (error) {
+    await retainPublishUnknown(pubky, noisePublicKey, await existingRetryAttempts(pubky));
+    throw error;
+  }
+  await StorageService.deleteLinkReceiverRetry(pubky);
   await persistReceiverRow(pubky, receiverPath, true, "active", noisePublicKey);
   await persistReceiverPath(pubky, receiverPath);
   setReceiverRoleState("active", TAKEOVER_TOAST);
@@ -332,6 +374,28 @@ export async function provisionLiveReceiver(): Promise<ProvisionedReceiver> {
     throw new Error("provisionReceiver: no live session");
   }
   return provisionReceiver(live.handle, live.pubky);
+}
+
+export async function drainReceiverPublishRetry(nowMs = Date.now()): Promise<boolean> {
+  const live = getLiveSession();
+  if (!live) return false;
+  const retry = await StorageService.getLinkReceiverRetry(live.pubky);
+  if (!retry) return false;
+  if (retry.attempts >= MAX_ATTEMPTS) {
+    await StorageService.deleteLinkReceiverRetry(retry.ownerPubky);
+    return false;
+  }
+  if (retry.nextRetryAt > nowMs) return false;
+  if (retry.ownerPubky !== live.handle.pubky()) {
+    await StorageService.deleteLinkReceiverRetry(retry.ownerPubky);
+    return false;
+  }
+  try {
+    await provisionReceiver(live.handle, live.pubky);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function takeoverLiveReceiver(): Promise<ProvisionedReceiver> {

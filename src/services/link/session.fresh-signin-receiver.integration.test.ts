@@ -45,6 +45,11 @@ vi.mock("./PaykitLinkWeb", () => ({
     publishReceiverMarker: vi.fn(async () => undefined),
     getReceiverMarker: vi.fn(async () => null),
     putPublic: vi.fn(async () => undefined),
+    publicGet: vi.fn(async () =>
+      new TextEncoder().encode(
+        '{"version":1,"kind":"hypercolor.receiver.capabilities","receiver_path":"hypercolor/wallet","chat_kinds_v":1}',
+      ),
+    ),
   },
 }));
 
@@ -472,6 +477,10 @@ describe("fresh sign-in receiver row vs unsigned sqlite snapshot", () => {
     const { LINK_RECEIVER_PATH } = await import("@/types/link");
     const { acquireScopedWriter, exitWriterCriticalSection, ensureWriter, getTabLock, getTabLockOwnerScope, setTabLockOwner, resetTabLockForTests } =
       await import("@/services/tabLock");
+    const { PaykitLinkWeb } = await import("./PaykitLinkWeb");
+    vi.mocked(PaykitLinkWeb.getReceiverMarker)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ noisePublicKey: noisePkFromSecretBytes(new Uint8Array(32).fill(3)) });
     expect(getTabLockOwnerScope()).toBe("unsigned");
     await ensureWriter();
     const unsigned = await getDb();
@@ -587,7 +596,9 @@ describe("fresh sign-in receiver row vs unsigned sqlite snapshot", () => {
     const { LINK_RECEIVER_PATH } = await import("@/types/link");
 
     vi.mocked(PaykitLinkWeb.publishReceiverMarker).mockClear();
-    vi.mocked(PaykitLinkWeb.getReceiverMarker).mockResolvedValue(null);
+    vi.mocked(PaykitLinkWeb.getReceiverMarker)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ noisePublicKey: noisePkFromSecretBytes(new Uint8Array(32).fill(3)) });
     await ensureWriter();
     await getDb();
     const handle = fakeHandle(
@@ -644,7 +655,9 @@ describe("fresh sign-in receiver row vs unsigned sqlite snapshot", () => {
     expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
 
     vi.mocked(PaykitLinkWeb.publishReceiverMarker).mockClear();
-    vi.mocked(PaykitLinkWeb.getReceiverMarker).mockResolvedValue(null);
+    vi.mocked(PaykitLinkWeb.getReceiverMarker)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ noisePublicKey: noisePkFromSecretBytes(existing) });
 
     expect(await healMissingReceiverRow(handle as never, OWNER)).toBe(true);
     const row = await StorageService.getLinkReceiver(OWNER);
