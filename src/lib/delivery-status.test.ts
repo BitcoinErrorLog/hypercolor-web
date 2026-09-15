@@ -47,7 +47,7 @@ describe("formatDeliveryStatus", () => {
     expect(isStandbyNewChatBlocked("standby", "handshaking")).toBe(true);
     expect(isStandbyNewChatBlocked("standby", "established")).toBe(true);
     expect(isStandbyNewChatBlocked("standby", "established", { snapshot: "" })).toBe(true);
-    expect(isStandbyNewChatBlocked("standby", "established", { snapshot: "HC1.opaque" })).toBe(false);
+    expect(isStandbyNewChatBlocked("standby", "established", { snapshot: "HC1.opaque" })).toBe(true);
     expect(isStandbyNewChatBlocked("standby", "ready")).toBe(false);
     expect(isStandbyNewChatBlocked("standby", "handshaking", { linkReady: true })).toBe(false);
     expect(isStandbyNewChatBlocked("active", null)).toBe(false);

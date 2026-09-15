@@ -32,6 +32,7 @@ export type ChatsPageRow = {
   pubky?: string;
   muted?: boolean;
   archived?: boolean;
+  linkStatus?: string | null;
 };
 
 export const CHATS_EMPTY_STATE_CONTROL_HINT =
@@ -256,6 +257,11 @@ export function ChatsPage({
                       ) : null}
                       <span className="mt-1 flex items-center justify-between gap-2">
                         <span className="truncate text-base text-muted-foreground">{row.preview}</span>
+                        {row.linkStatus === "reconnect_required" ? (
+                          <span className="text-xs font-light hc-brand-muted">
+                            Connection lost — re-linking will be available in the next update.
+                          </span>
+                        ) : null}
                         {row.unreadCount > 0 ? (
                           <span className="rounded-full hc-brand-fill px-2 text-xs">
                             {unreadLabel(row.unreadCount)}

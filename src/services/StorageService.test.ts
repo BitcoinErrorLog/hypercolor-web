@@ -149,6 +149,36 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(after?.snapshot).toBe("cipher-hs");
   });
 
+  it("retains the opaque snapshot when an established link requires reconnect", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    await StorageService.upsertLink({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "established",
+      snapshot: "captured-opaque-snapshot",
+      remoteNoisePublicKey: "noise",
+      localReceiverPath: "hypercolor/wallet",
+      remoteReceiverPath: "hypercolor/wallet",
+      consecutiveFailures: 0,
+    });
+
+    await StorageService.markLinkReconnectRequired(OWNER, PEER, "network");
+    const link = await StorageService.getLink(OWNER, PEER);
+
+    expect(link).toEqual(
+      expect.objectContaining({
+        status: "reconnect_required",
+        snapshot: "captured-opaque-snapshot",
+        reconnectErrorCategory: "network",
+      }),
+    );
+    expect(link?.reconnectRequiredAt).toEqual(expect.any(Number));
+  });
+
   it("clearAccountData wipes owner rows and leaves the other account", async () => {
     const db = openMemoryDb();
     setDbForTests(db);

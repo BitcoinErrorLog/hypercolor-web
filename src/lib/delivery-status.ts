@@ -20,7 +20,7 @@ export function isUiLinkReady(
 ): boolean {
   if (extras?.linkReady === true || extras?.liveEstablished) return true;
   if (linkStatus === "ready") return true;
-  return linkStatus === "established" && (extras?.snapshot?.length ?? 0) > 0;
+  return false;
 }
 
 /** Standby devices must not start a handshake: the published marker is another device's (or an orphan). */
@@ -60,9 +60,14 @@ export function queuedThreadSubtitle(input: {
   lastDeliveryState?: string | null;
   receiverRole?: string | null;
 }): string | null {
-  if (input.linkStatus === "established" || input.linkStatus === "ready") return null;
+  if (input.linkStatus === "reconnect_required") {
+    return "Connection lost — re-linking will be available in the next update.";
+  }
+  if (input.linkStatus === "restoring") return "Restoring encrypted link…";
+  if (input.linkStatus === "ready") return null;
   if (input.linkStatus === "error") return CONNECTION_CHANGED_RETRY;
   if (input.lastDeliveryState === "sent" || input.lastDeliveryState === "delivered") return null;
+  if (input.linkStatus === "established") return null;
   const handshake =
     input.linkStatus === "handshaking" ||
     input.linkStatus === "handshaking-initiator" ||

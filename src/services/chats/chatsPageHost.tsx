@@ -39,6 +39,7 @@ export function mapInboxRowsToChatsPageRows(
         pubky,
         muted: flags?.muted,
         archived: flags?.archived,
+        linkStatus: row.linkStatus,
       };
     });
 }

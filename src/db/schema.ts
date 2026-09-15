@@ -70,6 +70,17 @@ export const SCHEMA_V19_STATEMENTS: readonly string[] = [
      CHECK (stage IN ('marker', 'capability'))`,
 ];
 
+/** Schema v20 — durable fail-closed established-link reconnect state. */
+export const SCHEMA_V20_STATEMENTS: readonly string[] = [
+  `ALTER TABLE links ADD COLUMN reconnect_error_category TEXT`,
+  `ALTER TABLE links ADD COLUMN reconnect_required_at INTEGER`,
+];
+
+/** Schema v21 — redacted per-item inbound routing failure category. */
+export const SCHEMA_V21_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_stream_items ADD COLUMN processing_error_category TEXT`,
+];
+
 /**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the

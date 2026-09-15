@@ -346,6 +346,8 @@ export type LinkStatus =
   | 'handshaking-initiator'
   | 'handshaking-responder'
   | 'ready'
+  | 'restoring'
+  | 'reconnect_required'
   | 'message-request'
   | 'error';
 
@@ -355,7 +357,9 @@ export type LinkRole = 'initiator' | 'responder';
 export type ReceiverRole = 'active' | 'standby';
 
 /** Persisted link lifecycle — in-progress, live, or archived-after-rekey. */
-export type StoredLinkStatus = 'handshaking' | 'established' | 'superseded';
+export type StoredLinkStatus = 'handshaking' | 'established' | 'reconnect_required' | 'superseded';
+
+export type LinkErrorCategory = 'network' | 'protocol' | 'application' | 'unknown';
 
 export type LinkMessageDirection = 'sent' | 'received';
 
@@ -406,6 +410,8 @@ export interface LinkRecord {
   lastSeenPeerMarkerPk: string | null;
   /** Peer's advertised `chat_kinds_v` from receiver.json. Absent/0 = pre-v1. */
   chatKindsV?: number;
+  reconnectErrorCategory?: LinkErrorCategory | null;
+  reconnectRequiredAt?: number | null;
   updatedAt: number;
 }
 
@@ -467,6 +473,7 @@ export interface LinkStreamItem {
   rawJson: string;
   receivedAt: number;
   processed: boolean;
+  processingErrorCategory?: LinkErrorCategory | null;
 }
 
 export type LinkStreamItemInput = Omit<LinkStreamItem, 'processed'>;

@@ -28,6 +28,7 @@ import {
   type LinkMessage,
   type LinkReceiver,
   type LinkRecord,
+  type LinkErrorCategory,
   type LinkRole,
   type LinkStatus,
   type LinkStreamItemInput,
@@ -206,13 +207,12 @@ let takeoverInFlight: Promise<{
   receiverRole: "active" | "standby";
 }> | null = null;
 
-/** Same `ready` predicate the send path uses: live established handle or snapshot. */
+/** `ready` requires a live established handle; persisted snapshots are restoring. */
 export function isReadyLinkPredicate(
   record: { status: string; snapshot: string },
   live: LiveHandle | undefined,
 ): boolean {
-  if (live?.status === "established") return true;
-  return record.status === "established" && record.snapshot.length > 0;
+  return live?.status === "established";
 }
 
 export const LinkService = {
@@ -357,11 +357,13 @@ export const LinkService = {
     try {
       const record = await StorageService.getLink(owner, peerPubky);
       if (!record) return null;
+      if (record.status === "reconnect_required") return "reconnect_required";
       const live = liveHandles.get(linkKey(owner, peerPubky));
       if (isReadyLinkPredicate(record, live)) {
         if (blockedEstablishedRekeyOutcome(record) === "error") return "error";
         return "ready";
       }
+      if (record.status === "established") return "restoring";
       return record.role === "initiator" ? "handshaking-initiator" : "handshaking-responder";
     } catch {
       return "error";
@@ -783,7 +785,7 @@ export const LinkService = {
     return withQueue(peerPubky, async () => {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
-      if (stored) await wipeLinkState(stored);
+      if (stored) await retireLocalLinkState(stored);
       const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky, ownerPubky);
       await StorageService.removeQueueItemsForRecipient(peerPubky, ownerPubky);
       await settleOrphanedFanout(orphanedFanout);
@@ -820,7 +822,7 @@ export const LinkService = {
     return withQueue(peerPubky, async () => {
       const ownerPubky = await requireOwner();
       const stored = await StorageService.getLink(ownerPubky, peerPubky);
-      if (stored) await wipeLinkState(stored);
+      if (stored) await retireLocalLinkState(stored);
       const orphanedFanout = await collectFanoutPayloadsForRecipient(peerPubky, ownerPubky);
       await StorageService.removeQueueItemsAndAbandonOwedForPeer(ownerPubky, peerPubky);
       await settleOrphanedFanout(orphanedFanout);
@@ -956,6 +958,7 @@ async function ensureLinkLocked(
   const key = linkKey(ownerPubky, peerPubky);
   let live = liveHandles.get(key);
   let stored = await StorageService.getLink(ownerPubky, peerPubky);
+  let restoreFailed = false;
 
   if (allowInitiate && intent === "user") {
     await StorageService.clearHandshakeBudget(ownerPubky, peerPubky);
@@ -963,9 +966,13 @@ async function ensureLinkLocked(
   }
 
   if (stored && (await shouldAgeOutNonReadyLink(stored))) {
-    await wipeLinkState(stored);
+    await retireLocalLinkState(stored);
     stored = null;
     live = liveHandles.get(key);
+  }
+
+  if (stored?.status === "reconnect_required") {
+    restoreFailed = true;
   }
 
   if (live?.status === "established" || stored?.status === "established") {
@@ -978,10 +985,14 @@ async function ensureLinkLocked(
         allowInitiate,
         intent,
       );
-      if (restored !== "ready") return restored;
+      if (restored !== "ready") {
+        if (restored !== "reconnect_required") return restored;
+        restoreFailed = true;
+        stored = await StorageService.getLink(ownerPubky, peerPubky);
+      }
       live = liveHandles.get(key);
     }
-    if (stored?.status === "established") {
+    if (stored?.status === "established" && !restoreFailed) {
       const rekeyed = await maybeAdoptEstablishedRekey(
         activeSession,
         receiver,
@@ -996,7 +1007,7 @@ async function ensureLinkLocked(
       const blocked = stored ? blockedEstablishedRekeyOutcome(stored) : null;
       if (blocked) return blocked;
     }
-    if (liveHandles.get(key)?.status === "established" || stored?.status === "established") {
+    if (!restoreFailed && (liveHandles.get(key)?.status === "established" || stored?.status === "established")) {
       return "ready";
     }
   }
@@ -1006,9 +1017,11 @@ async function ensureLinkLocked(
   // (none, handshaking, zombie established that failed restore) so sends
   // cannot persist+queue against a dead published key.
   const latestReceiver = await StorageService.getLinkReceiver(ownerPubky);
-  if (latestReceiver?.receiverRole === "standby") {
+  if (latestReceiver?.receiverRole === "standby" && !restoreFailed) {
     return "standby-blocked";
   }
+
+  if (restoreFailed) return "reconnect_required";
 
   if (intent !== "user" && (await isHandshakeBudgetExhausted(ownerPubky, peerPubky))) {
     return "error";
@@ -1037,32 +1050,33 @@ async function ensureLinkLocked(
       inbound = await probeInbound(activeSession, receiver, ownerPubky, peerPubky, marker, localPath);
     } catch (err) {
       if (isLinkNativeError(err) && err.code === "protocol") {
-        await clearPeerOutboxBestEffort(
-          activeSession,
-          receiver,
-          peerPubky,
-          marker.noisePublicKey,
-          localPath,
-          LINK_RECEIVER_PATH,
-        );
+        const current = stored ?? (await StorageService.getLink(ownerPubky, peerPubky));
+        if (current?.status === "established") {
+          await markReconnectRequired(current, "protocol");
+        } else if (current) {
+          await recoverWedgedLink(current, false, false, "auto", err);
+        }
         inbound = null;
       } else {
         throw err;
       }
     }
     if (inbound !== null) {
-      const replaceable = stored === null || stored.status !== "established";
-      if (replaceable && (stored?.status === "handshaking" || live?.status === "handshaking")) {
-        if (stored) await wipeNonReadyHandshakeOnly(stored);
-        else if (live) {
-          await closeQuietly(live.linkId);
-          liveHandles.delete(key);
-        }
+      if (!(await isCurrentOwner(ownerPubky))) {
+        await closeQuietly(inbound.linkId);
+        return "error";
       }
-      if (replaceable) {
-        return adoptInboundHandshake(ownerPubky, peerPubky, marker, localPath, inbound);
+      if (stored?.status === "established") {
+        await StorageService.upsertArchivedLink(stored);
       }
-    }
+      if (stored?.status === "handshaking") {
+        await retireLocalLinkState(stored, { failQueued: false });
+      } else if (live?.status === "handshaking") {
+        await closeQuietly(live.linkId);
+        liveHandles.delete(key);
+      }
+      return adoptInboundHandshake(ownerPubky, peerPubky, marker, localPath, inbound);
+      }
   }
 
   live = liveHandles.get(key);
@@ -1119,6 +1133,7 @@ async function ensureLinkLocked(
     }
     return "idle";
   }
+  if (restoreFailed) return "reconnect_required";
   if (!marker) return allowInitiate ? "not-enrolled" : "idle";
   if (!allowInitiate) return "idle";
 
@@ -1574,25 +1589,6 @@ async function advanceLiveHandshake(
       if (recovered !== null) return recovered;
     }
 
-    if (live.role === "initiator" && ownerPubky < peerPubky) {
-      const marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, LINK_RECEIVER_PATH);
-      if (marker) {
-        const inbound = await probeInbound(
-          activeSession,
-          receiver,
-          ownerPubky,
-          peerPubky,
-          marker,
-          LINK_RECEIVER_PATH,
-        );
-        if (inbound !== null) {
-          await closeQuietly(live.linkId);
-          liveHandles.delete(linkKey(ownerPubky, peerPubky));
-          return adoptInboundHandshake(ownerPubky, peerPubky, marker, LINK_RECEIVER_PATH, inbound);
-        }
-      }
-    }
-
     return roleStatus(live.role);
   } catch (err) {
     const fallback: LinkRecord = stored ?? {
@@ -1648,12 +1644,7 @@ async function completeEstablished(
     snapshot,
   );
   liveHandles.set(linkKey(ownerPubky, peerPubky), { status: "established", linkId });
-  // Do not clearLinkOutbox here. That primitive deletes every slot on our
-  // write path, including unconsumed msg3 (Noise XX: initiator is Complete
-  // the instant msg3 is PUT; the responder still has to read it) and any
-  // unread transport slots. There is no protocol ack that msg1 was consumed,
-  // so a slot-scoped delete is also unsafe until paykit grows one. Orphan
-  // msg1 stays as garbage; see docs/DECISIONS.md (P1-1 backlog).
+  // Orphan initiator msg1 stays as garbage; see docs/DECISIONS.md (P1-1 backlog).
   return "ready";
 }
 
@@ -1811,13 +1802,7 @@ async function handleLinkFailure(
   }
   const established = stored.status === "established";
   if (isLinkNativeError(err) && err.code === "network") {
-    if (established) {
-      console.warn(
-        `[LinkService] Established link restore deferred for ${stored.peerPubky}:`,
-        errorMessage(err),
-      );
-      return "ready";
-    }
+    if (established) return markReconnectRequired(stored, "network");
     const failures = await StorageService.incrementLinkConsecutiveFailures(
       stored.ownerPubky,
       stored.peerPubky,
@@ -1828,16 +1813,11 @@ async function handleLinkFailure(
     return roleStatus(stored.role);
   }
   if (isLinkNativeError(err) && err.code === "protocol") {
+    if (established) return markReconnectRequired(stored, "protocol");
     return recoverWedgedLink(stored, alreadyRecovered, allowInitiate, intent, err);
   }
 
-  if (established) {
-    console.warn(
-      `[LinkService] Established link step failed for ${stored.peerPubky}:`,
-      errorMessage(err),
-    );
-    return "ready";
-  }
+  if (established) return markReconnectRequired(stored, "application");
 
   const failures = await StorageService.incrementLinkConsecutiveFailures(
     stored.ownerPubky,
@@ -1880,7 +1860,7 @@ async function recoverWedgedLink(
     if (budget.exhausted) return abandonUnestablishedLink(stored);
   }
 
-  await wipeLinkState(stored);
+  await retireLocalLinkState(stored);
 
   if (alreadyRecovered) return "error";
   return ensureLinkLocked(stored.peerPubky, allowInitiate, true, intent);
@@ -1922,7 +1902,7 @@ async function isHandshakeBudgetExhausted(
 async function abandonUnestablishedLink(stored: LinkRecord): Promise<EnsureOutcome> {
   handshakeWatch.delete(linkKey(stored.ownerPubky, stored.peerPubky));
   await StorageService.abandonOwedLinkMessagesForPeer(stored.ownerPubky, stored.peerPubky);
-  await wipeLinkState(stored);
+  await retireLocalLinkState(stored);
   return "error";
 }
 
@@ -1935,11 +1915,6 @@ async function shouldAgeOutNonReadyLink(stored: LinkRecord): Promise<boolean> {
     return true;
   }
   return false;
-}
-
-async function wipeNonReadyHandshakeOnly(stored: LinkRecord): Promise<void> {
-  if (stored.status === "established") return;
-  await wipeLinkState(stored);
 }
 
 async function maybeRecoverInitiatorMarkerRotation(
@@ -1999,7 +1974,7 @@ async function maybeRecoverInitiatorMarkerRotation(
   const budget = await chargeHandshakeBudget(ownerPubky, peerPubky);
   if (budget.exhausted) return abandonUnestablishedLink(row);
 
-  await wipeLinkState(row);
+  await retireLocalLinkState(row, { failQueued: false });
   handshakeWatch.delete(key);
   if (alreadyRecovered) return "error";
   return initiateHandshake(
@@ -2015,7 +1990,11 @@ async function maybeRecoverInitiatorMarkerRotation(
   );
 }
 
-async function wipeLinkState(stored: LinkRecord): Promise<void> {
+async function retireLocalLinkState(
+  stored: LinkRecord,
+  options: { failQueued?: boolean } = {},
+): Promise<void> {
+  if (!(await isCurrentOwner(stored.ownerPubky))) return;
   const key = linkKey(stored.ownerPubky, stored.peerPubky);
   const pending = pendingEstablishedRekeys.get(key);
   if (pending) {
@@ -2027,23 +2006,36 @@ async function wipeLinkState(stored: LinkRecord): Promise<void> {
     await closeQuietly(live.linkId);
     liveHandles.delete(key);
   }
-  const receiver = await StorageService.getLinkReceiver(stored.ownerPubky);
-  if (session && receiver) {
-    try {
-      await PaykitLinkWeb.clearLinkOutbox(
-        session.handle,
-        receiver.receiverAlias,
-        stored.peerPubky,
-        stored.remoteNoisePublicKey,
-        coerceReceiverPath(stored.localReceiverPath),
-        coerceReceiverPath(stored.remoteReceiverPath),
-      );
-    } catch {
-      // Best-effort.
-    }
+  if (options.failQueued !== false) {
+    await StorageService.abandonOwedLinkMessagesForPeer(stored.ownerPubky, stored.peerPubky);
   }
-  await StorageService.deleteArchivedLink(stored.ownerPubky, stored.peerPubky);
+  await StorageService.upsertArchivedLink(stored);
   await StorageService.deleteLink(stored.ownerPubky, stored.peerPubky);
+}
+
+async function markReconnectRequired(
+  stored: LinkRecord,
+  errorCategory: LinkErrorCategory,
+): Promise<EnsureOutcome> {
+  if (!(await isCurrentOwner(stored.ownerPubky))) return "error";
+  const key = linkKey(stored.ownerPubky, stored.peerPubky);
+  const live = liveHandles.get(key);
+  if (live) await closeQuietly(live.linkId);
+  liveHandles.delete(key);
+  await StorageService.markLinkReconnectRequired(
+    stored.ownerPubky,
+    stored.peerPubky,
+    errorCategory,
+  );
+  return "reconnect_required";
+}
+
+function linkErrorCategory(err: unknown): LinkErrorCategory {
+  if (isLinkNativeError(err)) {
+    if (err.code === "network") return "network";
+    if (err.code === "protocol") return "protocol";
+  }
+  return "application";
 }
 
 function assertLinkSendable(
@@ -2080,12 +2072,12 @@ async function restartQueuedUnestablishedHandshakes(): Promise<void> {
   const ownerPubky = await requireOwner();
   const links = await StorageService.getAllLinks(ownerPubky);
   for (const link of links) {
-    if (link.status === "established") continue;
+    if (link.status === "established" || link.status === "reconnect_required") continue;
     await withQueue(link.peerPubky, async () => {
       const current = await StorageService.getLink(ownerPubky, link.peerPubky);
       if (!current || current.status === "established") return;
       await StorageService.clearHandshakeBudget(ownerPubky, current.peerPubky);
-      await wipeLinkState(current);
+      await retireLocalLinkState(current, { failQueued: false });
       await ensureLinkLocked(current.peerPubky, true, true, "user");
     });
   }
@@ -2179,28 +2171,7 @@ async function rejectDeclinedInbound(ownerPubky: PubkyKey, peerPubky: PubkyKey):
     liveHandles.delete(key);
   }
   const leftover = await StorageService.getLink(ownerPubky, peerPubky);
-  if (leftover) {
-    await wipeLinkState(leftover);
-    return;
-  }
-  const lookup = await sessionOrRestore();
-  if (!isActiveSession(lookup)) return;
-  const receiver = await StorageService.getLinkReceiver(ownerPubky);
-  if (!receiver) return;
-  try {
-    const marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, LINK_RECEIVER_PATH);
-    if (!marker) return;
-    await PaykitLinkWeb.clearLinkOutbox(
-      lookup.handle,
-      receiver.receiverAlias,
-      peerPubky,
-      marker.noisePublicKey,
-      coerceReceiverPath(receiver.receiverPath),
-      LINK_RECEIVER_PATH,
-    );
-  } catch {
-    // Best-effort.
-  }
+  if (leftover) await retireLocalLinkState(leftover);
 }
 
 function notifyInboxSynced(ownerPubky: PubkyKey): void {
@@ -2271,9 +2242,9 @@ async function syncPeerLocked(peerPubky: PubkyKey): Promise<LinkMessage[]> {
     await StorageService.updateLinkSnapshot(ownerPubky, peerPubky, snapshot, "established");
     return [...swept, ...routed];
   } catch (err) {
-    if (isLinkNativeError(err) && err.code === "protocol") {
-      const stored = await StorageService.getLink(ownerPubky, peerPubky);
-      if (stored) await recoverWedgedLink(stored, false, false, "auto", err);
+    const stored = await StorageService.getLink(ownerPubky, peerPubky);
+    if (stored?.status === "established") {
+      await markReconnectRequired(stored, linkErrorCategory(err));
     }
     throw err;
   }
@@ -2289,6 +2260,7 @@ async function routeUnprocessedStreamItems(
   let deferred = false;
   let deleteApplied = false;
   for (const item of items) {
+    try {
     if (shouldDropOversizedKnownInbound(item.rawJson, item.kind)) {
       const peekedOver = peekEnvelopeKind(item.rawJson);
       if (peekedOver !== null && isGroupWireKind(peekedOver)) {
@@ -2412,6 +2384,11 @@ async function routeUnprocessedStreamItems(
       status: "delivered",
       eventIds: [envelope.event_id],
     });
+    } catch (err) {
+      if (isLinkNativeError(err)) throw err;
+      await StorageService.markLinkStreamItemProcessedWithError(item.id, "application");
+      continue;
+    }
   }
   if ((deferred || deleteApplied) && received.length > 0) {
     const routed = deferred ? await routeUnprocessedStreamItems(ownerPubky, peerPubky) : [];
@@ -3543,28 +3520,6 @@ function requireEstablishedHandle(ownerPubky: PubkyKey, peerPubky: PubkyKey): st
 async function isCurrentOwner(ownerPubky: PubkyKey): Promise<boolean> {
   const current = session?.pubky ?? (await KeyStore.getPubky());
   return current !== null && current === ownerPubky;
-}
-
-async function clearPeerOutboxBestEffort(
-  activeSession: ActiveSession,
-  receiver: LinkReceiver,
-  peerPubky: PubkyKey,
-  remoteNoisePublicKey: string,
-  localPath: string,
-  remotePath: string,
-): Promise<void> {
-  try {
-    await PaykitLinkWeb.clearLinkOutbox(
-      activeSession.handle,
-      receiver.receiverAlias,
-      peerPubky,
-      remoteNoisePublicKey,
-      coerceReceiverPath(localPath),
-      coerceReceiverPath(remotePath),
-    );
-  } catch {
-    // Best-effort.
-  }
 }
 
 function linkKey(ownerPubky: PubkyKey, peerPubky: PubkyKey): string {

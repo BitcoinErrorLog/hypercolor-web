@@ -71,6 +71,7 @@ vi.mock("@/services/StorageService", () => ({
     getLinkReadCursor: vi.fn(async () => null),
     setLinkReadCursor: vi.fn(),
     updateLinkSnapshot: vi.fn(),
+  markLinkReconnectRequired: vi.fn(),
     incrementLinkConsecutiveFailures: vi.fn(),
     resetLinkConsecutiveFailures: vi.fn(),
     deleteLink: vi.fn(),
@@ -99,6 +100,7 @@ vi.mock("@/services/StorageService", () => ({
     getUnprocessedLinkStreamItems: vi.fn(async () => []),
     saveLinkStreamItems: vi.fn(),
     markLinkStreamItemProcessed: vi.fn(),
+    markLinkStreamItemProcessedWithError: vi.fn(),
     saveLinkMessage: vi.fn(),
     findLinkMessageInConversation: vi.fn(async () => null),
     hasLinkMessage: vi.fn(async () => false),
@@ -751,7 +753,7 @@ describe("LinkService persist-then-send", () => {
 
     expect(StorageService.removeQueueItemsAndAbandonOwedForPeer).toHaveBeenCalledWith(OWNER, PEER);
     expect(StorageService.removeQueueItemsForRecipient).not.toHaveBeenCalled();
-    expect(StorageService.abandonOwedLinkMessagesForPeer).not.toHaveBeenCalled();
+    expect(StorageService.abandonOwedLinkMessagesForPeer).toHaveBeenCalledWith(OWNER, PEER);
     expect(StorageService.updateGroupMessageDeliveryState).toHaveBeenCalledWith(
       OWNER,
       channelId,

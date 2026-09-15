@@ -19,6 +19,7 @@ export type InboxRow = {
   lastMessageAt: number;
   unreadCount: number;
   href: string;
+  linkStatus?: string | null;
 };
 
 export function groupConversationId(channelId: string): string {
@@ -59,11 +60,9 @@ export function inboxRowFromDm(row: LinkConversationSummary): InboxRow {
     lastDeliveryState: row.lastDeliveryState,
     receiverRole: row.receiverRole,
   });
-  const preview = waiting
-    ? waiting
-    : isPaykitPaymentKind(row.lastKind)
+  const preview = isPaykitPaymentKind(row.lastKind)
       ? paymentKindTitle(row.lastKind)
-      : row.lastMessage || "No messages yet";
+      : (waiting ?? row.lastMessage ?? "No messages yet");
   return {
     id: row.conversationId,
     kind: "dm",
@@ -72,6 +71,7 @@ export function inboxRowFromDm(row: LinkConversationSummary): InboxRow {
     lastMessageAt: row.lastMessageAt,
     unreadCount: row.unreadCount,
     href: `/chats/${encodeURIComponent(row.conversationId)}`,
+    linkStatus: row.linkStatus,
   };
 }
 

@@ -12,6 +12,7 @@ import type { SqlExecutor } from '../db/sql';
 import type {
   LinkConversationSummary,
   LinkDeliveryState,
+  LinkErrorCategory,
   LinkMessage,
   LinkMessageDirection,
   HandshakeBudget,
@@ -635,8 +636,9 @@ export const StorageService = {
       `INSERT INTO links
         (owner_pubky, peer_pubky, role, status, snapshot,
          remote_noise_public_key, local_receiver_path, remote_receiver_path,
-         consecutive_failures, last_seen_peer_marker_pk, chat_kinds_v, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         consecutive_failures, last_seen_peer_marker_pk, chat_kinds_v,
+         reconnect_error_category, reconnect_required_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
          role                      = excluded.role,
          status                    = excluded.status,
@@ -647,6 +649,8 @@ export const StorageService = {
          consecutive_failures      = excluded.consecutive_failures,
          last_seen_peer_marker_pk  = COALESCE(excluded.last_seen_peer_marker_pk, last_seen_peer_marker_pk),
          chat_kinds_v              = excluded.chat_kinds_v,
+         reconnect_error_category = excluded.reconnect_error_category,
+         reconnect_required_at    = excluded.reconnect_required_at,
          updated_at                = excluded.updated_at`,
       [
         link.ownerPubky,
@@ -660,6 +664,8 @@ export const StorageService = {
         link.consecutiveFailures,
         link.lastSeenPeerMarkerPk ?? null,
         normalizeChatKindsV(link.chatKindsV),
+        link.reconnectErrorCategory ?? null,
+        link.reconnectRequiredAt ?? null,
         now(),
         now(),
       ],
@@ -784,6 +790,23 @@ export const StorageService = {
        SET snapshot = ?, status = ?, consecutive_failures = 0, updated_at = ?
        WHERE owner_pubky = ? AND peer_pubky = ?`,
       [snapshot, status, now(), ownerPubky, peerPubky],
+    );
+  },
+
+  async markLinkReconnectRequired(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    errorCategory: LinkErrorCategory,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET status = 'reconnect_required',
+           reconnect_error_category = ?,
+           reconnect_required_at = ?,
+           updated_at = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [errorCategory, now(), now(), ownerPubky, peerPubky],
     );
   },
 
@@ -1065,6 +1088,19 @@ export const StorageService = {
   async markLinkStreamItemProcessed(id: string): Promise<void> {
     const db = await getDb();
     db.executeSync('UPDATE link_stream_items SET processed = 1 WHERE id = ?', [id]);
+  },
+
+  async markLinkStreamItemProcessedWithError(
+    id: string,
+    errorCategory: LinkErrorCategory,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE link_stream_items
+       SET processed = 1, processing_error_category = ?
+       WHERE id = ?`,
+      [errorCategory, id],
+    );
   },
 
   // ── Link read cursors (Paykit Encrypted Links) ────────────────────────────
@@ -2859,6 +2895,10 @@ function rowToLink(row: any): LinkRecord {
     lastSeenPeerMarkerPk:
       typeof row.last_seen_peer_marker_pk === 'string' ? row.last_seen_peer_marker_pk : null,
     chatKindsV: normalizeChatKindsV(row.chat_kinds_v),
+    reconnectErrorCategory:
+      typeof row.reconnect_error_category === 'string' ? row.reconnect_error_category : null,
+    reconnectRequiredAt:
+      typeof row.reconnect_required_at === 'number' ? row.reconnect_required_at : null,
     updatedAt: row.updated_at,
   };
 }
@@ -2905,6 +2945,13 @@ function rowToLinkStreamItem(row: any): LinkStreamItem {
     rawJson: row.raw_json,
     receivedAt: row.received_at,
     processed: row.processed === 1,
+    processingErrorCategory:
+      row.processing_error_category === 'network' ||
+      row.processing_error_category === 'protocol' ||
+      row.processing_error_category === 'application' ||
+      row.processing_error_category === 'unknown'
+        ? row.processing_error_category
+        : null,
   };
 }
 

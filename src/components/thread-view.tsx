@@ -262,7 +262,11 @@ export function ThreadView({
           {nickname && title ? (
             <p className="text-sm text-muted-foreground">{title}</p>
           ) : null}
-          {linkStatus === "error" ? (
+          {linkStatus === "reconnect_required" ? (
+            <p className="text-sm font-light hc-brand-muted">
+              Connection lost — re-linking will be available in the next update.
+            </p>
+          ) : linkStatus === "error" ? (
             <button
               type="button"
               data-testid="threadLinkRetry"
