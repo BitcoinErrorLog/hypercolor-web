@@ -1,8 +1,20 @@
 {
   "framework": "nextjs",
+  "buildCommand": "next build --webpack",
   "rewrites": [
     { "source": "/chats/:conversationId", "destination": "/chats" },
     { "source": "/channels/:id", "destination": "/channels" },
-    { "source": "/contacts/:pubky", "destination": "/contacts" }
+    { "source": "/contacts/:pubky", "destination": "/contacts" },
+    { "source": "/discover/:tag", "destination": "/discover" }
+  ],
+  "headers": [
+    {
+      "source": "/ring-callback",
+      "headers": [{ "key": "Referrer-Policy", "value": "no-referrer" }]
+    },
+    {
+      "source": "/ring-callback/(.*)",
+      "headers": [{ "key": "Referrer-Policy", "value": "no-referrer" }]
+    }
   ]
 }

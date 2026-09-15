@@ -1,7 +1,5 @@
-// v3: never cache-first Next Flight/RSC requests. v2 still intercepted every
-// same-origin GET, so a precached HTML document for /chats was returned to
-// the App Router and the client transition never committed.
-const CACHE = "hypercolor-shell-v3";
+// v4: product-route shell, never cache /ring-callback, activate only after Reload.
+const CACHE = "hypercolor-shell-v4";
 const SHELL = [
   "/",
   "/chats",
@@ -11,6 +9,7 @@ const SHELL = [
   "/settings",
   "/profile",
   "/enable",
+  "/discover",
   "/manifest.webmanifest",
   "/icon.svg",
 ];
@@ -23,6 +22,7 @@ function shellPath(url) {
 function shouldCache(url) {
   if (url.origin !== self.location.origin) return false;
   const path = shellPath(url);
+  if (path === "/ring-callback" || path.startsWith("/ring-callback")) return false;
   if (path === "/e2e" || path.startsWith("/e2e/")) return false;
   return SHELL.includes(path);
 }
@@ -59,7 +59,6 @@ self.addEventListener("install", (event) => {
           cache.add(url).catch(() => undefined),
         ),
       );
-      await self.skipWaiting();
     }),
   );
 });
@@ -76,6 +75,10 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (event.data?.type === "hypercolor-skip-waiting") {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   if (event.data?.type !== "hypercolor-sign-out") return;
   event.waitUntil(caches.delete(CACHE));
 });

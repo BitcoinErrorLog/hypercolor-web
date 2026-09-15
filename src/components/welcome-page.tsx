@@ -3,6 +3,14 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
+import { ErrorDetails } from "@/components/error-details";
+import { TruncatedPubky } from "@/components/truncated-pubky";
+import { CUSTODY_LINE } from "@/lib/session-ui";
+import { resolveWelcomePhase, type WelcomePhase } from "@/components/welcome-phase";
+import { formatRingVerificationCode } from "@/services/ringChannelId";
+
+export type { WelcomePhase };
+export { resolveWelcomePhase };
 
 export function WelcomePage({
   appName,
@@ -14,9 +22,18 @@ export function WelcomePage({
   pendingPubky,
   adopting,
   authPanel,
+  linkLive,
+  finishing = false,
+  phase: phaseProp,
+  ch = "",
   onGenerateLink,
   onConfirmAdoption,
   onCancelAdoption,
+  onCancelWaiting,
+  onTryAgain,
+  onShowQrAgain,
+  onReloadPage,
+  onRetryPublish,
 }: {
   appName: string;
   isAuthenticated: boolean;
@@ -27,57 +44,173 @@ export function WelcomePage({
   pendingPubky: string | null;
   adopting: boolean;
   authPanel: ReactNode;
+  linkLive: boolean;
+  finishing?: boolean;
+  phase?: WelcomePhase;
+  ch?: string;
   onGenerateLink: () => void;
   onConfirmAdoption: () => void;
   onCancelAdoption: () => void;
+  onCancelWaiting: () => void;
+  onTryAgain?: () => void;
+  onShowQrAgain?: () => void;
+  onReloadPage?: () => void;
+  onRetryPublish?: () => void;
 }) {
+  const phase = resolveWelcomePhase({
+    isExpired,
+    error,
+    pendingPubky,
+    linkLive,
+    finishing,
+    phase: phaseProp,
+  });
+  const showQr = phase === "waiting";
+  const retry = onTryAgain ?? onGenerateLink;
+  const verificationCode = ch ? formatRingVerificationCode(ch) : "";
+
   return (
-    <article className="space-y-6">
+    <article className="space-y-6" data-surface="welcome-page">
+      <section className="hc-hero-iridescent hc-hero-frame w-full rounded-xl">
+        <div className="hc-hero-inner flex min-w-0 flex-col justify-center gap-8 bg-background p-8 lg:flex-row lg:items-center">
+          <div className="min-w-0 flex-1 space-y-4">
       <h1 className="text-3xl font-semibold tracking-tight">{appName}</h1>
+      <p className="text-muted-foreground leading-7" data-testid="welcomeScanHint">{CUSTODY_LINE}</p>
       <p className="text-muted-foreground leading-7">
-        Your identity is managed by <strong>Pubky Ring</strong>. Hypercolor
-        never holds your private key. Scan or copy the paykit-connect URL,
-        then enable messaging with a second Ring approval.
+        Approve once in Pubky Ring to sign this device in and set up messaging keys.
       </p>
 
       {isAuthenticated && pubky ? (
         <p className="text-sm text-muted-foreground">
-          Signed in as{" "}
-          <code className="break-all font-mono text-foreground">{pubky}</code>.{" "}
+          Signed in as <TruncatedPubky pubky={pubky} full />.{" "}
           <Link href="/enable" className="underline underline-offset-4">
-            Enable messaging
+            Enable encrypted messaging
           </Link>
         </p>
+      ) : phase === "idle" ? (
+        <Button
+          type="button"
+          variant="brand"
+          data-testid="welcomeConnect"
+          disabled={isLoading}
+          onClick={onGenerateLink}
+        >
+          Connect with Pubky Ring
+        </Button>
       ) : null}
 
-      {isLoading ? (
+      {phase === "idle" && isLoading ? (
         <p className="text-sm text-muted-foreground">Preparing paykit-connect…</p>
       ) : null}
 
-      {isExpired ? (
+      {phase === "expired" ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             This paykit-connect link expired. Generate a new one.
           </p>
-          <Button type="button" onClick={onGenerateLink}>
-            Generate new link
+          <div className="flex flex-wrap gap-2">
+            {onShowQrAgain ? (
+              <Button type="button" data-testid="welcomeShowQrAgain" onClick={onShowQrAgain}>
+                Show QR again
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeReloadPage"
+              onClick={onReloadPage ?? (() => window.location.reload())}
+            >
+              Reload page
+            </Button>
+            <Button type="button" data-testid="welcomeGenerate" onClick={onGenerateLink}>
+              Generate new link
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {showQr ? authPanel : null}
+
+      {showQr && verificationCode ? (
+        <div className="space-y-1" data-testid="welcomeVerification">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Verification code
+          </p>
+          <p
+            className="text-4xl font-bold tracking-wide hc-brand-2-text"
+            data-testid="welcomeVerificationCode"
+          >
+            {verificationCode}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Pubky Ring shows the same code before you approve.
+          </p>
+        </div>
+      ) : null}
+
+      {phase === "waiting" ? (
+        <div className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Waiting for Pubky Ring… Approve the request in Pubky Ring, or scan the code on another
+            device.
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="welcomeCancel"
+            onClick={onCancelWaiting}
+          >
+            Cancel
           </Button>
         </div>
-      ) : (
-        authPanel
-      )}
+      ) : null}
 
-      {pendingPubky ? (
+      {phase === "finishing" ? (
+        <div
+          className="space-y-3 rounded-md border border-border bg-card p-4"
+          data-testid="welcomeFinishing"
+          role="status"
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className="inline-block size-5 shrink-0 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+            <p className="text-sm text-muted-foreground">Finishing sign-in…</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {onShowQrAgain ? (
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="welcomeShowQrAgain"
+                onClick={onShowQrAgain}
+              >
+                Show QR again
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeCancel"
+              onClick={onCancelWaiting}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {phase === "ready" && pendingPubky ? (
         <div
           className="space-y-3 rounded-md border border-border bg-card p-4"
           data-testid="welcomeAdopt"
         >
           <p className="text-sm leading-6">
-            Continue as{" "}
-            <code className="break-all font-mono">{pendingPubky}</code>?
+            Continue as <TruncatedPubky pubky={pendingPubky} full />?
           </p>
           <div className="flex gap-2">
-            <Button type="button" disabled={adopting} onClick={onConfirmAdoption}>
+            <Button type="button" variant="brand" disabled={adopting} onClick={onConfirmAdoption}>
               Continue
             </Button>
             <Button
@@ -92,7 +225,59 @@ export function WelcomePage({
         </div>
       ) : null}
 
-      {error ? <p className="text-sm text-red-400">{error}</p> : null}
+      {phase === "legacy" ? (
+        <div className="space-y-3" data-testid="welcomeLegacy">
+          <p className="text-sm text-muted-foreground">
+            Update Pubky Ring, or approve once more
+          </p>
+          {authPanel}
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="welcomeCancel"
+            onClick={onCancelWaiting}
+          >
+            Cancel
+          </Button>
+        </div>
+      ) : null}
+
+      {phase === "retry-publish" ? (
+        <div className="w-full space-y-3" data-testid="welcomeRetryPublish">
+          <p className="text-sm text-muted-foreground">
+            Sign-in finished, but publishing the receiver failed.
+          </p>
+          {onRetryPublish ? (
+            <Button type="button" data-testid="welcomeRetryPublish" onClick={onRetryPublish}>
+              Retry publish
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {phase === "failed" ? (
+        <div className="w-full space-y-3" data-testid="welcomeFailed">
+          <ErrorDetails
+            fallback="Could not finish sign-in."
+            details={error}
+            onRetry={retry}
+            retryLabel="Try again"
+          />
+          {onShowQrAgain ? (
+            <Button
+              type="button"
+              variant="outline"
+              data-testid="welcomeShowQrAgain"
+              onClick={onShowQrAgain}
+            >
+              Show QR again
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+          </div>
+        </div>
+      </section>
     </article>
   );
 }

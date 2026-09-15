@@ -19,6 +19,7 @@ import {
   type GroupMember,
   type GroupMessage,
 } from "../../types/group";
+import { buildChatTagEnvelope } from "../../types/chatKinds";
 import { CHAT_ATTACHMENT_KIND } from "../../types/attachment";
 import { fingerprintStoredAttachmentSecret } from "../attachments/redaction";
 import { KeyStore } from "../KeyStore";
@@ -222,6 +223,34 @@ export const GroupService = {
       targetEventId,
       targetAuthorPubky,
     });
+    try {
+      const tag = buildChatTagEnvelope({
+        eventId: crypto.randomUUID(),
+        sentAt,
+        targetEventId,
+        targetAuthorPubky,
+        label: built.envelope.emoji,
+        op: "add",
+        channelId,
+      });
+      await StorageService.upsertChatTag({
+        ownerPubky: owner,
+        conversationId: null,
+        channelId,
+        scopeKey: channelId,
+        targetEventId,
+        targetAuthorPubky,
+        taggerPubky: owner,
+        label: tag.envelope.label,
+        createdAt: sentAt,
+      });
+      const recipients = await establishedFanoutRecipients(owner, channelId, []);
+      for (const peerPubky of recipients) {
+        await LinkService.sendControlJson(peerPubky, tag.envelope.kind, tag.envelope.event_id, tag.json);
+      }
+    } catch {
+      /* Invalid emoji stays a legacy reaction only. */
+    }
     notifyGroupEvent(owner, channelId);
     return message;
   },
@@ -361,6 +390,9 @@ export const GroupService = {
       removedAt: ts,
     });
     await StorageService.bumpGroupMembershipEpoch(owner, channelId);
+    if (memberPubky === owner) {
+      await StorageService.purgeGroupSearch(owner, channelId);
+    }
     await fanOutMembershipOp(owner, channelId, "remove", memberPubky, [memberPubky]);
     notifyGroupEvent(owner, channelId);
   },
@@ -382,6 +414,7 @@ export const GroupService = {
       });
     }
     await StorageService.bumpGroupMembershipEpoch(owner, channelId);
+    await StorageService.purgeGroupSearch(owner, channelId);
     await fanOutMembershipOp(owner, channelId, "leave", owner);
     notifyGroupEvent(owner, channelId);
   },

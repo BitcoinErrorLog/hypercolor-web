@@ -1,12 +1,30 @@
 # Screen inventory — Hypercolor web
 
-Inventory of every App Router route, page host, panel, inline surface, and banner as implemented on `main` @ `eeb6710`. Every row cites a file that was read. No dialog / sheet / drawer primitive exists (`src/components/ui/` contains only `button.tsx` and `input.tsx`).
+Inventory of every App Router route, page host, panel, inline surface, and banner as implemented on `main` @ `eeb6710`. Every row cites a file that was read. Wave 4b adds the primitive coverage noted below.
+
+## Wave 4b Primitive Coverage
+
+| Primitive | Files / consumers |
+| --- | --- |
+| Responsive shell | `app/layout.tsx`, `src/components/site-nav.tsx`, `.hc-master-detail` |
+| Dialog / sheet | `src/components/ui/sheet.tsx`, `src/components/sign-out-confirm.tsx`, backup leave gate, composer sheet |
+| Toast / status | `src/components/session-banner.tsx`, `src/components/tab-lock-banner.tsx`, `src/components/pwa-register.tsx`, `ErrorDetails` live regions |
+| Skeleton | tokenized loading rows in chats, channels, catalog, and route loaders |
+| Badge | request/channel unread badges in `SiteNav`, chats, channels |
+| Tabs | Channels Private/Public segmented tablist |
+| Avatar | list/profile/catalog avatar patterns with `shortPubky` fallback |
+| Status banner | session, tab-lock, public-graph, recovery/sign-out warnings |
+| Empty/error/loading states | `ChatsPage`, `ChannelsPage`, `ContactsPage`, `RequestsPage`, `ThreadView`, `TagChannelView`, `ErrorDetails` |
+| List row | chats, channels, contacts, requests, catalog rows |
+| Page header | `DetailBackLink`, `DetailHeading`, route headings |
+| Button variants | `src/components/ui/button.tsx`, including destructive and disabled states |
+| Screen catalog | `app/e2e/ux-catalog/page.tsx`, `src/components/ux-catalog/**`, `e2e/ux-catalog.spec.ts` |
 
 **Chrome (every non-`/e2e` route):** `app/layout.tsx` mounts `SessionBootstrap`, `PwaRegister`, `TabLockBanner`, `SessionBanner`, a header (`APP_NAME` + `SiteNav`), then `<main>{children}</main>`. `/e2e/*` still gets the header brand and banners; `SiteNav` returns `null` when `pathname.startsWith("/e2e")` (`src/components/site-nav.tsx`).
 
 **Breakpoints used in product UI:** Tailwind `md` (768px). Master/detail lists use `md:grid-cols-[minmax(16rem,20rem)_1fr]`. `<md` (including 390px) shows **either** the list **or** the detail, never both. There is no in-pane Back control on any detail header.
 
-**Deep-link mechanism:** static export only emits the empty catch-all (`generateStaticParams` returns `{ conversationId: [] }` / `{ id: [] }` / `{ pubky: [] }` / `{ tag: [] }`). Hard refresh of `/:seg/:id` depends on `vercel.json` rewrites into the list HTML; the client then reads the extra segment via `usePathSegment` → `readPathId` (`src/hooks/usePathSegment.ts`, `src/lib/path-id.ts`). `usePathSegment` subscribes only to `popstate` (not `pushState`).
+**Deep-link mechanism:** static export only emits the empty catch-all (`generateStaticParams` returns `{ conversationId: [] }` / `{ id: [] }` / `{ pubky: [] }` / `{ tag: [] }`). Hard refresh of `/:seg/:id` depends on `vercel.json` rewrites into the list HTML; the client then reads the extra segment via `usePathSegment` → `readPathId` (`src/hooks/usePathSegment.ts`, `src/lib/path-id.ts`). `usePathSegment` subscribes only to `popstate` (not `pushState`). Local static preview that applies those rewrites: `npm run preview:static` (`scripts/static-preview.mjs`) against production `out/`. Recovery-gate static e2e is `npm run test:e2e:static`, which rebuilds a harness export into `out-e2e/` (`NEXT_PUBLIC_E2E_HARNESS=1` plus a `.e2e-harness` marker that `preview:static` refuses to serve without `--allow-e2e-harness`). CI must use that command so it never consumes a stale or production `out/`. Plain `npx serve out` 404s nested paths.
 
 **SW shell:** `public/sw.js` `SHELL` (network-first document cache). Routes not in `SHELL` are not intercepted; offline navigation throws `hypercolor: offline and no cached document for this route`.
 

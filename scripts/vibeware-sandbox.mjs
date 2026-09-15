@@ -33,8 +33,8 @@ import {
 } from "./check-vibeware-path-policy.mjs";
 
 export const EMPTY_STATE_FILE = "src/components/chats-page.tsx";
-export const EMPTY_STATE_FIND = "Start a new chat from the field above.";
-export const EMPTY_STATE_REPLACE = "Use the field above to start a chat.";
+export const EMPTY_STATE_FIND = "No chats yet.";
+export const EMPTY_STATE_REPLACE = "No chats on this device yet.";
 export const SESSION_FILE = "src/services/link/session.ts";
 export const SESSION_PROBE_EXPORT = "export const VIBEWARE_SANDBOX_PROBE = true;";
 

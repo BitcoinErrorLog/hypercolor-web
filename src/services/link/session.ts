@@ -1,8 +1,9 @@
 import {
-  capabilitiesCoverHypercolorRw,
+  capabilitiesCoverRingGrant,
   extractCapabilitySpecsFromExport,
 } from "@/lib/capabilities";
 import { zeroizeBytes } from "@/lib/hex";
+import { resetPaykitConnectLive } from "@/services/paykitConnectLive";
 import { KeyStore } from "@/services/KeyStore";
 import { StorageService } from "@/services/StorageService";
 import { useAuthStore } from "@/stores/authStore";
@@ -274,33 +275,78 @@ export function classifyResumeError(error: unknown): "auth-revoked" | "session-o
 }
 
 export function sessionExportCoversHypercolor(exported: string): boolean {
-  return capabilitiesCoverHypercolorRw(extractCapabilitySpecsFromExport(exported));
+  return capabilitiesCoverRingGrant(extractCapabilitySpecsFromExport(exported));
 }
 
 export async function adoptApprovedSession(handle: SessionHandle): Promise<LiveSession> {
+  const {
+    acquireScopedWriter,
+    assertWriter,
+    exitWriterCriticalSection,
+    hasWriterLock,
+    isWriterCriticalSectionHeld,
+    setTabLockOwner,
+  } = await import("@/services/tabLock");
   const pubky = handle.pubky();
-  const exported = handle.exportSession();
-  if (!sessionExportCoversHypercolor(exported)) {
-    try {
-      await PaykitLinkWeb.signOutSession(handle);
-    } catch {
-      closeHandleQuietly(handle);
+  await acquireScopedWriter(pubky);
+  let keyStoreAdvanced = false;
+  let adoptionCommitted = false;
+  let adoptionNonce = "";
+  try {
+    assertWriter("adoptApprovedSession:start");
+    const exported = handle.exportSession();
+    if (!sessionExportCoversHypercolor(exported)) {
+      try {
+        await PaykitLinkWeb.signOutSession(handle);
+      } catch {
+        closeHandleQuietly(handle);
+      }
+      throw Object.assign(
+        new Error("session grant does not cover the Ring grant /pub/paykit/:rw and /pub/hypercolor.app/v1/:rw"),
+        {
+          name: "SessionResumeScopeMissing",
+        },
+      );
     }
-    throw Object.assign(new Error("session grant does not cover /pub/hypercolor.app/v1/ rw"), {
-      name: "SessionResumeScopeMissing",
-    });
+    assertWriter("adoptApprovedSession:after-export");
+    if (live && live.handle !== handle) {
+      closeHandleQuietly(live.handle);
+    }
+    const adopted = bindLive({ pubky, handle })!;
+    const previous = await readSessionMetadata();
+    assertWriter("adoptApprovedSession:after-read-metadata");
+    await persistSessionMetadata(
+      await metadataWithPreservedReceiver(pubky, exported, previous),
+    );
+    assertWriter("adoptApprovedSession:after-sqlite");
+    adoptionNonce = await KeyStore.setPubky(pubky);
+    keyStoreAdvanced = true;
+    assertWriter("adoptApprovedSession:after-keystore");
+    useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
+    adoptionCommitted = true;
+    return adopted;
+  } catch (err) {
+    if (keyStoreAdvanced && !adoptionCommitted && !hasWriterLock()) {
+      try {
+        await KeyStore.clearPubkyIfMatches(pubky, adoptionNonce);
+      } catch {
+        /* rollback best-effort */
+      }
+    }
+    throw err;
+  } finally {
+    exitWriterCriticalSection();
+    if (keyStoreAdvanced && !adoptionCommitted) {
+      const still = await KeyStore.getPubky();
+      if (still !== pubky && !isWriterCriticalSectionHeld()) {
+        try {
+          setTabLockOwner(null);
+        } catch {
+          /* scope reset best-effort after the section */
+        }
+      }
+    }
   }
-  if (live && live.handle !== handle) {
-    closeHandleQuietly(live.handle);
-  }
-  const adopted = bindLive({ pubky, handle })!;
-  const previous = await readSessionMetadata();
-  await persistSessionMetadata(
-    await metadataWithPreservedReceiver(pubky, exported, previous),
-  );
-  await KeyStore.setPubky(pubky);
-  useAuthStore.getState().setAuthenticated(pubky, useAuthStore.getState().homeserver ?? "");
-  return adopted;
 }
 
 async function adoptRestoredHandle(
@@ -444,21 +490,50 @@ export async function signOut(): Promise<void> {
     (await readSessionMetadata())?.pubky ??
     (await KeyStore.getPubky());
   let markerPath = LINK_RECEIVER_PATH;
+  let receiverAlias = LINK_RECEIVER_PATH;
   if (owner) {
     try {
       const receiver = await StorageService.getLinkReceiver(owner);
-      if (receiver) markerPath = coerceReceiverPath(receiver.receiverPath);
+      if (receiver) {
+        markerPath = coerceReceiverPath(receiver.receiverPath);
+        receiverAlias = receiver.receiverAlias;
+      }
     } catch {
       // SQL may be unavailable in a readonly tab.
     }
   }
   const handle = previous?.handle;
-  if (handle) {
+  if (handle && owner) {
     try {
-      await PaykitLinkWeb.removeReceiverMarker(handle, markerPath);
+      const secret = await KeyStore.getReceiverNoiseSecret(receiverAlias);
+      let localPk: string | null = null;
+      if (secret) {
+        try {
+          localPk = await PaykitLinkWeb.noisePublicKeyFromSecret(secret);
+        } finally {
+          zeroizeBytes(secret);
+        }
+      }
+      // Matching published pk → this device owns the inbox: delete the marker.
+      // GET throw / failure: do not delete. An active receiver whose GET fails
+      // must not wipe a live marker (offline ≠ absent). Standby is unchanged:
+      // a foreign pk is not ours, so we never delete it.
+      //
+      // Orphan markers exist when a session published receiver.json then signed
+      // out while standby siblings never published. The published pk belongs to
+      // a signed-out session. Recovery is takeover (PUT this device's current
+      // receiver pk), not deleting blindly on GET failure.
+      if (localPk) {
+        const marker = await PaykitLinkWeb.getReceiverMarker(owner, markerPath);
+        if (marker && marker.noisePublicKey === localPk) {
+          await PaykitLinkWeb.removeReceiverMarker(handle, markerPath);
+        }
+      }
     } catch {
-      // Best-effort: peers should stop handshaking into a dead inbox.
+      // Best-effort: never delete a marker we did not confirm as ours.
     }
+  }
+  if (handle) {
     try {
       await PaykitLinkWeb.signOutSession(handle);
     } catch {
@@ -472,6 +547,7 @@ export async function signOut(): Promise<void> {
       // Best-effort local wipe.
     }
   }
+  resetPaykitConnectLive();
   try {
     await KeyStore.clear();
   } catch {

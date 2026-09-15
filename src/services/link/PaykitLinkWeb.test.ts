@@ -56,6 +56,37 @@ describe("PaykitLinkWeb cookie rule", () => {
       new Uint8Array([1, 2, 3]),
     );
   });
+
+  it("keeps production marker reads typed and separate from raw capability storage", async () => {
+    const getReceiverMarker = vi.fn(async () => ({
+      version: 1,
+      kind: "paykit.receiver",
+      receiver_path: "hypercolor/wallet",
+      capabilities: {
+        private_payments: true,
+        payment_requests: false,
+        receipts: false,
+        outgoing_payments: false,
+      },
+      noise_public_key: "noise-pk",
+    }));
+    setPaykitWasmForTests(
+      {
+        getReceiverMarker,
+        PubkyClient: class {},
+      } as never,
+      {} as never,
+    );
+    await expect(
+      PaykitLinkWeb.getReceiverMarker(OWNER, "hypercolor/wallet"),
+    ).resolves.toEqual({ noisePublicKey: "noise-pk" });
+    expect(getReceiverMarker).toHaveBeenCalledWith(
+      expect.anything(),
+      OWNER,
+      "hypercolor/wallet",
+    );
+    setPaykitWasmForTests(null, null);
+  });
 });
 
 describe("PaykitLinkWeb Encrypted Links adapter", () => {

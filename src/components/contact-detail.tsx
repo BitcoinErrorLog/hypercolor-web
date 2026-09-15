@@ -1,36 +1,58 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { LocalChatState } from "@/services/localChatState";
+import { DetailBackLink } from "@/components/detail-back";
+import { TruncatedPubky } from "@/components/truncated-pubky";
+import { DetailHeading } from "@/components/detail-heading";
+import { Avatar } from "@/components/ui/avatar";
 import { sanitizeDisplayName } from "@/lib/display-name";
-import { shortPubky } from "@/lib/format";
 import { relationshipBadges } from "@/lib/contacts-sort";
-import { formatTipIdentifierDisplay, payloadPreview } from "@/utils/displaySanitize";
 import { StorageService } from "@/services/StorageService";
 import { TrustEngine, type TrustExplanation } from "@/services/TrustEngine";
-import { PaykitLinkWeb } from "@/services/link/PaykitLinkWeb";
-import { LINK_RECEIVER_PATH } from "@/types/link";
 import { buildDmConversationId } from "@/types/link";
+import { rememberThreadOrigin } from "@/lib/list-detail-focus";
 import type { Contact } from "@/types";
 import type { LinkRecord } from "@/types/link";
+
+export type ContactDetailFixture = {
+  contact: Contact | null;
+  link: LinkRecord | null;
+  trust: TrustExplanation | null;
+  loading?: boolean;
+  nickname?: string | null;
+};
 
 export function ContactDetail({
   ownerPubky,
   pubky,
+  fixture,
 }: {
   ownerPubky: string | null;
   pubky: string;
+  fixture?: ContactDetailFixture;
 }) {
-  const [contact, setContact] = useState<Contact | null>(null);
-  const [link, setLink] = useState<LinkRecord | null>(null);
-  const [trust, setTrust] = useState<TrustExplanation | null>(null);
-  const [methods, setMethods] = useState<string[]>([]);
-  const [endpoints, setEndpoints] = useState<Record<string, string>>({});
-  const [payError, setPayError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const [contact, setContact] = useState<Contact | null>(fixture?.contact ?? null);
+  const [link, setLink] = useState<LinkRecord | null>(fixture?.link ?? null);
+  const [trust, setTrust] = useState<TrustExplanation | null>(fixture?.trust ?? null);
+  const [loading, setLoading] = useState(fixture?.loading ?? true);
+  const [nickname, setNickname] = useState(fixture?.nickname ?? "");
 
   useEffect(() => {
+    if (fixture || !ownerPubky) return;
+    void LocalChatState.getNickname(ownerPubky, pubky).then((value) => setNickname(value ?? ""));
+  }, [fixture, ownerPubky, pubky]);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [pubky]);
+
+  useEffect(() => {
+    if (fixture) return;
     let cancelled = false;
     void (async () => {
       if (!ownerPubky) {
@@ -46,72 +68,107 @@ export function ContactDetail({
       setContact(row);
       setLink(storedLink);
       setTrust(explanation);
-      try {
-        const [ids, list] = await Promise.all([
-          PaykitLinkWeb.listPaymentMethods(pubky, LINK_RECEIVER_PATH),
-          PaykitLinkWeb.getPaymentList(pubky, LINK_RECEIVER_PATH),
-        ]);
-        if (cancelled) return;
-        setMethods(ids);
-        setEndpoints(list);
-      } catch (err) {
-        if (!cancelled) {
-          setPayError(err instanceof Error ? err.message : "Could not read payment methods");
-        }
-      }
       setLoading(false);
     })();
     return () => {
       cancelled = true;
     };
-  }, [ownerPubky, pubky]);
+  }, [ownerPubky, pubky, fixture]);
 
-  if (loading) {
-    return <p className="text-sm text-muted-foreground">Loading contact…</p>;
+  const visibleContact = fixture?.contact ?? contact;
+  const visibleLink = fixture?.link ?? link;
+  const visibleTrust = fixture?.trust ?? trust;
+  const visibleLoading = fixture?.loading ?? loading;
+
+  if (visibleLoading) {
+    return (
+      <p className="text-sm text-muted-foreground" aria-busy="true" data-surface="contact-detail">
+        Loading contact…
+      </p>
+    );
   }
 
   return (
-    <article className="space-y-6" data-testid="contactDetail">
+    <article className="space-y-6" data-testid="contactDetail" data-surface="contact-detail">
+      <div className="flex h-full w-full min-w-0 flex-1 flex-col items-stretch justify-center gap-4 self-stretch px-6 py-6">
+      <DetailBackLink href="/contacts" listLabel="Contacts" />
+      <Avatar seed={pubky} size="xl" />
       <div>
         <p className="text-xs uppercase tracking-wide text-muted-foreground">Contact</p>
-        <h2 className="text-xl font-semibold">
-          {contact?.displayName ? sanitizeDisplayName(contact.displayName) : shortPubky(pubky)}
-        </h2>
-        <p className="mt-1 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
+        <DetailHeading headingRef={headingRef} className="text-xl font-semibold">
+          {visibleContact?.displayName ? sanitizeDisplayName(visibleContact.displayName) : (
+            <TruncatedPubky pubky={pubky} />
+          )}
+        </DetailHeading>
+        <p className="mt-2 break-all font-mono text-sm text-muted-foreground">{pubky}</p>
+        <form
+          className="mt-3 space-y-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (fixture || !ownerPubky) return;
+            void LocalChatState.setNickname(ownerPubky, pubky, nickname);
+          }}
+        >
+          <label className="block text-sm font-medium" htmlFor="contactNickname">
+            Nickname
+          </label>
+          <Input
+            id="contactNickname"
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+            placeholder="Only on this device"
+            data-testid="contactNickname"
+          />
+          <Button type="submit" size="sm" variant="outline">
+            Save nickname
+          </Button>
+        </form>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="mt-2"
+          aria-label="Copy full pubky"
+          onClick={() => {
+            void navigator.clipboard.writeText(pubky);
+          }}
+        >
+          Copy
+        </Button>
       </div>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Relationship</h3>
+        <h2 className="text-sm font-medium">Relationship</h2>
         <div className="flex flex-wrap gap-2">
-          {(contact ? relationshipBadges(contact) : []).map((badge) => (
+          {(visibleContact ? relationshipBadges(visibleContact) : []).map((badge) => (
             <span key={badge} className="rounded-full bg-secondary px-2 py-0.5 text-xs">
               {badge}
             </span>
           ))}
-          {!contact ? (
+          {!visibleContact ? (
             <span className="text-sm text-muted-foreground">Not in your contacts yet.</span>
           ) : null}
         </div>
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Encrypted Link</h3>
+        <h2 className="text-sm font-medium">Encrypted Link</h2>
         <p className="text-sm text-muted-foreground">
-          {link
-            ? `${link.status}${link.role ? ` · ${link.role}` : ""}`
+          {visibleLink
+            ? `${visibleLink.status}${visibleLink.role ? ` · ${visibleLink.role}` : ""}`
             : "No Encrypted Link on this device yet. Sending a DM starts the handshake."}
         </p>
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Trust</h3>
+        <h2 className="text-sm font-medium">Trust</h2>
         <p className="text-sm text-muted-foreground">
-          Score {trust ? trust.score.toFixed(3) : "0"} — used only for sorting, never to block
+          Score {visibleTrust ? visibleTrust.score.toFixed(3) : "0"} — used only for sorting, never to block
           delivery.
         </p>
-        {trust && trust.reasons.length > 0 ? (
+        {visibleTrust && visibleTrust.reasons.length > 0 ? (
           <ul className="text-sm text-muted-foreground">
-            {trust.reasons.map((reason) => (
+            {visibleTrust.reasons.map((reason) => (
               <li key={reason.code}>
                 {reason.label} ({reason.contribution})
               </li>
@@ -120,34 +177,15 @@ export function ContactDetail({
         ) : null}
       </section>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-medium">Public payment methods</h3>
-        <p className="text-sm text-muted-foreground">
-          Read-only from their Paykit receiver. This app does not send payments.
-        </p>
-        {payError ? <p className="text-sm text-red-400">{payError}</p> : null}
-        {methods.length === 0 && Object.keys(endpoints).length === 0 ? (
-          <p className="text-sm text-muted-foreground">No public methods published.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {Object.entries(endpoints).map(([id, payload]) => (
-              <li key={id} className="rounded-md border border-border p-2">
-                <p className="font-medium">{formatTipIdentifierDisplay(id)}</p>
-                <p className="break-all text-muted-foreground">{payloadPreview(payload)}</p>
-              </li>
-            ))}
-            {methods
-              .filter((id) => !(id in endpoints))
-              .map((id) => (
-                <li key={id}>{formatTipIdentifierDisplay(id)}</li>
-              ))}
-          </ul>
-        )}
-      </section>
-
-      <Button asChild>
-        <Link href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}>Open chat</Link>
+      <Button asChild variant="brand">
+        <Link
+          href={`/chats/${encodeURIComponent(buildDmConversationId(pubky))}`}
+          onClick={() => rememberThreadOrigin({ kind: "contact", pubky })}
+        >
+          Message
+        </Link>
       </Button>
+      </div>
     </article>
   );
 }

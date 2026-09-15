@@ -21,5 +21,10 @@ describe("contacts username search copy", () => {
     expect(source).toContain("PubkyAnchors");
     expect(source).toContain("contactSearchLookalike");
     expect(source).toContain("key={ownerPubky ?? \"none\"}");
+    expect(source).toContain("const CONTACTS_FORM_ERROR");
+    expect(source).not.toContain("export const CONTACTS_FORM_ERROR");
+    expect(source).toContain("Could not add or find this contact.");
+    expect(source).not.toContain("Could not load contacts.");
+    expect(source).toContain("err instanceof Error ? err.message");
   });
 });

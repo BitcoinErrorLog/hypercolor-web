@@ -12,17 +12,30 @@ import type { SqlExecutor } from '../db/sql';
 import type {
   LinkConversationSummary,
   LinkDeliveryState,
+  LinkErrorCategory,
   LinkMessage,
   LinkMessageDirection,
+  HandshakeBudget,
+  HandshakeBudgetInput,
   LinkReceiver,
   LinkReceiverInput,
+  LinkReceiverRetry,
   LinkRecord,
   LinkRecordInput,
   LinkRole,
+  ReceiverRole,
   LinkStreamItem,
   LinkStreamItemInput,
   StoredLinkStatus,
 } from '../types/link';
+import { CHAT_MESSAGE_KIND } from '../types/link';
+import { normalizeChatKindsV } from '../types/receiverMarker';
+import {
+  CHAT_TAG_LIVE_CAP_PER_TARGET,
+  dmScopeKey,
+  type ChatDevicePrefs,
+  type ChatTagRow,
+} from '../types/chatKinds';
 import type {
   GroupChannel,
   GroupDeferredEvent,
@@ -30,7 +43,7 @@ import type {
   GroupMemberStatus,
   GroupMessage,
 } from '../types/group';
-import { peekEnvelopeKind } from '../types/group';
+import { peekEnvelopeKind, GROUP_MESSAGE_KIND, PUBLIC_CHANNEL_MESSAGE_KIND } from '../types/group';
 import { GROUP_DEFERRED_QUOTA_PER_SENDER, GROUP_DEFERRED_TTL_MS } from '../flags/config';
 import type { AttachmentRecord, AttachmentResolveState } from '../types/attachment';
 import {
@@ -47,6 +60,8 @@ import type {
 } from '../types/payment';
 import { isPaykitPaymentKind } from '../types/payment';
 import { KeyStore } from './KeyStore';
+import { indexDecryptedMessage, removeSearchForOwner, removeSearchMessage, removeSearchThread } from './localChatState';
+import { dmThreadKey, groupThreadKey } from '../lib/contact-label';
 import { cachePathsForAttachment, deleteCacheFiles } from './attachments/fileIo';
 import { OWNER_BACKUP_VERSION, type OwnerBackupSnapshot } from './backup/snapshot';
 
@@ -336,10 +351,20 @@ export const StorageService = {
 
   async deleteLinkMessagesForPeer(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
     const db = await getDb();
-    db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ? AND peer_pubky = ?', [
-      ownerPubky,
-      peerPubky,
-    ]);
+    transact(db, () => {
+      removeSearchThread(db, ownerPubky, dmThreadKey(`dm:${peerPubky}`));
+      db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ? AND peer_pubky = ?', [
+        ownerPubky,
+        peerPubky,
+      ]);
+    });
+  },
+
+  async purgeGroupSearch(ownerPubky: PubkyKey, channelId: string): Promise<void> {
+    const db = await getDb();
+    transact(db, () => {
+      removeSearchThread(db, ownerPubky, groupThreadKey(channelId));
+    });
   },
 
   // ── Delivery Queue ────────────────────────────────────────────────────────
@@ -468,22 +493,28 @@ export const StorageService = {
     const db = await getDb();
     db.executeSync(
       `INSERT INTO link_receivers
-        (owner_pubky, receiver_alias, receiver_path, marker_published, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+        (owner_pubky, receiver_alias, receiver_path, marker_published,
+         receiver_role, last_seen_own_marker_pk, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky) DO UPDATE SET
-         receiver_alias   = excluded.receiver_alias,
-         receiver_path    = excluded.receiver_path,
-         marker_published = excluded.marker_published,
-         updated_at       = excluded.updated_at`,
+         receiver_alias          = excluded.receiver_alias,
+         receiver_path           = excluded.receiver_path,
+         marker_published        = excluded.marker_published,
+         receiver_role           = excluded.receiver_role,
+         last_seen_own_marker_pk = excluded.last_seen_own_marker_pk,
+         updated_at              = excluded.updated_at`,
       [
         receiver.ownerPubky,
         receiver.receiverAlias,
         receiver.receiverPath,
         receiver.markerPublished ? 1 : 0,
+        receiver.receiverRole ?? 'active',
+        receiver.lastSeenOwnMarkerPk ?? null,
         now(),
         now(),
       ],
     );
+    await (db as { flushPersist?: () => Promise<void> }).flushPersist?.();
   },
 
   async getLinkReceiver(ownerPubky: PubkyKey): Promise<LinkReceiver | null> {
@@ -501,6 +532,102 @@ export const StorageService = {
     db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
   },
 
+  async getLinkReceiverRetry(ownerPubky: PubkyKey): Promise<LinkReceiverRetry | null> {
+    const db = await getDb();
+    const row = db.executeSync(
+      'SELECT * FROM link_receiver_retries WHERE owner_pubky = ?',
+      [ownerPubky],
+    ).rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky: String(row.owner_pubky),
+      sessionAlias: String(row.session_alias),
+      noisePublicKey: String(row.noise_public_key),
+      stage: row.stage === 'capability' ? 'capability' : 'marker',
+      nextRetryAt: Number(row.next_retry_at),
+      attempts: Number(row.attempts),
+    };
+  },
+
+  async upsertLinkReceiverRetry(retry: LinkReceiverRetry): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `INSERT INTO link_receiver_retries
+        (owner_pubky, session_alias, noise_public_key, stage, next_retry_at, attempts)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_pubky) DO UPDATE SET
+         session_alias = excluded.session_alias,
+         noise_public_key = excluded.noise_public_key,
+         stage = excluded.stage,
+         next_retry_at = excluded.next_retry_at,
+         attempts = excluded.attempts`,
+      [
+        retry.ownerPubky,
+        retry.sessionAlias,
+        retry.noisePublicKey,
+        retry.stage,
+        retry.nextRetryAt,
+        retry.attempts,
+      ],
+    );
+  },
+
+  async deleteLinkReceiverRetry(ownerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync('DELETE FROM link_receiver_retries WHERE owner_pubky = ?', [ownerPubky]);
+  },
+
+  async getHandshakeBudget(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+  ): Promise<HandshakeBudget | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      'SELECT * FROM link_handshake_budgets WHERE owner_pubky = ? AND peer_pubky = ?',
+      [ownerPubky, peerPubky],
+    );
+    const row = result.rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky: String(row.owner_pubky),
+      peerPubky: String(row.peer_pubky),
+      pendingAdvances: Number(row.pending_advances),
+      nextAdvanceAt: Number(row.next_advance_at),
+      exhaustedAt: row.exhausted_at === null ? null : Number(row.exhausted_at),
+      updatedAt: Number(row.updated_at),
+    };
+  },
+
+  async upsertHandshakeBudget(budget: HandshakeBudgetInput): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `INSERT INTO link_handshake_budgets
+        (owner_pubky, peer_pubky, pending_advances, next_advance_at, exhausted_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
+         pending_advances = excluded.pending_advances,
+         next_advance_at  = excluded.next_advance_at,
+         exhausted_at     = excluded.exhausted_at,
+         updated_at       = excluded.updated_at`,
+      [
+        budget.ownerPubky,
+        budget.peerPubky,
+        budget.pendingAdvances,
+        budget.nextAdvanceAt,
+        budget.exhaustedAt,
+        now(),
+      ],
+    );
+  },
+
+  async clearHandshakeBudget(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      'DELETE FROM link_handshake_budgets WHERE owner_pubky = ? AND peer_pubky = ?',
+      [ownerPubky, peerPubky],
+    );
+  },
+
   // ── Links (Paykit Encrypted Links) ────────────────────────────────────────
 
   async upsertLink(link: LinkRecordInput): Promise<void> {
@@ -509,17 +636,22 @@ export const StorageService = {
       `INSERT INTO links
         (owner_pubky, peer_pubky, role, status, snapshot,
          remote_noise_public_key, local_receiver_path, remote_receiver_path,
-         consecutive_failures, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         consecutive_failures, last_seen_peer_marker_pk, chat_kinds_v,
+         reconnect_error_category, reconnect_required_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
-         role                    = excluded.role,
-         status                  = excluded.status,
-         snapshot                = excluded.snapshot,
-         remote_noise_public_key = excluded.remote_noise_public_key,
-         local_receiver_path     = excluded.local_receiver_path,
-         remote_receiver_path    = excluded.remote_receiver_path,
-         consecutive_failures    = excluded.consecutive_failures,
-         updated_at              = excluded.updated_at`,
+         role                      = excluded.role,
+         status                    = excluded.status,
+         snapshot                  = excluded.snapshot,
+         remote_noise_public_key   = excluded.remote_noise_public_key,
+         local_receiver_path       = excluded.local_receiver_path,
+         remote_receiver_path      = excluded.remote_receiver_path,
+         consecutive_failures      = excluded.consecutive_failures,
+         last_seen_peer_marker_pk  = COALESCE(excluded.last_seen_peer_marker_pk, last_seen_peer_marker_pk),
+         chat_kinds_v              = excluded.chat_kinds_v,
+         reconnect_error_category = excluded.reconnect_error_category,
+         reconnect_required_at    = excluded.reconnect_required_at,
+         updated_at                = excluded.updated_at`,
       [
         link.ownerPubky,
         link.peerPubky,
@@ -530,9 +662,46 @@ export const StorageService = {
         link.localReceiverPath,
         link.remoteReceiverPath,
         link.consecutiveFailures,
+        link.lastSeenPeerMarkerPk ?? null,
+        normalizeChatKindsV(link.chatKindsV),
+        link.reconnectErrorCategory ?? null,
+        link.reconnectRequiredAt ?? null,
         now(),
         now(),
       ],
+    );
+  },
+
+  async recordLastSeenPeerMarkerPk(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    noisePublicKey: string,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET last_seen_peer_marker_pk = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [noisePublicKey, ownerPubky, peerPubky],
+    );
+  },
+
+  /**
+   * Records the peer's advertised `chat_kinds_v` without bumping
+   * `links.updated_at` (same clock rule as last-seen marker pk).
+   */
+  async recordPeerChatKindsV(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    chatKindsV: number,
+  ): Promise<void> {
+    const value = normalizeChatKindsV(chatKindsV);
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET chat_kinds_v = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [value, ownerPubky, peerPubky],
     );
   },
 
@@ -556,6 +725,59 @@ export const StorageService = {
     return (result.rows ?? []).map(rowToLink);
   },
 
+  async upsertArchivedLink(link: LinkRecord): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `INSERT INTO links_archive
+        (owner_pubky, peer_pubky, role, status, snapshot,
+         remote_noise_public_key, local_receiver_path, remote_receiver_path,
+         consecutive_failures, last_seen_peer_marker_pk, archived_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(owner_pubky, peer_pubky) DO UPDATE SET
+         role                      = excluded.role,
+         status                    = excluded.status,
+         snapshot                  = excluded.snapshot,
+         remote_noise_public_key   = excluded.remote_noise_public_key,
+         local_receiver_path       = excluded.local_receiver_path,
+         remote_receiver_path      = excluded.remote_receiver_path,
+         consecutive_failures      = excluded.consecutive_failures,
+         last_seen_peer_marker_pk  = excluded.last_seen_peer_marker_pk,
+         archived_at               = excluded.archived_at`,
+      [
+        link.ownerPubky,
+        link.peerPubky,
+        link.role,
+        'superseded',
+        link.snapshot,
+        link.remoteNoisePublicKey,
+        link.localReceiverPath,
+        link.remoteReceiverPath,
+        link.consecutiveFailures,
+        link.lastSeenPeerMarkerPk ?? null,
+        now(),
+      ],
+    );
+  },
+
+  async getArchivedLink(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<LinkRecord | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      'SELECT * FROM links_archive WHERE owner_pubky = ? AND peer_pubky = ?',
+      [ownerPubky, peerPubky],
+    );
+    const row = result.rows?.[0];
+    if (!row) return null;
+    return rowToLink({ ...row, updated_at: row.archived_at });
+  },
+
+  async deleteArchivedLink(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
+    const db = await getDb();
+    db.executeSync('DELETE FROM links_archive WHERE owner_pubky = ? AND peer_pubky = ?', [
+      ownerPubky,
+      peerPubky,
+    ]);
+  },
+
   async updateLinkSnapshot(
     ownerPubky: PubkyKey,
     peerPubky: PubkyKey,
@@ -568,6 +790,23 @@ export const StorageService = {
        SET snapshot = ?, status = ?, consecutive_failures = 0, updated_at = ?
        WHERE owner_pubky = ? AND peer_pubky = ?`,
       [snapshot, status, now(), ownerPubky, peerPubky],
+    );
+  },
+
+  async markLinkReconnectRequired(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    errorCategory: LinkErrorCategory,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE links
+       SET status = 'reconnect_required',
+           reconnect_error_category = ?,
+           reconnect_required_at = ?,
+           updated_at = ?
+       WHERE owner_pubky = ? AND peer_pubky = ?`,
+      [errorCategory, now(), now(), ownerPubky, peerPubky],
     );
   },
 
@@ -743,7 +982,8 @@ export const StorageService = {
   async listLinkConversations(ownerPubky: PubkyKey): Promise<LinkConversationSummary[]> {
     const db = await getDb();
     const result = db.executeSync(
-      `SELECT m.conversation_id, m.peer_pubky, m.body, m.kind, m.sent_at,
+      `SELECT m.conversation_id, m.peer_pubky, m.body, m.kind, m.sent_at, m.delivery_state,
+              l.status AS link_status,
               COALESCE(c.last_read_at, 0) AS last_read_at,
               (
                 SELECT COUNT(*) FROM link_messages u
@@ -753,6 +993,8 @@ export const StorageService = {
                    AND u.sent_at > COALESCE(c.last_read_at, 0)
               ) AS unread_count
          FROM link_messages m
+         LEFT JOIN links l
+           ON l.owner_pubky = m.owner_pubky AND l.peer_pubky = m.peer_pubky
          LEFT JOIN link_read_cursors c
            ON c.owner_pubky = m.owner_pubky AND c.conversation_id = m.conversation_id
         WHERE m.owner_pubky = ?
@@ -781,6 +1023,8 @@ export const StorageService = {
         lastMessage: conversationPreview(kind, body),
         lastMessageAt: Number(row.sent_at),
         lastKind: kind,
+        lastDeliveryState: (row.delivery_state as LinkDeliveryState | null) ?? null,
+        linkStatus: (row.link_status as StoredLinkStatus | null) ?? null,
         unreadCount: Number(row.unread_count ?? 0),
       };
     });
@@ -846,6 +1090,19 @@ export const StorageService = {
     db.executeSync('UPDATE link_stream_items SET processed = 1 WHERE id = ?', [id]);
   },
 
+  async markLinkStreamItemProcessedWithError(
+    id: string,
+    errorCategory: LinkErrorCategory,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE link_stream_items
+       SET processed = 1, processing_error_category = ?
+       WHERE id = ?`,
+      [errorCategory, id],
+    );
+  },
+
   // ── Link read cursors (Paykit Encrypted Links) ────────────────────────────
 
   async getLinkReadCursor(ownerPubky: PubkyKey, conversationId: string): Promise<number | null> {
@@ -891,6 +1148,7 @@ export const StorageService = {
       ]).rows ?? []
     )
       .map(rowToLinkMessage)
+      .filter((message) => !isTombstonedLinkMessage(message))
       .map(message => ({
         ...message,
         rawJson: persistRawJson(message.kind, message.rawJson),
@@ -1101,9 +1359,19 @@ export const StorageService = {
       db.executeSync('DELETE FROM link_messages WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_read_cursors WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM links WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM links_archive WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM link_handshake_budgets WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM link_receivers WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM link_receiver_retries WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM message_requests WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM contacts WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM contact_nicknames WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM thread_local_state WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_tags WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_pins WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_group_invites WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_device_prefs WHERE owner_pubky = ?', [ownerPubky]);
+      removeSearchForOwner(db, ownerPubky);
     });
   },
 
@@ -1127,8 +1395,7 @@ export const StorageService = {
         }
       } else if (targetKind === 'cache') {
         try {
-          await deleteCacheFiles([target]);
-          ok = true;
+          ok = (await deleteCacheFiles([target])).length === 0;
         } catch {
           ok = false;
         }
@@ -1798,6 +2065,121 @@ export const StorageService = {
        WHERE owner_pubky = ? AND channel_id = ? AND sender_pubky = ? AND event_id = ?`,
       [body, editedAt, now(), ownerPubky, channelId, senderPubky, eventId],
     );
+    indexDecryptedMessage(db, {
+      ownerPubky,
+      threadKey: groupThreadKey(channelId),
+      eventId,
+      senderPubky,
+      body,
+      sentAt: editedAt,
+    });
+  },
+
+  async tombstoneLinkMessage(input: {
+    ownerPubky: PubkyKey;
+    conversationId: string;
+    eventId: string;
+    senderPubky: PubkyKey;
+  }): Promise<void> {
+    const db = await getDb();
+    const existing = await StorageService.findLinkMessageInConversation(
+      input.ownerPubky,
+      input.conversationId,
+      input.eventId,
+    );
+    if (!existing || existing.senderPubky !== input.senderPubky) return;
+    const attachment = await StorageService.getAttachment(
+      input.ownerPubky,
+      input.senderPubky,
+      input.eventId,
+    );
+    const attachmentService = attachment
+      ? KeyStore.attachmentKeyService(input.ownerPubky, input.senderPubky, input.eventId)
+      : null;
+    const attachmentKeyDeleted = attachmentService
+      ? await KeyStore.deleteAttachmentSecretByService(input.ownerPubky, attachmentService)
+      : true;
+    let cacheCleanupFailed = false;
+    if (attachment?.localCachePath) {
+      cacheCleanupFailed =
+        (await deleteCacheFiles([attachment.localCachePath])).length > 0;
+    }
+    const tombstoneJson = JSON.stringify({
+      version: 1,
+      kind: existing.kind,
+      event_id: existing.eventId,
+      sent_at: existing.sentAt,
+      body: '',
+      deleted: true,
+    });
+    transact(db, () => {
+      db.executeSync(
+        `UPDATE link_messages
+         SET body = '', raw_json = ?, updated_at = ?
+         WHERE owner_pubky = ? AND conversation_id = ? AND event_id = ? AND sender_pubky = ?`,
+        [
+          tombstoneJson,
+          now(),
+          input.ownerPubky,
+          input.conversationId,
+          input.eventId,
+          input.senderPubky,
+        ],
+      );
+      const streamRows = db.executeSync(
+        `SELECT id, kind, raw_json FROM link_stream_items
+         WHERE owner_pubky = ? AND peer_pubky = ?`,
+        [input.ownerPubky, existing.peerPubky],
+      ).rows ?? [];
+      for (const row of streamRows) {
+        let parsed: { event_id?: unknown; kind?: unknown; sent_at?: unknown };
+        try {
+          parsed = JSON.parse(String(row.raw_json)) as typeof parsed;
+        } catch {
+          // Malformed historical rows remain residuals because attribution is unprovable.
+          continue;
+        }
+        if (parsed.event_id !== input.eventId) continue;
+        db.executeSync(
+          `UPDATE link_stream_items SET raw_json = ? WHERE id = ?`,
+          [
+            JSON.stringify({
+              kind: typeof parsed.kind === "string" ? parsed.kind : row.kind,
+              event_id: input.eventId,
+              sent_at: typeof parsed.sent_at === "number" ? parsed.sent_at : existing.sentAt,
+              deleted: true,
+            }),
+            row.id,
+          ],
+        );
+      }
+      db.executeSync('DELETE FROM delivery_queue WHERE message_id = ?', [input.eventId]);
+      if (attachment) {
+        if (cacheCleanupFailed && attachment.localCachePath) {
+          db.executeSync(
+            `INSERT OR IGNORE INTO pending_cleanup
+              (owner_pubky, target_kind, target, created_at)
+             VALUES (?, 'cache', ?, ?)`,
+            [input.ownerPubky, attachment.localCachePath, now()],
+          );
+        }
+        db.executeSync(
+          `UPDATE attachments
+           SET resolve_state = 'unavailable-from-backup', local_cache_path = NULL, updated_at = ?
+           WHERE owner_pubky = ? AND sender_pubky = ? AND event_id = ?`,
+          [now(), input.ownerPubky, input.senderPubky, input.eventId],
+        );
+        if (!attachmentKeyDeleted && attachmentService) {
+          db.executeSync(
+            `INSERT OR IGNORE INTO pending_cleanup
+              (owner_pubky, target_kind, target, created_at)
+             VALUES (?, 'keystore', ?, ?)`,
+            [input.ownerPubky, attachmentService, now()],
+          );
+        }
+      }
+      removeSearchMessage(db, input.ownerPubky, dmThreadKey(input.conversationId), input.eventId);
+    });
   },
 
   async tombstoneGroupMessage(
@@ -1813,6 +2195,7 @@ export const StorageService = {
        WHERE owner_pubky = ? AND channel_id = ? AND sender_pubky = ? AND event_id = ?`,
       [now(), ownerPubky, channelId, senderPubky, eventId],
     );
+    removeSearchMessage(db, ownerPubky, groupThreadKey(channelId), eventId);
   },
 
   /**
@@ -2168,6 +2551,213 @@ export const StorageService = {
     );
     return (result.rows ?? []).map(rowToTipEndpoint);
   },
+
+  async ensureChatDevicePrefs(ownerPubky: PubkyKey, nowMs = Date.now()): Promise<ChatDevicePrefs> {
+    const existing = await StorageService.getChatDevicePrefs(ownerPubky);
+    if (existing) return existing;
+    const db = await getDb();
+    db.executeSync(
+      `INSERT OR IGNORE INTO chat_device_prefs
+        (owner_pubky, receipts_enabled, typing_enabled, upgrade_at, updated_at)
+       VALUES (?, 1, 1, ?, ?)`,
+      [ownerPubky, nowMs, nowMs],
+    );
+    return (await StorageService.getChatDevicePrefs(ownerPubky))!;
+  },
+
+  async getChatDevicePrefs(ownerPubky: PubkyKey): Promise<ChatDevicePrefs | null> {
+    const db = await getDb();
+    const row = db.executeSync(`SELECT * FROM chat_device_prefs WHERE owner_pubky = ?`, [ownerPubky])
+      .rows?.[0];
+    if (!row) return null;
+    return {
+      ownerPubky,
+      receiptsEnabled: Number(row.receipts_enabled) !== 0,
+      typingEnabled: Number(row.typing_enabled) !== 0,
+      upgradeAt: Number(row.upgrade_at),
+      updatedAt: Number(row.updated_at),
+    };
+  },
+
+  async setReceiptsEnabled(ownerPubky: PubkyKey, enabled: boolean): Promise<void> {
+    await StorageService.ensureChatDevicePrefs(ownerPubky);
+    const db = await getDb();
+    db.executeSync(
+      `UPDATE chat_device_prefs SET receipts_enabled = ?, updated_at = ? WHERE owner_pubky = ?`,
+      [enabled ? 1 : 0, now(), ownerPubky],
+    );
+  },
+
+  async upsertChatTag(row: ChatTagRow): Promise<'inserted' | 'duplicate' | 'cap'> {
+    const db = await getDb();
+    const live = db.executeSync(
+      `SELECT COUNT(*) AS n FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ?`,
+      [row.ownerPubky, row.scopeKey, row.targetAuthorPubky, row.targetEventId, row.taggerPubky],
+    ).rows?.[0];
+    const count = Number(live?.n ?? 0);
+    const existing = db.executeSync(
+      `SELECT 1 FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ? AND label = ?
+       LIMIT 1`,
+      [row.ownerPubky, row.scopeKey, row.targetAuthorPubky, row.targetEventId, row.taggerPubky, row.label],
+    );
+    if ((existing.rows?.length ?? 0) > 0) return 'duplicate';
+    if (count >= CHAT_TAG_LIVE_CAP_PER_TARGET) return 'cap';
+    db.executeSync(
+      `INSERT INTO chat_tags
+        (owner_pubky, conversation_id, channel_id, scope_key, target_event_id,
+         target_author_pubky, tagger_pubky, label, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.ownerPubky,
+        row.conversationId,
+        row.channelId,
+        row.scopeKey,
+        row.targetEventId,
+        row.targetAuthorPubky,
+        row.taggerPubky,
+        row.label,
+        row.createdAt,
+      ],
+    );
+    return 'inserted';
+  },
+
+  async deleteChatTag(input: {
+    ownerPubky: PubkyKey;
+    scopeKey: string;
+    targetAuthorPubky: string;
+    targetEventId: string;
+    taggerPubky: string;
+    label: string;
+  }): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `DELETE FROM chat_tags
+       WHERE owner_pubky = ? AND scope_key = ? AND target_author_pubky = ?
+         AND target_event_id = ? AND tagger_pubky = ? AND label = ?`,
+      [
+        input.ownerPubky,
+        input.scopeKey,
+        input.targetAuthorPubky,
+        input.targetEventId,
+        input.taggerPubky,
+        input.label,
+      ],
+    );
+  },
+
+  async listChatTagsForScope(ownerPubky: PubkyKey, scopeKey: string): Promise<ChatTagRow[]> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM chat_tags WHERE owner_pubky = ? AND scope_key = ? ORDER BY created_at ASC`,
+      [ownerPubky, scopeKey],
+    );
+    return (result.rows ?? []).map(rowToChatTag);
+  },
+
+  async findLinkMessageByEventId(
+    ownerPubky: PubkyKey,
+    eventId: string,
+  ): Promise<LinkMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM link_messages WHERE owner_pubky = ? AND event_id = ? LIMIT 1`,
+      [ownerPubky, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToLinkMessage(row) : null;
+  },
+
+  async findLinkMessageInConversation(
+    ownerPubky: PubkyKey,
+    conversationId: string,
+    eventId: string,
+  ): Promise<LinkMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM link_messages
+       WHERE owner_pubky = ? AND conversation_id = ? AND event_id = ?
+       LIMIT 1`,
+      [ownerPubky, conversationId, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToLinkMessage(row) : null;
+  },
+
+  async findGroupMessageByEventId(
+    ownerPubky: PubkyKey,
+    channelId: string,
+    eventId: string,
+  ): Promise<GroupMessage | null> {
+    const db = await getDb();
+    const result = db.executeSync(
+      `SELECT * FROM group_messages
+       WHERE owner_pubky = ? AND channel_id = ? AND event_id = ?
+       LIMIT 1`,
+      [ownerPubky, channelId, eventId],
+    );
+    const row = result.rows?.[0];
+    return row ? rowToGroupMessage(row) : null;
+  },
+
+  async upgradeMessageDelivery(
+    ownerPubky: PubkyKey,
+    eventId: string,
+    next: 'delivered' | 'read',
+    channelId?: string,
+  ): Promise<void> {
+    const db = await getDb();
+    if (channelId) {
+      const row = await StorageService.findGroupMessageByEventId(ownerPubky, channelId, eventId);
+      if (!row) return;
+      const current = row.deliveryState;
+      if (next === 'delivered' && (current === 'delivered' || current === 'read')) return;
+      if (next === 'read' && current === 'read') return;
+      db.executeSync(
+        `UPDATE group_messages SET delivery_state = ?
+         WHERE owner_pubky = ? AND channel_id = ? AND event_id = ?`,
+        [next, ownerPubky, channelId, eventId],
+      );
+      return;
+    }
+    const row = await StorageService.findLinkMessageByEventId(ownerPubky, eventId);
+    if (!row) return;
+    if (next === 'delivered' && (row.deliveryState === 'delivered' || row.deliveryState === 'read')) return;
+    if (next === 'read' && row.deliveryState === 'read') return;
+    db.executeSync(
+      `UPDATE link_messages SET delivery_state = ?, updated_at = ?
+       WHERE owner_pubky = ? AND event_id = ?`,
+      [next, now(), ownerPubky, eventId],
+    );
+  },
+
+  async enqueueControlPam(item: DeliveryQueueItem): Promise<void> {
+    const db = await getDb();
+    insertQueueItem(db, item);
+  },
+
+  async finalizeControlSend(input: {
+    ownerPubky: PubkyKey;
+    peerPubky: PubkyKey;
+    snapshot: string;
+    queueId: string;
+  }): Promise<void> {
+    const db = await getDb();
+    const ts = now();
+    transact(db, () => {
+      db.executeSync(
+        `UPDATE links
+         SET snapshot = ?, status = 'established', consecutive_failures = 0, updated_at = ?
+         WHERE owner_pubky = ? AND peer_pubky = ?`,
+        [input.snapshot, ts, input.ownerPubky, input.peerPubky],
+      );
+      db.executeSync('DELETE FROM delivery_queue WHERE id = ?', [input.queueId]);
+    });
+  },
 };
 
 // ─── Row mappers ──────────────────────────────────────────────────────────
@@ -2257,6 +2847,16 @@ function insertLinkMessage(db: SqlExecutor, message: LinkMessage): void {
       ts,
     ],
   );
+  if (message.kind === CHAT_MESSAGE_KIND) {
+    indexDecryptedMessage(db, {
+      ownerPubky: message.ownerPubky,
+      threadKey: dmThreadKey(message.conversationId),
+      eventId: message.eventId,
+      senderPubky: message.senderPubky,
+      body: message.body,
+      sentAt: message.sentAt,
+    });
+  }
   db.executeSync(
     `UPDATE contacts
      SET last_interaction_at = ?, updated_at = ?
@@ -2267,11 +2867,15 @@ function insertLinkMessage(db: SqlExecutor, message: LinkMessage): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToLinkReceiver(row: any): LinkReceiver {
+  const role = row.receiver_role === 'standby' ? 'standby' : 'active';
   return {
     ownerPubky: row.owner_pubky,
     receiverAlias: row.receiver_alias,
     receiverPath: row.receiver_path,
     markerPublished: row.marker_published === 1,
+    receiverRole: role as ReceiverRole,
+    lastSeenOwnMarkerPk:
+      typeof row.last_seen_own_marker_pk === 'string' ? row.last_seen_own_marker_pk : null,
     updatedAt: row.updated_at,
   };
 }
@@ -2288,6 +2892,13 @@ function rowToLink(row: any): LinkRecord {
     localReceiverPath: row.local_receiver_path,
     remoteReceiverPath: row.remote_receiver_path,
     consecutiveFailures: row.consecutive_failures,
+    lastSeenPeerMarkerPk:
+      typeof row.last_seen_peer_marker_pk === 'string' ? row.last_seen_peer_marker_pk : null,
+    chatKindsV: normalizeChatKindsV(row.chat_kinds_v),
+    reconnectErrorCategory:
+      typeof row.reconnect_error_category === 'string' ? row.reconnect_error_category : null,
+    reconnectRequiredAt:
+      typeof row.reconnect_required_at === 'number' ? row.reconnect_required_at : null,
     updatedAt: row.updated_at,
   };
 }
@@ -2310,6 +2921,20 @@ function rowToLinkMessage(row: any): LinkMessage {
   };
 }
 
+function rowToChatTag(row: Record<string, unknown>): ChatTagRow {
+  return {
+    ownerPubky: String(row.owner_pubky),
+    conversationId: row.conversation_id == null ? null : String(row.conversation_id),
+    channelId: row.channel_id == null ? null : String(row.channel_id),
+    scopeKey: String(row.scope_key),
+    targetEventId: String(row.target_event_id),
+    targetAuthorPubky: String(row.target_author_pubky),
+    taggerPubky: String(row.tagger_pubky),
+    label: String(row.label),
+    createdAt: Number(row.created_at),
+  };
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function rowToLinkStreamItem(row: any): LinkStreamItem {
   return {
@@ -2320,6 +2945,13 @@ function rowToLinkStreamItem(row: any): LinkStreamItem {
     rawJson: row.raw_json,
     receivedAt: row.received_at,
     processed: row.processed === 1,
+    processingErrorCategory:
+      row.processing_error_category === 'network' ||
+      row.processing_error_category === 'protocol' ||
+      row.processing_error_category === 'application' ||
+      row.processing_error_category === 'unknown'
+        ? row.processing_error_category
+        : null,
   };
 }
 
@@ -2402,6 +3034,16 @@ function insertGroupMessage(db: SqlExecutor, message: GroupMessage): void {
       ts,
     ],
   );
+  if (message.kind === GROUP_MESSAGE_KIND || message.kind === PUBLIC_CHANNEL_MESSAGE_KIND) {
+    indexDecryptedMessage(db, {
+      ownerPubky: message.ownerPubky,
+      threadKey: groupThreadKey(message.channelId),
+      eventId: message.eventId,
+      senderPubky: message.senderPubky,
+      body: message.body,
+      sentAt: message.sentAt,
+    });
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2455,6 +3097,16 @@ function conversationPreview(kind: string, body: string): string {
  * decode failure, which would otherwise persist live-looking key material.
  */
 const ATTACHMENT_RAW_TOMBSTONE = JSON.stringify({ kind: CHAT_ATTACHMENT_KIND });
+
+function isTombstonedLinkMessage(message: LinkMessage): boolean {
+  if (message.body.length > 0) return false;
+  try {
+    const parsed = JSON.parse(message.rawJson) as { deleted?: unknown };
+    return parsed.deleted === true;
+  } catch {
+    return false;
+  }
+}
 
 function persistRawJson(kind: string | null | undefined, rawJson: string): string {
   if (kind === CHAT_ATTACHMENT_KIND || peekEnvelopeKind(rawJson) === CHAT_ATTACHMENT_KIND) {

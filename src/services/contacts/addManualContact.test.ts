@@ -45,8 +45,26 @@ describe("addManualContact", () => {
   it("rejects adding yourself", async () => {
     const result = await addManualContact(OWNER, OWNER);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reason).toBe("self");
+    if (!result.ok) {
+      expect(result.reason).toBe("self");
+      expect(result.message).toBe("That's your own pubky.");
+    }
     expect(user).not.toHaveBeenCalled();
+  });
+
+  it("accepts a pubky.app profile URL", async () => {
+    getContact.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      pubky: PEER,
+      ownerPubky: OWNER,
+      trustScore: 0,
+      isFollowing: false,
+      isFollower: false,
+      isMutual: false,
+      addedManually: true,
+      firstSeenAt: 1,
+    });
+    const result = await addManualContact(OWNER, `https://pubky.app/profile/${PEER}`);
+    expect(result.ok).toBe(true);
   });
 
   it("adds a raw pubky with no Nexus request", async () => {

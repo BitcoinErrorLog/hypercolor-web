@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachmentCacheDirectory,
   attachmentCachePath,
@@ -24,6 +24,7 @@ describe("attachment fileIo", () => {
   const previous = process.env.HYPERCOLOR_ATTACHMENT_CACHE;
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     if (previous === undefined) delete process.env.HYPERCOLOR_ATTACHMENT_CACHE;
     else process.env.HYPERCOLOR_ATTACHMENT_CACHE = previous;
   });
@@ -87,5 +88,38 @@ describe("attachment fileIo", () => {
     await expect(readFileAsStandardBase64(target)).rejects.toThrow(
       /attachment file not found/,
     );
+  });
+
+  it("treats an already-absent OPFS cache item as deleted", async () => {
+    const target = `opfs://hypercolor-attachments/${OWNER}/${SENDER}/${EVENT}`;
+    const notFound = new DOMException("missing parent", "NotFoundError");
+    vi.stubGlobal("navigator", {
+      storage: {
+        getDirectory: vi.fn().mockResolvedValue({
+          getDirectoryHandle: vi.fn().mockRejectedValue(notFound),
+        }),
+      },
+    });
+
+    await expect(deleteCacheFiles([target])).resolves.toEqual([]);
+  });
+
+  it("retains non-NotFound OPFS deletion failures for retry", async () => {
+    const target = `opfs://hypercolor-attachments/${OWNER}/${SENDER}/${EVENT}`;
+    const failure = new DOMException("permission denied", "NotAllowedError");
+    const senderDirectory = {
+      getDirectoryHandle: vi.fn().mockResolvedValue({
+        removeEntry: vi.fn().mockRejectedValue(failure),
+      }),
+    };
+    vi.stubGlobal("navigator", {
+      storage: {
+        getDirectory: vi.fn().mockResolvedValue({
+          getDirectoryHandle: vi.fn().mockResolvedValue(senderDirectory),
+        }),
+      },
+    });
+
+    await expect(deleteCacheFiles([target])).resolves.toEqual([target]);
   });
 });

@@ -8,7 +8,7 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { setDbForTests } from "../index";
-import { runMigrations } from "../migrations";
+import { CURRENT_VERSION, runMigrations } from "../migrations";
 import {
   SCHEMA_V1_STATEMENTS,
   SCHEMA_V2_STATEMENTS,
@@ -120,12 +120,12 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     );
   });
 
-  it("reaches user_version 13 from a fresh database", async () => {
+  it("reaches current user_version from a fresh database", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
     await runMigrations(db);
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
   });
 
@@ -143,7 +143,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     expect(db.executeSync("SELECT * FROM link_receivers").rows).toEqual([]);
     expect(tableExists(db, "link_receivers")).toBe(1);
@@ -208,7 +208,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     const cols = db.executeSync("PRAGMA table_info(contacts)").rows ?? [];
     const names = cols.map((row) => row.name);
@@ -287,7 +287,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     for (const name of [
       "threads",
@@ -312,7 +312,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     for (const name of [
       "group_channels",
@@ -351,7 +351,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     const row = db.executeSync("SELECT * FROM group_messages").rows?.[0];
     expect(row).toEqual(
@@ -376,7 +376,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     expect(tableExists(db, "attachments")).toBe(1);
     expect(tableExists(db, "pending_cleanup")).toBe(1);
@@ -406,7 +406,7 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     const paymentCols = (
       db.executeSync("PRAGMA table_info(payment_requests)").rows ?? []

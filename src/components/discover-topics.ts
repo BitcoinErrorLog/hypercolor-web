@@ -1,8 +1,7 @@
 import type { NexusHotTag } from "@/services/nexus/NexusDiscoveryClient";
 import type { TagChannelLoad } from "@/services/nexus/tagChannel";
 
-export const DISCOVER_INDEX_ERROR =
-  "The public index is unreachable or returned unusable data. Private chats are not listed here.";
+export const DISCOVER_INDEX_ERROR = "Could not reach the public index.";
 
 export type DiscoverTopicsView = {
   tags: NexusHotTag[];

@@ -7,8 +7,8 @@ import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import { isMessagingEnabled } from "@/lib/session-ui";
 import { createInboxRefresher } from "@/lib/inbox-refresh";
 import { LinkService } from "@/services/link/LinkService";
-import { subscribeGroupEvents } from "@/services/group/GroupService";
 import { emitCoarseError } from "@/services/vibeware/coarse";
+import { isReadOnlyTabError } from "@/db/errors";
 
 export function useInbox() {
   const ownerPubky = useAuthStore((s) => s.pubky);
@@ -27,6 +27,10 @@ export function useInbox() {
       onRows: (snapshot) =>
         useInboxStore.getState().setRows(snapshot.rows, snapshot.pendingRequests),
       onError: (err) => {
+        if (isReadOnlyTabError(err)) {
+          useInboxStore.getState().setError(null);
+          return;
+        }
         useInboxStore
           .getState()
           .setError(err instanceof Error ? err.message : "Could not load conversations");
@@ -56,12 +60,8 @@ export function useInbox() {
     const stopInbox = LinkService.subscribeInboxSynced((owner) => {
       if (owner === ownerPubky) reload();
     });
-    const stopGroups = subscribeGroupEvents((owner) => {
-      if (owner === ownerPubky) reload();
-    });
     return () => {
       stopInbox();
-      stopGroups();
     };
   }, [ownerPubky, refresher]);
 

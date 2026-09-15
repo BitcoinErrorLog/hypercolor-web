@@ -1,56 +1,95 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useRef, useState } from "react";
+import { TruncatedPubky } from "@/components/truncated-pubky";
+import { EnableMessagingCta } from "@/components/enable-messaging-cta";
+import { ProfileQrSheet } from "@/components/profile-qr-sheet";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { useSignOut } from "@/hooks/useSignOut";
 import { sanitizeDisplayName } from "@/lib/display-name";
-import { sessionStatusLabel } from "@/lib/session-ui";
+import { CUSTODY_LINE, sessionStatusLabel } from "@/lib/session-ui";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-export function ProfilePage() {
+export type ProfilePageFixture = {
+  qrOpen?: boolean;
+};
+
+export function ProfilePage({ fixture }: { fixture?: ProfilePageFixture } = {}) {
   const pubky = useAuthStore((s) => s.pubky);
   const profile = useAuthStore((s) => s.profile);
   const status = useSessionStatusStore((s) => s.status);
   const { signOut, busy } = useSignOut();
+  const [qrOpen, setQrOpen] = useState(fixture?.qrOpen ?? false);
+  const showQrRef = useRef<HTMLButtonElement>(null);
+  const restoreShowQr = useCallback(() => showQrRef.current, []);
 
   return (
-    <article className="space-y-6" data-testid="profileScreen">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
-        <Link href="/settings" className="text-sm text-brand underline-offset-4 hover:underline">
-          Settings
-        </Link>
-      </div>
+    <article className="space-y-6" data-testid="profileScreen" data-surface="profile-page">
+      <PageHeader>
+        <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
+        <PageSubtitle>{sessionStatusLabel(status)}</PageSubtitle>
+      </PageHeader>
       <div className="flex flex-col items-center gap-3 py-8">
-        <div className="flex h-20 w-20 items-center justify-center rounded-full bg-secondary text-2xl text-brand">
-          {(profile?.displayName
-            ? sanitizeDisplayName(profile.displayName)
-            : pubky ?? "?"
-          ).charAt(0).toUpperCase()}
+        <div className="flex h-20 w-20 items-center justify-center" data-testid="profileAvatarInitial">
+          <Avatar seed={pubky ?? profile?.displayName ?? "anon"} size="xl" ring />
         </div>
         <p className="text-lg font-medium">
           {profile?.displayName ? sanitizeDisplayName(profile.displayName) : "Unnamed"}
         </p>
         {pubky ? (
-          <p className="break-all font-mono text-sm text-muted-foreground" data-testid="profilePubky">
-            {pubky}
-          </p>
+          <>
+            <TruncatedPubky pubky={pubky} testId="profilePubky" full />
+            <Button
+              type="button"
+              size="sm"
+              variant="brand"
+              ref={showQrRef}
+              data-testid="profileShowQr"
+              onClick={() => setQrOpen(true)}
+            >
+              Show QR
+            </Button>
+            <ProfileQrSheet
+              pubky={pubky}
+              open={qrOpen}
+              onClose={() => setQrOpen(false)}
+              restoreFocus={restoreShowQr}
+            />
+          </>
         ) : (
           <p className="text-sm text-muted-foreground">Not connected</p>
         )}
+        <p className="text-sm text-muted-foreground">{CUSTODY_LINE}</p>
         <p className="text-sm text-muted-foreground">{sessionStatusLabel(status)}</p>
-        <p className="text-xs text-muted-foreground">Keys managed by Pubky Ring</p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        disabled={busy}
-        data-testid="profileSignOut"
-        onClick={() => void signOut()}
-      >
-        Sign out
-      </Button>
+
+      <EnableMessagingCta testId="profileEnableMessaging" layout="panel" />
+
+      <nav className="space-y-1" aria-label="Account">
+        <Link
+          href="/settings"
+          className="flex min-h-11 items-center justify-between rounded-md px-3 text-sm hover:bg-accent/40"
+        >
+          Settings
+        </Link>
+        <Link
+          href="/requests"
+          className="flex min-h-11 items-center justify-between rounded-md px-3 text-sm hover:bg-accent/40"
+        >
+          Message requests
+        </Link>
+      </nav>
+
+      <SignOutConfirm
+        triggerTestId="profileSignOut"
+        busy={busy}
+        onSignOut={() => signOut()}
+      />
     </article>
   );
 }

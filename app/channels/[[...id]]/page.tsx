@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { ChannelsPage } from "@/components/channels-page";
 
 export function generateStaticParams() {
@@ -5,5 +6,9 @@ export function generateStaticParams() {
 }
 
 export default function ChannelsRoute() {
-  return <ChannelsPage />;
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">Loading channels…</p>}>
+      <ChannelsPage />
+    </Suspense>
+  );
 }

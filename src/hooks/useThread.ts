@@ -1,61 +1,90 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { parseDmConversationId } from "@/types/link";
-import type { AttachmentRecord } from "@/types/attachment";
-import type { LinkMessage } from "@/types/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { parseDmConversationId, type LinkMessage } from "@/types/link";
+import { aggregateChatTags, dmScopeKey, type ChatTagAggregate } from "@/types/chatKinds";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
+import { loadInboxRows, useInboxStore } from "@/stores/inboxStore";
+import { useThreadStore } from "@/stores/threadStore";
 import { isMessagingEnabled } from "@/lib/session-ui";
+import { createThreadInboxPoller, type ThreadInboxPoller } from "@/lib/thread-inbox-poll";
 import { StorageService } from "@/services/StorageService";
 import { LinkService } from "@/services/link/LinkService";
+import { getTabLock, ensureWriter, subscribeTabLock } from "@/services/tabLock";
+import { isReadOnlyTabError } from "@/db/errors";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
+import { useReceiverRoleStore } from "@/services/link/receiverRoleStore";
+import { isStandbyNewChatBlocked } from "@/lib/delivery-status";
 
 export function useThread(conversationId: string | null) {
   const localPubky = useAuthStore((s) => s.pubky);
   const status = useSessionStatusStore((s) => s.status);
   const parsed = conversationId ? parseDmConversationId(conversationId) : null;
   const participantPubky = parsed?.counterpartyPubky ?? null;
+  const pollerRef = useRef<ThreadInboxPoller | null>(null);
+
+  const storedConversationId = useThreadStore((s) => s.conversationId);
+  const storedMessages = useThreadStore((s) => s.messages);
+  const storedAttachments = useThreadStore((s) => s.attachments);
+  const messages = storedConversationId === conversationId ? storedMessages : [];
+  const attachments = storedConversationId === conversationId ? storedAttachments : [];
 
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(Boolean(conversationId));
   const [error, setError] = useState<string | null>(null);
-  const [messages, setMessages] = useState<LinkMessage[]>([]);
-  const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
+  const [linkStatus, setLinkStatus] = useState<string | null>(null);
+  const [linkSnapshot, setLinkSnapshot] = useState<string | null>(null);
+  const [linkReady, setLinkReady] = useState(false);
+  const [tagsByTarget, setTagsByTarget] = useState<Map<string, ChatTagAggregate[]>>(new Map());
+  const receiverRole = useReceiverRoleStore((s) => s.role);
 
   const reload = useCallback(async () => {
     if (!localPubky || !conversationId || !participantPubky) {
-      setMessages([]);
-      setAttachments([]);
+      useThreadStore.getState().setSnapshot(conversationId, [], []);
       setLoading(false);
       return;
     }
-    const [msgs, atts] = await Promise.all([
-      StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
-      StorageService.listAttachmentsForConversation(localPubky, conversationId),
-    ]);
-    setMessages(msgs);
-    setAttachments(atts);
-    setLoading(false);
-    const latest = msgs.reduce((max, message) => Math.max(max, message.sentAt), 0);
-    await LinkService.markRead(conversationId, latest > 0 ? latest : Date.now());
+    try {
+      const [msgs, atts, link, serviceStatus, tagRows] = await Promise.all([
+        StorageService.getLinkMessagesForConversation(localPubky, conversationId, 200),
+        StorageService.listAttachmentsForConversation(localPubky, conversationId),
+        StorageService.getLink(localPubky, participantPubky),
+        LinkService.getLinkStatus(participantPubky).catch(() => null),
+        StorageService.listChatTagsForScope(localPubky, dmScopeKey(participantPubky)),
+      ]);
+      setLinkStatus(serviceStatus ?? link?.status ?? null);
+      setLinkSnapshot(link?.snapshot ?? null);
+      setLinkReady(serviceStatus === "ready");
+      setTagsByTarget(aggregateChatTags(tagRows, localPubky));
+      useThreadStore.getState().setSnapshot(conversationId, msgs, atts);
+      setLoading(false);
+      if (getTabLock().mode === "writer") {
+        const latest = msgs.reduce((max, message) => Math.max(max, message.sentAt), 0);
+        await LinkService.markRead(conversationId, latest > 0 ? latest : Date.now());
+      }
+      try {
+        const snapshot = await loadInboxRows(localPubky);
+        useInboxStore.getState().setRows(snapshot.rows, snapshot.pendingRequests);
+      } catch {
+        // Thread rows still render.
+      }
+    } catch (err) {
+      setLoading(false);
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Could not load this thread.");
+      }
+    }
   }, [conversationId, localPubky, participantPubky]);
 
   useEffect(() => {
     void (async () => {
-      if (isMessagingEnabled(status) && LinkService.hasSession() && participantPubky) {
-        try {
-          await LinkService.syncInbox([participantPubky]);
-        } catch {
-          // Local history still renders.
-        }
-      }
       await reload();
     })();
-  }, [participantPubky, reload, status]);
+  }, [reload]);
 
   useEffect(() => {
     if (!localPubky) return;
@@ -64,46 +93,86 @@ export function useThread(conversationId: string | null) {
     });
   }, [localPubky, reload]);
 
+  useEffect(() => {
+    if (!participantPubky || !isMessagingEnabled(status) || !LinkService.hasSession()) {
+      return;
+    }
+    const poller = createThreadInboxPoller({
+      sync: async () => {
+        await LinkService.syncInbox([participantPubky]);
+      },
+      isVisible: () =>
+        typeof document !== "undefined" && document.visibilityState === "visible",
+      documentRef: typeof document !== "undefined" ? document : undefined,
+      windowRef: typeof window !== "undefined" ? window : undefined,
+    });
+    pollerRef.current = poller;
+    poller.start();
+    return () => {
+      poller.stop();
+      if (pollerRef.current === poller) pollerRef.current = null;
+    };
+  }, [participantPubky, status]);
+
+  useEffect(() => {
+    return subscribeTabLock((lock) => {
+      if (lock.mode === "writer") void pollerRef.current?.kick();
+    });
+  }, []);
+
   const send = useCallback(async () => {
     const text = draft.trim();
     if (!text || sending || !participantPubky) return;
+    if (isStandbyNewChatBlocked(receiverRole, linkStatus, { snapshot: linkSnapshot, linkReady })) return;
     setDraft("");
     setSending(true);
     setError(null);
     try {
+      await ensureWriter();
       const sent = await LinkService.sendDm(participantPubky, text);
       const outcome = sendOutcomeFromDelivery(sent.deliveryState);
       if (outcome) {
         void emit("app.thread.send_settled", { channel: "dm", outcome, kind: "text" });
       }
+      await pollerRef.current?.kick();
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not send this message.");
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Could not send this message.");
+      }
       setDraft(text);
       void emit("app.thread.send_settled", { channel: "dm", outcome: "failed", kind: "text" });
       emitCoarseError("thread", err);
     } finally {
       setSending(false);
     }
-  }, [draft, sending, participantPubky, reload]);
+  }, [draft, sending, participantPubky, reload, receiverRole, linkStatus, linkSnapshot, linkReady]);
 
   const retryFailed = useCallback(async () => {
     setError(null);
     try {
-      await LinkService.retryPendingSends();
+      if (participantPubky) {
+        await LinkService.retryPeerSends(participantPubky);
+      } else {
+        await LinkService.retryPendingSends();
+      }
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Retry failed.");
-      emitCoarseError("thread", err);
+      if (!isReadOnlyTabError(err)) {
+        setError(err instanceof Error ? err.message : "Retry failed.");
+        emitCoarseError("thread", err);
+      }
     }
-  }, [reload]);
+  }, [reload, participantPubky]);
 
   const sendAttachment = useCallback(
     async (file: File) => {
       if (!participantPubky || sending) return;
+      if (isStandbyNewChatBlocked(receiverRole, linkStatus, { snapshot: linkSnapshot, linkReady })) return;
       setSending(true);
       setError(null);
       try {
+        await ensureWriter();
         const bytes = new Uint8Array(await file.arrayBuffer());
         const record = await sendAttachmentFromBytes(
           { type: "conversation", peerPubky: participantPubky },
@@ -114,9 +183,12 @@ export function useThread(conversationId: string | null) {
         if (outcome) {
           void emit("app.thread.send_settled", { channel: "dm", outcome, kind: "attachment" });
         }
+        await pollerRef.current?.kick();
         await reload();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Attachment failed.");
+        if (!isReadOnlyTabError(err)) {
+          setError(err instanceof Error ? err.message : "Attachment failed.");
+        }
         void emit("app.thread.send_settled", {
           channel: "dm",
           outcome: "failed",
@@ -127,7 +199,28 @@ export function useThread(conversationId: string | null) {
         setSending(false);
       }
     },
-    [participantPubky, sending, reload],
+    [participantPubky, sending, reload, receiverRole, linkStatus, linkSnapshot, linkReady],
+  );
+
+  const toggleTag = useCallback(
+    async (message: LinkMessage, label: string, mine: boolean) => {
+      if (!participantPubky) return;
+      try {
+        await LinkService.sendTag({
+          peerPubky: participantPubky,
+          targetEventId: message.eventId,
+          targetAuthorPubky: message.senderPubky,
+          label,
+          op: mine ? "remove" : "add",
+        });
+        await reload();
+      } catch (err) {
+        if (!isReadOnlyTabError(err)) {
+          setError(err instanceof Error ? err.message : "Could not tag this message.");
+        }
+      }
+    },
+    [participantPubky, reload],
   );
 
   return {
@@ -146,5 +239,11 @@ export function useThread(conversationId: string | null) {
     retryFailed,
     sendAttachment,
     reload,
+    receiverRole,
+    linkStatus,
+    linkSnapshot,
+    linkReady,
+    tagsByTarget,
+    toggleTag,
   };
 }

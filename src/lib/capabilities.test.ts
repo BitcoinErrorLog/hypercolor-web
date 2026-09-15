@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   capabilitiesCoverHypercolorRw,
+  capabilitiesCoverRingGrant,
   extractCapabilitySpecsFromExport,
   parseCapabilitySpec,
   scopeCovers,
@@ -46,5 +47,17 @@ describe("capabilitiesCoverHypercolorRw", () => {
     expect(specs).toContain("/pub/paykit/:rw");
     expect(specs).toContain("/pub/hypercolor.app/v1/:rw");
     expect(capabilitiesCoverHypercolorRw(specs)).toBe(true);
+  });
+
+  it("requires both Paykit and Hypercolor rw for the Ring grant", () => {
+    expect(
+      capabilitiesCoverRingGrant([
+        "/pub/paykit/:rw",
+        "/pub/hypercolor.app/v1/:rw",
+      ]),
+    ).toBe(true);
+    expect(capabilitiesCoverRingGrant(["/pub/:rw"])).toBe(true);
+    expect(capabilitiesCoverRingGrant(["/pub/paykit/:rw"])).toBe(false);
+    expect(capabilitiesCoverRingGrant(["/pub/hypercolor.app/v1/:rw"])).toBe(false);
   });
 });

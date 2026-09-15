@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { groupConversationId } from "@/lib/inbox";
 import { isHeldFounderChannel, heldGroupFounderSet } from "@/lib/group-invites";
-import { isMessagingEnabled } from "@/lib/session-ui";
+import { canComposeMessages } from "@/lib/session-ui";
 import { sendAttachmentFromBytes } from "@/services/attachments/sendAttachment";
 import { GroupService, subscribeGroupEvents } from "@/services/group/GroupService";
 import { LinkService } from "@/services/link/LinkService";
@@ -13,7 +13,8 @@ import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 import type { AttachmentRecord } from "@/types/attachment";
 import type { Contact } from "@/types";
 import type { GroupChannel, GroupMember, GroupMessage } from "@/types/group";
-import { isGroupTimelineVisible } from "@/types/group";
+import { GROUP_REACTION_KIND, isGroupTimelineVisible } from "@/types/group";
+import { aggregateChatTags, type ChatTagAggregate } from "@/types/chatKinds";
 import { parsePubky } from "@/utils/pubkyId";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError, sendOutcomeFromDelivery } from "@/services/vibeware/coarse";
@@ -23,20 +24,24 @@ export function useChannel(channelId: string | null) {
   const status = useSessionStatusStore((s) => s.status);
   const [channel, setChannel] = useState<GroupChannel | null>(null);
   const [messages, setMessages] = useState<GroupMessage[]>([]);
+  const [reactions, setReactions] = useState<GroupMessage[]>([]);
   const [attachments, setAttachments] = useState<AttachmentRecord[]>([]);
   const [members, setMembers] = useState<GroupMember[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [establishedPeers, setEstablishedPeers] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<{ eventId: string; authorPubky: string; body: string } | null>(null);
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(Boolean(channelId));
   const [error, setError] = useState<string | null>(null);
+  const [tagsByTarget, setTagsByTarget] = useState<Map<string, ChatTagAggregate[]>>(new Map());
 
   const reload = useCallback(async () => {
     if (!channelId || !localPubky) {
       setChannel(null);
       setMessages([]);
+      setReactions([]);
       setMembers([]);
       setAttachments([]);
       setLoading(false);
@@ -46,6 +51,7 @@ export function useChannel(channelId: string | null) {
     if (isHeldFounderChannel(channelId, heldGroupFounderSet(requests))) {
       setChannel(null);
       setMessages([]);
+      setReactions([]);
       setMembers([]);
       setAttachments([]);
       setContacts([]);
@@ -53,19 +59,22 @@ export function useChannel(channelId: string | null) {
       setLoading(false);
       return;
     }
-    const [ch, msgs, mems, atts, people, links] = await Promise.all([
+    const [ch, msgs, mems, atts, people, links, tagRows] = await Promise.all([
       GroupService.getChannel(channelId),
       GroupService.listMessages(channelId),
       GroupService.listMembers(channelId),
       StorageService.listAttachmentsForChannel(localPubky, channelId),
       StorageService.getAllContacts(localPubky),
       StorageService.getAllLinks(localPubky),
+      StorageService.listChatTagsForScope(localPubky, channelId),
     ]);
     setChannel(ch);
     setMessages(msgs.filter(isGroupTimelineVisible));
+    setReactions(msgs.filter((message) => message.kind === GROUP_REACTION_KIND));
     setMembers(mems);
     setAttachments(atts);
     setContacts(people);
+    setTagsByTarget(aggregateChatTags(tagRows, localPubky));
     setEstablishedPeers(
       links.filter((link) => link.status === "established").map((link) => link.peerPubky),
     );
@@ -101,12 +110,18 @@ export function useChannel(channelId: string | null) {
     setDraft("");
     const editId = editingEventId;
     setEditingEventId(null);
+    const reply = replyTo;
+    setReplyTo(null);
     setSending(true);
     setError(null);
     try {
       if (editId) await GroupService.editMessage(channelId, editId, text);
       else {
-        const sent = await GroupService.sendGroupMessage(channelId, text);
+        const sent = await GroupService.sendGroupMessage(
+          channelId,
+          text,
+          reply ? { eventId: reply.eventId, authorPubky: reply.authorPubky } : undefined,
+        );
         const outcome = sendOutcomeFromDelivery(sent.deliveryState);
         if (outcome) {
           void emit("app.thread.send_settled", { channel: "group", outcome, kind: "text" });
@@ -123,7 +138,7 @@ export function useChannel(channelId: string | null) {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, channelId, editingEventId, reload]);
+  }, [draft, sending, channelId, editingEventId, replyTo, reload]);
 
   const sendAttachment = useCallback(
     async (file: File) => {
@@ -250,6 +265,46 @@ export function useChannel(channelId: string | null) {
     }
   }, [reload]);
 
+  const toggleTag = useCallback(
+    async (message: GroupMessage, label: string, mine: boolean) => {
+      if (!channelId || !localPubky) return;
+      const peer = members.find((member) => member.memberPubky !== localPubky && member.status === "active");
+      const peerPubky = peer?.memberPubky;
+      if (!peerPubky) return;
+      try {
+        await LinkService.sendTag({
+          peerPubky,
+          channelId,
+          targetEventId: message.eventId,
+          targetAuthorPubky: message.senderPubky,
+          label,
+          op: mine ? "remove" : "add",
+        });
+        const others = members.filter(
+          (member) =>
+            member.status === "active" &&
+            member.memberPubky !== localPubky &&
+            member.memberPubky !== peerPubky,
+        );
+        for (const member of others) {
+          await LinkService.sendTag({
+            peerPubky: member.memberPubky,
+            channelId,
+            targetEventId: message.eventId,
+            targetAuthorPubky: message.senderPubky,
+            label,
+            op: mine ? "remove" : "add",
+          });
+        }
+        await reload();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not tag this message.");
+        emitCoarseError("channel", err);
+      }
+    },
+    [channelId, localPubky, members, reload],
+  );
+
   return {
     localPubky,
     status,
@@ -263,12 +318,15 @@ export function useChannel(channelId: string | null) {
     setDraft,
     editingEventId,
     setEditingEventId,
+    replyTo,
+    setReplyTo,
     sending,
     loading,
     error,
     isAdmin,
     selfActive,
-    messagingEnabled: isMessagingEnabled(status),
+    messagingEnabled: canComposeMessages(status),
+    reactions,
     send,
     sendAttachment,
     react,
@@ -278,5 +336,7 @@ export function useChannel(channelId: string | null) {
     deleteMessage,
     retryFailed,
     reload,
+    tagsByTarget,
+    toggleTag,
   };
 }

@@ -25,6 +25,7 @@ const STORE_WRAPPING_KEY = "wrappingKey";
 const WRAPPING_KEY_ID = "wrapping-key";
 
 const KEY_PUBKY = "pubky";
+const KEY_PUBKY_ADOPTION = "pubky-adoption";
 const KEY_HOMESERVER = "homeserver";
 const KEY_LINK_SESSION = "link_session";
 
@@ -51,6 +52,16 @@ const LINK_SNAPSHOT_PREFIX = "HC1.";
 export const PENDING_HANDOFF_AAD_OWNER = "pending";
 
 const KEY_PENDING_RING_PK = "pending-ring-handoff-pk";
+const KEY_PENDING_RING_INDEX = "pending-ring-handoff-index";
+
+function pendingRingMetaKey(ch: string): string {
+  return `pending-ring-handoff-pk:${ch}`;
+}
+
+interface PendingRingHandoffMeta {
+  publicKey?: string;
+  deadlineMs: number;
+}
 
 const WRAP_VERSION = 1;
 
@@ -440,12 +451,56 @@ export async function getAppCert(): Promise<AppCert | null> {
 
 // ─── Pubky public key (plaintext metadata — not sensitive) ────────────────────
 
-export async function setPubky(pubky: string): Promise<void> {
-  await setMetadata(KEY_PUBKY, pubky);
+function randomAdoptionNonce(): string {
+  return `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+export async function setPubky(pubky: string): Promise<string> {
+  const { setTabLockOwner } = await import("@/services/tabLock");
+  setTabLockOwner(pubky);
+  const adoptionNonce = randomAdoptionNonce();
+  const db = ensureInitialized();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_METADATA, "readwrite");
+    const store = tx.objectStore(STORE_METADATA);
+    store.put(pubky, KEY_PUBKY);
+    store.put(adoptionNonce, KEY_PUBKY_ADOPTION);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("KeyStore: failed to write pubky"));
+  });
+  return adoptionNonce;
 }
 
 export async function getPubky(): Promise<string | null> {
   return getMetadata(KEY_PUBKY);
+}
+
+/** Un-set the signed-in pubky only if it still equals `expected` with this tab's adoption nonce. */
+export async function clearPubkyIfMatches(expected: string, adoptionNonce: string): Promise<void> {
+  const db = ensureInitialized();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_METADATA, "readwrite");
+    const store = tx.objectStore(STORE_METADATA);
+    const pubkyReq = store.get(KEY_PUBKY);
+    const nonceReq = store.get(KEY_PUBKY_ADOPTION);
+    const maybeClear = () => {
+      if (pubkyReq.readyState !== "done" || nonceReq.readyState !== "done") return;
+      const current = typeof pubkyReq.result === "string" ? pubkyReq.result : null;
+      const storedNonce = typeof nonceReq.result === "string" ? nonceReq.result : null;
+      if (current !== expected || storedNonce !== adoptionNonce) return;
+      store.delete(KEY_PUBKY);
+      store.delete(KEY_PUBKY_ADOPTION);
+    };
+    pubkyReq.onsuccess = maybeClear;
+    nonceReq.onsuccess = maybeClear;
+    pubkyReq.onerror = () =>
+      reject(pubkyReq.error ?? new Error("KeyStore: failed to read pubky"));
+    nonceReq.onerror = () =>
+      reject(nonceReq.error ?? new Error("KeyStore: failed to read pubky adoption"));
+    tx.oncomplete = () => resolve();
+    tx.onerror = () =>
+      reject(tx.error ?? new Error("KeyStore: failed to clear matching pubky"));
+  });
 }
 
 // ─── Homeserver (plaintext metadata) ──────────────────────────────────────────
@@ -472,31 +527,137 @@ export async function deleteLinkSession(): Promise<void> {
   await deleteMetadata(KEY_LINK_SESSION);
 }
 
-// ─── Pending Ring handoff (wrapped ephemeral X25519 secret) ───────────────────
+// ─── Pending Ring handoff (wrapped ephemeral X25519 secret, keyed by ch) ──────
 
-export async function setPendingRingHandoff(
-  ephemeralSkHex: string,
-  ephemeralPkHex?: string,
-): Promise<void> {
-  const plaintext = new TextEncoder().encode(ephemeralSkHex);
-  await wrapSecret(PURPOSE_PENDING_RING_HANDOFF, "pending", plaintext);
-  if (typeof ephemeralPkHex === "string" && ephemeralPkHex.length > 0) {
-    await setMetadata(KEY_PENDING_RING_PK, ephemeralPkHex);
+export async function readPendingRingIndex(): Promise<string[]> {
+  try {
+    const raw = await getMetadata(KEY_PENDING_RING_INDEX);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string" && item.length > 0);
+  } catch {
+    return [];
   }
 }
 
-export async function getPendingRingHandoff(): Promise<string | null> {
-  const plaintext = await unwrapSecret(PURPOSE_PENDING_RING_HANDOFF, "pending");
+async function writePendingRingIndex(channels: readonly string[]): Promise<void> {
+  await setMetadata(KEY_PENDING_RING_INDEX, JSON.stringify([...new Set(channels)]));
+}
+
+async function sweepExpiredPendingRingHandoffs(keepCh?: string): Promise<void> {
+  const channels = await readPendingRingIndex();
+  const keep: string[] = [];
+  let changed = false;
+  for (const id of channels) {
+    if (id === keepCh || (await pendingRingHandoffIsLive(id))) {
+      keep.push(id);
+      continue;
+    }
+    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, id);
+    await deleteMetadata(pendingRingMetaKey(id));
+    changed = true;
+  }
+  if (changed) {
+    await writePendingRingIndex(keep);
+  }
+}
+
+async function rememberPendingRingChannel(ch: string): Promise<void> {
+  await sweepExpiredPendingRingHandoffs(ch);
+  const current = await readPendingRingIndex();
+  if (current.includes(ch)) return;
+  await writePendingRingIndex([...current, ch]);
+}
+
+async function forgetPendingRingChannel(ch: string): Promise<void> {
+  await writePendingRingIndex(
+    (await readPendingRingIndex()).filter((item) => item !== ch),
+  );
+}
+
+async function readPendingRingMeta(ch: string): Promise<PendingRingHandoffMeta | null> {
+  const raw = await getMetadata(pendingRingMetaKey(ch));
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as PendingRingHandoffMeta;
+    if (typeof parsed !== "object" || parsed === null) return null;
+    if (typeof parsed.deadlineMs !== "number" || !Number.isFinite(parsed.deadlineMs)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function pendingRingHandoffIsLive(ch: string): Promise<boolean> {
+  const meta = await readPendingRingMeta(ch);
+  if (!meta) return false;
+  return meta.deadlineMs > Date.now();
+}
+
+export async function setPendingRingHandoff(
+  ephemeralSkHex: string,
+  ephemeralPkHex: string | undefined,
+  ch: string,
+  deadlineMs: number,
+): Promise<void> {
+  if (!ch) {
+    throw new Error("KeyStore: pending ring handoff requires a channel id");
+  }
+  if (!Number.isFinite(deadlineMs)) {
+    throw new Error("KeyStore: pending ring handoff requires a finite deadline");
+  }
+  const plaintext = new TextEncoder().encode(ephemeralSkHex);
+  await wrapSecret(PURPOSE_PENDING_RING_HANDOFF, ch, plaintext);
+  const meta: PendingRingHandoffMeta = { deadlineMs };
+  if (typeof ephemeralPkHex === "string" && ephemeralPkHex.length > 0) {
+    meta.publicKey = ephemeralPkHex;
+  }
+  await setMetadata(pendingRingMetaKey(ch), JSON.stringify(meta));
+  await rememberPendingRingChannel(ch);
+  await sweepExpiredPendingRingHandoffs(ch);
+}
+
+export async function getPendingRingHandoff(ch: string): Promise<string | null> {
+  if (!ch) return null;
+  if (!(await pendingRingHandoffIsLive(ch))) {
+    await clearPendingRingHandoff(ch);
+    return null;
+  }
+  const plaintext = await unwrapSecret(PURPOSE_PENDING_RING_HANDOFF, ch);
   if (!plaintext) return null;
   const hex = new TextDecoder().decode(plaintext);
   return hex.length > 0 ? hex : null;
 }
 
-export async function getPendingRingHandoffPublicKey(): Promise<string | null> {
-  return getMetadata(KEY_PENDING_RING_PK);
+export async function getPendingRingHandoffPublicKey(
+  ch: string,
+): Promise<string | null> {
+  if (!ch) return null;
+  if (!(await pendingRingHandoffIsLive(ch))) {
+    await clearPendingRingHandoff(ch);
+    return null;
+  }
+  const meta = await readPendingRingMeta(ch);
+  const pk = meta?.publicKey;
+  return typeof pk === "string" && pk.length > 0 ? pk : null;
 }
 
-export async function clearPendingRingHandoff(): Promise<void> {
+export async function clearPendingRingHandoff(ch?: string): Promise<void> {
+  if (ch) {
+    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, ch);
+    await deleteMetadata(pendingRingMetaKey(ch));
+    await forgetPendingRingChannel(ch);
+    return;
+  }
+  const channels = await readPendingRingIndex();
+  for (const id of channels) {
+    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, id);
+    await deleteMetadata(pendingRingMetaKey(id));
+  }
+  await deleteMetadata(KEY_PENDING_RING_INDEX);
   await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, "pending");
   await deleteMetadata(KEY_PENDING_RING_PK);
 }
@@ -827,6 +988,8 @@ export async function clear(): Promise<void> {
       reject(clearMeta.error ?? new Error("KeyStore: failed to clear metadata"));
     tx.onerror = () => reject(tx.error ?? new Error("KeyStore: clear transaction failed"));
   });
+  const { setTabLockOwner } = await import("@/services/tabLock");
+  setTabLockOwner(null);
 }
 
 // ─── Exported object (method names match mobile KeyStore) ─────────────────────
@@ -851,6 +1014,7 @@ export const KeyStore = {
   setPendingRingHandoff,
   getPendingRingHandoff,
   getPendingRingHandoffPublicKey,
+  readPendingRingIndex,
   clearPendingRingHandoff,
   setReceiverNoiseSecret,
   getReceiverNoiseSecret,
@@ -875,6 +1039,7 @@ export const KeyStore = {
   // Metadata
   setPubky,
   getPubky,
+  clearPubkyIfMatches,
   setHomeserver,
   getHomeserver,
   // Session

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMigrations } from "../migrations";
+import { CURRENT_VERSION, runMigrations } from "../migrations";
 import {
   applyConnectionPreamble,
   closeDb,
@@ -65,7 +65,7 @@ describe("web SqlExecutor", () => {
         1,
       );
       expect(exec.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-        13,
+        CURRENT_VERSION,
       );
     } finally {
       closeDb();
@@ -110,12 +110,12 @@ describe("web SqlExecutor", () => {
     }
   });
 
-  it("runMigrations is idempotent at user_version 13", async () => {
+  it("runMigrations is idempotent at current user_version", async () => {
     const db = openMemoryDb();
     await runMigrations(db);
     await runMigrations(db);
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
     expect(
       db.executeSync(
@@ -123,4 +123,55 @@ describe("web SqlExecutor", () => {
       ).rows,
     ).toHaveLength(1);
   });
+
+  it("pagehide closes the live handle and getDb() reopens lazily", async () => {
+    // src/db/index.ts registers window pagehide -> closeDb(). Under node vitest
+    // that listener is not installed (no window at module load), so call closeDb
+    // directly — the same function the browser listener invokes.
+    const source = fs.readFileSync(path.join(__dirname, "..", "index.ts"), "utf8");
+    expect(source).toMatch(/addEventListener\([\'"]pagehide[\'"]/);
+    expect(source).toMatch(/closeDb\(\)/);
+
+    const file = path.join(
+      os.tmpdir(),
+      `hypercolor-pagehide-${process.pid}-${Date.now()}.db`,
+    );
+    const first = openFileDb(file);
+    const originalClose = first.close.bind(first);
+    const close = vi.fn(() => {
+      originalClose();
+    });
+    (first as { close: () => void }).close = close;
+    vi.mocked(openWebSqlite).mockResolvedValueOnce(first);
+
+    const second = openFileDb(file + "-reopen");
+    vi.mocked(openWebSqlite).mockResolvedValueOnce(second);
+
+    const exec = await getDb();
+    expect(exec).not.toBe(first);
+    exec.executeSync("SELECT 1 AS n");
+    closeDb();
+    expect(close).toHaveBeenCalledTimes(1);
+
+    const again = await getDb();
+    expect(again).not.toBe(exec);
+    expect(openWebSqlite).toHaveBeenCalledTimes(2);
+
+    closeDb();
+    try {
+      second.close();
+    } catch {
+      // already closed
+    }
+    for (const base of [file, file + "-reopen"]) {
+      for (const extra of ["", "-wal", "-shm"]) {
+        try {
+          fs.unlinkSync(base + extra);
+        } catch {
+          // ignore
+        }
+      }
+    }
+  });
+
 });

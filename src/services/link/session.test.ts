@@ -5,6 +5,8 @@ const resume = vi.fn();
 const restoreExport = vi.fn();
 const signOutSession = vi.fn();
 const removeReceiverMarker = vi.fn();
+const getReceiverMarker = vi.fn();
+const noisePublicKeyFromSecret = vi.fn();
 
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
@@ -12,6 +14,8 @@ vi.mock("./PaykitLinkWeb", () => ({
     restoreSession: (...args: unknown[]) => restoreExport(...args),
     signOutSession: (...args: unknown[]) => signOutSession(...args),
     removeReceiverMarker: (...args: unknown[]) => removeReceiverMarker(...args),
+    getReceiverMarker: (...args: unknown[]) => getReceiverMarker(...args),
+    noisePublicKeyFromSecret: (...args: unknown[]) => noisePublicKeyFromSecret(...args),
   },
 }));
 
@@ -27,8 +31,14 @@ vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     setPubky: vi.fn(async () => undefined),
     getPubky: vi.fn(async () => null),
+    getReceiverNoiseSecret: vi.fn(async () => null),
     clear: vi.fn(async () => undefined),
   },
+}));
+
+const resetPaykitConnectLive = vi.fn();
+vi.mock("@/services/paykitConnectLive", () => ({
+  resetPaykitConnectLive: () => resetPaykitConnectLive(),
 }));
 
 import {
@@ -37,8 +47,10 @@ import {
   readSessionMetadata,
   resetSessionStateForTests,
   restoreSessionOnLoad,
+  signOut,
   wipeSessionMetadata,
 } from "./session";
+import { KeyStore } from "@/services/KeyStore";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
 const OTHER = "p1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
@@ -69,6 +81,9 @@ describe("session restore classification", () => {
     restoreExport.mockRejectedValue(namedError("Error", "export restore unused"));
     signOutSession.mockReset();
     removeReceiverMarker.mockReset();
+    getReceiverMarker.mockReset();
+    noisePublicKeyFromSecret.mockReset();
+    resetPaykitConnectLive.mockReset();
     await persistSessionMetadata({
       pubky: OWNER,
       exported: exportWithCaps("/pub/paykit/:rw"),
@@ -132,8 +147,8 @@ describe("session restore classification", () => {
     expect(await readSessionMetadata()).toBeNull();
   });
 
-  it("treats a paykit-only grant as needs-enable", async () => {
-    const handle = fakeHandle(OWNER, exportWithCaps("/pub/paykit/:rw"));
+  it("treats a hypercolor-only grant as needs-enable", async () => {
+    const handle = fakeHandle(OWNER, exportWithCaps("/pub/hypercolor.app/v1/:rw"));
     resume.mockResolvedValue(handle);
     signOutSession.mockResolvedValue(undefined);
     const result = await restoreSessionOnLoad();
@@ -225,5 +240,54 @@ describe("session restore classification", () => {
     await expect(first).resolves.toMatchObject({ status: "live", pubky: OWNER });
     await expect(second).resolves.toMatchObject({ status: "live", pubky: OWNER });
     expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it("resets the live paykit-connect channel on sign-out", async () => {
+    await signOut();
+    expect(resetPaykitConnectLive).toHaveBeenCalledTimes(1);
+  });
+
+  it("sign-out on standby does not delete a foreign marker", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    resume.mockResolvedValue(handle);
+    await restoreSessionOnLoad();
+    vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk" });
+    await signOut();
+    expect(removeReceiverMarker).not.toHaveBeenCalled();
+    expect(signOutSession).toHaveBeenCalled();
+  });
+
+  it("sign-out deletes the marker only when GET matches this device", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    resume.mockResolvedValue(handle);
+    await restoreSessionOnLoad();
+    vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+    await signOut();
+    expect(removeReceiverMarker).toHaveBeenCalledTimes(1);
+  });
+
+  it("sign-out on active does not delete when own-marker GET fails", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    resume.mockResolvedValue(handle);
+    await restoreSessionOnLoad();
+    vi.mocked(KeyStore.getReceiverNoiseSecret).mockResolvedValue(new Uint8Array(32).fill(1));
+    noisePublicKeyFromSecret.mockResolvedValue("local-pk");
+    getReceiverMarker.mockRejectedValue(new Error("homeserver unreachable"));
+    await signOut();
+    expect(removeReceiverMarker).not.toHaveBeenCalled();
+    expect(signOutSession).toHaveBeenCalled();
   });
 });

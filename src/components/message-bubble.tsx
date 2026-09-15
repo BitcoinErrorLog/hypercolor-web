@@ -1,10 +1,16 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useState } from "react";
+import { MessageBody } from "@/components/message-body";
 import { Button } from "@/components/ui/button";
 import { formatClock } from "@/lib/format";
+import { TruncatedPubky } from "@/components/truncated-pubky";
+import { formatDeliveryStatus, isFailedDelivery } from "@/lib/delivery-status";
 import { CHAT_ATTACHMENT_KIND } from "@/types/attachment";
-import type { LinkDeliveryState, LinkMessage } from "@/types/link";
+import type { LinkMessage } from "@/types/link";
+import type { ChatTagAggregate } from "@/types/chatKinds";
+import { TagChips, TagPicker } from "@/components/tag-picker";
 import {
   GROUP_MESSAGE_KIND,
   GROUP_MEMBERSHIP_KIND,
@@ -12,19 +18,16 @@ import {
   type GroupMessage,
 } from "@/types/group";
 
-function deliveryLabel(state: LinkDeliveryState): string {
-  switch (state) {
-    case "sending":
-      return "sending";
-    case "sent":
-      return "sent";
-    case "delivered":
-      return "delivered";
-    case "read":
-      return "read";
-    case "failed":
-      return "failed";
-  }
+const REACTIONS = [
+  { emoji: "👍", name: "thumbs up" },
+  { emoji: "❤️", name: "heart" },
+  { emoji: "😂", name: "joy" },
+  { emoji: "🔥", name: "fire" },
+  { emoji: "👎", name: "thumbs down" },
+] as const;
+
+function deliveryLabel(state: LinkMessage["deliveryState"]): string {
+  return formatDeliveryStatus(state);
 }
 
 export function DmMessageBubble({
@@ -32,27 +35,65 @@ export function DmMessageBubble({
   attachmentSlot,
   mine,
   onRetry,
+  onCopy,
+  tags = [],
+  onToggleTag,
 }: {
   message: LinkMessage;
   attachmentSlot?: ReactNode;
   mine: boolean;
   onRetry?: () => void;
+  onCopy?: () => void;
+  tags?: readonly ChatTagAggregate[];
+  onToggleTag?: (label: string, mine: boolean) => void;
 }) {
+  const failed = mine && isFailedDelivery(message.deliveryState);
+  const [pickerOpen, setPickerOpen] = useState(false);
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage">
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage" data-surface="message-bubble">
       <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm ${
-          mine ? "bg-brand text-white" : "bg-card"
+        className={`group hc-bubble space-y-2 ${
+          mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setPickerOpen(true);
+        }}
       >
         {attachmentSlot ?? (
-          <p className="whitespace-pre-wrap break-words">{message.body}</p>
+          <MessageBody text={message.body} />
         )}
-        <p className={`text-[11px] ${mine ? "text-white/70" : "text-muted-foreground"}`}>
+        <TagChips tags={tags} onToggle={onToggleTag} />
+        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
         </p>
-        {mine && message.deliveryState === "failed" && onRetry ? (
+        <div className="flex flex-wrap gap-1">
+          {onToggleTag ? (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+              onClick={() => setPickerOpen((open) => !open)}
+            >
+              Tag
+            </button>
+          ) : null}
+          {onCopy ? (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+              onClick={onCopy}
+            >
+              Copy
+            </button>
+          ) : null}
+        </div>
+        <TagPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={(label) => onToggleTag?.(label, false)}
+        />
+        {failed && onRetry ? (
           <Button type="button" size="sm" variant="outline" onClick={onRetry}>
             Retry
           </Button>
@@ -71,6 +112,12 @@ export function GroupMessageBubble({
   onReact,
   onEdit,
   onDelete,
+  onReply,
+  onCopy,
+  pressedEmojis,
+  quotedBody,
+  tags = [],
+  onToggleTag,
 }: {
   message: GroupMessage;
   attachmentSlot?: ReactNode;
@@ -80,7 +127,14 @@ export function GroupMessageBubble({
   onReact?: (emoji: string) => void;
   onEdit?: () => void;
   onDelete?: () => void;
+  onReply?: () => void;
+  onCopy?: () => void;
+  pressedEmojis?: readonly string[];
+  quotedBody?: string | null;
+  tags?: readonly ChatTagAggregate[];
+  onToggleTag?: (label: string, mine: boolean) => void;
 }) {
+  const [pickerOpen, setPickerOpen] = useState(false);
   if (message.kind === GROUP_MEMBERSHIP_KIND) {
     return (
       <p className="text-center text-xs text-muted-foreground" data-testid="groupMembership">
@@ -96,53 +150,110 @@ export function GroupMessageBubble({
     return null;
   }
 
+  const publicTopic = message.kind === PUBLIC_CHANNEL_MESSAGE_KIND;
+  const failed = mine && isFailedDelivery(message.deliveryState);
+
   return (
-    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage">
+    <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="groupMessage" data-surface="message-bubble">
       <div
-        className={`max-w-[85%] space-y-2 rounded-2xl px-3 py-2 text-sm ${
-          mine ? "bg-brand text-white" : "bg-card"
+        className={`group hc-bubble space-y-2 ${
+          mine ? "hc-bubble-mine" : "hc-bubble-theirs"
         }`}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          setPickerOpen(true);
+        }}
       >
-        {!mine ? (
-          <p className="font-mono text-[11px] opacity-70">{message.senderPubky}</p>
+        {!mine ? <TruncatedPubky pubky={message.senderPubky} className="font-mono text-xs opacity-80" /> : null}
+        {quotedBody ? (
+          <blockquote className="border-l-2 border-border pl-2 text-xs opacity-80" data-testid="groupQuote">
+            {quotedBody}
+          </blockquote>
         ) : null}
         {message.deleted ? (
           <p className="italic opacity-70">Message deleted</p>
         ) : (
           attachmentSlot ?? (
-            <p className="whitespace-pre-wrap break-words">{message.body}</p>
+            <MessageBody text={message.body} />
           )
         )}
-        <p className={`text-[11px] ${mine ? "text-white/70" : "text-muted-foreground"}`}>
+        <TagChips tags={tags} onToggle={onToggleTag} />
+        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
           {formatClock(message.sentAt)}
           {message.editedAt ? " · edited" : ""}
-          {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
+          {mine && !publicTopic ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
         </p>
         {!message.deleted && localPubky ? (
           <div className="flex flex-wrap gap-1">
-            {["👍", "❤️", "😂", "🔥", "👎"].map((emoji) => (
+            {REACTIONS.map((reaction) => {
+              const pressed = Boolean(pressedEmojis?.includes(reaction.emoji));
+              return (
               <button
-                key={emoji}
+                key={reaction.emoji}
                 type="button"
-                className="rounded px-1 text-xs opacity-80 hover:opacity-100"
-                onClick={() => onReact?.(emoji)}
+                className="inline-flex min-h-11 min-w-11 items-center justify-center rounded px-1 text-sm opacity-80 hover:opacity-100"
+                aria-label={`React with ${reaction.name}`}
+                aria-pressed={pressed}
+                onClick={() => onReact?.(reaction.emoji)}
               >
-                {emoji}
+                {reaction.emoji}
               </button>
-            ))}
+              );
+            })}
             {mine && onEdit ? (
-              <button type="button" className="text-xs underline" onClick={onEdit}>
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline"
+                onClick={onEdit}
+              >
                 Edit
               </button>
             ) : null}
             {mine && onDelete ? (
-              <button type="button" className="text-xs underline" onClick={onDelete}>
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline"
+                onClick={onDelete}
+              >
                 Delete
+              </button>
+            ) : null}
+            {onReply ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline"
+                data-testid="groupReply"
+                onClick={onReply}
+              >
+                Reply
+              </button>
+            ) : null}
+            {onCopy ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+                onClick={onCopy}
+              >
+                Copy
+              </button>
+            ) : null}
+            {onToggleTag ? (
+              <button
+                type="button"
+                className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+                onClick={() => setPickerOpen((open) => !open)}
+              >
+                Tag
               </button>
             ) : null}
           </div>
         ) : null}
-        {mine && message.deliveryState === "failed" && onRetry ? (
+        <TagPicker
+          open={pickerOpen}
+          onClose={() => setPickerOpen(false)}
+          onPick={(label) => onToggleTag?.(label, false)}
+        />
+        {failed && onRetry ? (
           <Button type="button" size="sm" variant="outline" onClick={onRetry}>
             Retry
           </Button>

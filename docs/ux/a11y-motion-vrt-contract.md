@@ -237,13 +237,16 @@ Current sub-44 web targets:
   `src/components/message-bubble.tsx`.
 
 Add a first-focus skip link in `app/layout.tsx`, visually revealed on focus,
-targeting `<main id="main-content" tabIndex={-1}>`. Route headings are `h1`; panel
-headings preserve hierarchy.
+targeting `<main id="main-content" tabIndex={-1}>`. Each route has exactly one visible
+`h1`. The detail heading is `h1` only when the list pane is hidden (mobile); in two-pane
+it is `h2`. Web decides the tag after mount from `useTwoPane`; the SSR default is the
+mobile `h1` so hydration of the static export does not mismatch. Panel headings preserve
+hierarchy.
 
 For list-to-detail navigation in Chats, Channels, Contacts, and Discover:
 
 1. Opening a row records the row's stable DOM id.
-2. On a detail route, move focus to the detail `h1` after navigation.
+2. On a detail route, move focus to the detail heading after navigation.
 3. The mobile-width detail header includes “Back to Chats/Channels/Contacts/
    Discover”.
 4. Back restores focus to the originating row. If the route was opened directly,

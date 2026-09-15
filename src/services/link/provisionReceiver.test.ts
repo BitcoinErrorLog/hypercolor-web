@@ -10,214 +10,435 @@ import { LINK_RECEIVER_PATH } from "@/types/link";
 const generateNoiseSecretKey = vi.fn();
 const noisePublicKeyFromSecret = vi.fn();
 const publishReceiverMarker = vi.fn();
+const getReceiverMarker = vi.fn();
+const putPublic = vi.fn();
+const publicGet = vi.fn();
+const getLiveSession = vi.fn();
+const persistReceiverPath = vi.fn();
 
 vi.mock("./PaykitLinkWeb", () => ({
   PaykitLinkWeb: {
     generateNoiseSecretKey: (...args: unknown[]) => generateNoiseSecretKey(...args),
-    noisePublicKeyFromSecret: (...args: unknown[]) =>
-      noisePublicKeyFromSecret(...args),
+    noisePublicKeyFromSecret: (...args: unknown[]) => noisePublicKeyFromSecret(...args),
     publishReceiverMarker: (...args: unknown[]) => publishReceiverMarker(...args),
+    getReceiverMarker: (...args: unknown[]) => getReceiverMarker(...args),
+    putPublic: (...args: unknown[]) => putPublic(...args),
+    publicGet: (...args: unknown[]) => publicGet(...args),
   },
 }));
 
-import { provisionReceiver } from "./provisionReceiver";
+vi.mock("./session", () => ({
+  getLiveSession: () => getLiveSession(),
+  persistReceiverPath: (...args: unknown[]) => persistReceiverPath(...args),
+}));
+
+import {
+  drainReceiverPublishRetry,
+  provisionReceiver,
+  RECEIVER_MARKER_PUBLISH_BUDGET_MS,
+  syncOwnReceiverRole,
+  takeoverReceiver,
+  waitForCapabilityRetryDrainForTests,
+} from "./provisionReceiver";
+import { useReceiverRoleStore } from "./receiverRoleStore";
 
 const OWNER = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+const VALID_CAPABILITY = new TextEncoder().encode(
+  '{"version":1,"kind":"hypercolor.receiver.capabilities","receiver_path":"hypercolor/wallet","chat_kinds_v":1}',
+);
+
+beforeEach(async () => {
+  await KeyStore.initKeyStore();
+  await KeyStore.clear();
+  const db = openMemoryDb();
+  await runMigrations(db);
+  setDbForTests(db);
+  generateNoiseSecretKey.mockReset().mockResolvedValue(new Uint8Array(32).fill(7));
+  noisePublicKeyFromSecret.mockReset().mockResolvedValue("local-pk");
+  publishReceiverMarker.mockReset().mockResolvedValue(undefined);
+  getReceiverMarker.mockReset().mockResolvedValue(null);
+  publicGet.mockReset().mockResolvedValue(VALID_CAPABILITY);
+  putPublic.mockReset().mockResolvedValue(undefined);
+  getLiveSession.mockReset().mockReturnValue(null);
+  persistReceiverPath.mockReset().mockResolvedValue(undefined);
+  useReceiverRoleStore.getState().reset();
+});
+
+afterEach(async () => {
+  await waitForCapabilityRetryDrainForTests();
+  setDbForTests(null);
+});
 
 describe("provisionReceiver", () => {
-  beforeEach(async () => {
-    await KeyStore.initKeyStore();
-    await KeyStore.clear();
-    const db = openMemoryDb();
-    runMigrations(db);
-    setDbForTests(db);
-    generateNoiseSecretKey.mockReset();
-    noisePublicKeyFromSecret.mockReset();
-    publishReceiverMarker.mockReset();
+  it("rejects a session owned by another identity before touching receiver state", async () => {
+    await expect(
+      provisionReceiver({ pubky: () => "another-owner" } as never, OWNER),
+    ).rejects.toThrow("session owner mismatch");
+    expect(generateNoiseSecretKey).not.toHaveBeenCalled();
   });
 
-  afterEach(() => {
-    setDbForTests(null);
-  });
-
-  it("wraps the Noise secret and publishes a messaging-only marker", async () => {
-    const secret = new Uint8Array(32).fill(7);
-    const persisted = new Uint8Array(secret);
-    generateNoiseSecretKey.mockResolvedValue(secret);
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
-    publishReceiverMarker.mockResolvedValue(undefined);
+  it("publishes the typed marker, reconciles it, then writes only the key-bound capability", async () => {
+    publicGet.mockResolvedValueOnce(undefined).mockResolvedValue(VALID_CAPABILITY);
+    getReceiverMarker.mockResolvedValueOnce(null).mockResolvedValue({ noisePublicKey: "local-pk" });
     const session = { pubky: () => OWNER };
-
+    getLiveSession.mockReturnValueOnce({ pubky: OWNER, handle: session }).mockReturnValue(null);
     const result = await provisionReceiver(session as never, OWNER);
-
-    expect(result).toEqual({
-      pubky: OWNER,
-      receiverPath: LINK_RECEIVER_PATH,
-      noisePublicKey: "noise-pk-z32",
-    });
-    expect(secret).toEqual(new Uint8Array(32));
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
-      persisted,
-    );
+    expect(result.receiverRole).toBe("active");
     expect(publishReceiverMarker).toHaveBeenCalledWith(
       session,
       LINK_RECEIVER_PATH,
-      "noise-pk-z32",
+      "local-pk",
       true,
       false,
       false,
       false,
     );
-    const row = await StorageService.getLinkReceiver(OWNER);
-    expect(row?.markerPublished).toBe(true);
-    expect(row?.receiverPath).toBe(LINK_RECEIVER_PATH);
-  });
-
-  it("fails fast when publishReceiverMarker hangs", async () => {
-    vi.useFakeTimers();
-    try {
-      generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
-      noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
-      publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
-      const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
-      const assertion = expect(pending).rejects.toMatchObject({
-        name: "SessionResumeTimeout",
-      });
-      await vi.advanceTimersByTimeAsync(15_100);
-      await assertion;
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("leaves no receiver evidence behind when the publish times out", async () => {
-    vi.useFakeTimers();
-    try {
-      generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
-      noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
-      publishReceiverMarker.mockImplementation(() => new Promise(() => {}));
-      const pending = provisionReceiver({ pubky: () => OWNER } as never, OWNER);
-      const assertion = expect(pending).rejects.toMatchObject({
-        name: "SessionResumeTimeout",
-      });
-      await vi.advanceTimersByTimeAsync(15_100);
-      await assertion;
-    } finally {
-      vi.useRealTimers();
-    }
-
-    // A surviving secret would read as "enabled" forever with no marker
-    // published, because the status lookup falls back to this alias.
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
-    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
-  });
-
-  it("leaves no receiver evidence behind when the publish rejects", async () => {
-    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-z32");
-    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
-
-    await expect(
-      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
-    ).rejects.toThrow("homeserver refused");
-
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
-    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
-  });
-
-  it("can be re-run after a failed publish and lands a fresh marker", async () => {
-    generateNoiseSecretKey.mockResolvedValue(new Uint8Array(32).fill(7));
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-first");
-    publishReceiverMarker.mockRejectedValueOnce(new Error("homeserver refused"));
-    await expect(
-      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
-    ).rejects.toThrow("homeserver refused");
-
-    const fresh = new Uint8Array(32).fill(8);
-    const persisted = new Uint8Array(fresh);
-    generateNoiseSecretKey.mockResolvedValue(fresh);
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-second");
-    publishReceiverMarker.mockResolvedValue(undefined);
-
-    const result = await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
-
-    expect(result.noisePublicKey).toBe("noise-pk-second");
-    expect(generateNoiseSecretKey).toHaveBeenCalledTimes(2);
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
-      persisted,
-    );
-    const row = await StorageService.getLinkReceiver(OWNER);
-    expect(row?.markerPublished).toBe(true);
-  });
-
-  it("keeps a published receiver when a re-publish fails", async () => {
-    const persisted = new Uint8Array(32).fill(9);
-    await KeyStore.setPubky(OWNER);
-    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, persisted);
-    await StorageService.upsertLinkReceiver({
-      ownerPubky: OWNER,
-      receiverAlias: LINK_RECEIVER_PATH,
-      receiverPath: LINK_RECEIVER_PATH,
-      markerPublished: true,
-    });
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
-    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
-
-    await expect(
-      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
-    ).rejects.toThrow("homeserver refused");
-
-    // The marker on the homeserver still points at this key, so discarding it
-    // would break a receiver that works.
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toEqual(
-      persisted,
-    );
+    await vi.waitFor(() => expect(putPublic).toHaveBeenCalledWith(
+      session,
+      "/pub/hypercolor.app/v1/receivers/local-pk/capabilities.json",
+      expect.any(Uint8Array),
+    ));
+    await vi.waitFor(async () => expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull());
+    expect(putPublic.mock.calls.some((call) => call[1] === "/pub/paykit.app/v0/receiver.json")).toBe(false);
     expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(true);
   });
 
-  it("rolls back a reused receiver whose marker never landed", async () => {
-    await KeyStore.setPubky(OWNER);
-    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, new Uint8Array(32).fill(9));
-    await StorageService.upsertLinkReceiver({
-      ownerPubky: OWNER,
-      receiverAlias: LINK_RECEIVER_PATH,
-      receiverPath: LINK_RECEIVER_PATH,
-      markerPublished: false,
+  it("retains the same key and row after an ambiguous marker timeout", async () => {
+    expect(RECEIVER_MARKER_PUBLISH_BUDGET_MS).toBe(15_000);
+    getReceiverMarker.mockResolvedValue(null);
+    publishReceiverMarker.mockRejectedValue(
+      Object.assign(new Error("dispatch outcome unknown"), { name: "SessionResumeTimeout" }),
+    );
+    await expect(provisionReceiver({ pubky: () => OWNER } as never, OWNER)).rejects.toMatchObject({
+      name: "SessionResumeTimeout",
     });
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
-    publishReceiverMarker.mockRejectedValue(new Error("homeserver refused"));
-
-    await expect(
-      provisionReceiver({ pubky: () => OWNER } as never, OWNER),
-    ).rejects.toThrow("homeserver refused");
-
-    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).toBeNull();
-    expect(await StorageService.getLinkReceiver(OWNER)).toBeNull();
+    expect(await KeyStore.getReceiverNoiseSecret(LINK_RECEIVER_PATH)).not.toBeNull();
+    expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(false);
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+      noisePublicKey: "local-pk",
+      stage: "marker",
+      attempts: 1,
+    });
   });
 
-  it("zeroizes the re-derived receiver secret after publishing", async () => {
-    const persisted = new Uint8Array(32).fill(9);
+  it("replays an unknown marker publish before capability publication", async () => {
+    const session = { pubky: () => OWNER };
+    getReceiverMarker.mockResolvedValue(null);
+    publishReceiverMarker.mockRejectedValueOnce(new Error("network"));
+    await expect(provisionReceiver(session as never, OWNER)).rejects.toThrow("network");
+    publishReceiverMarker.mockResolvedValue(undefined);
+    getReceiverMarker.mockResolvedValueOnce(null).mockResolvedValue({ noisePublicKey: "local-pk" });
+    publicGet.mockResolvedValueOnce(undefined).mockResolvedValue(VALID_CAPABILITY);
+    getLiveSession
+      .mockReturnValueOnce({ pubky: OWNER, handle: session })
+      .mockReturnValueOnce({ pubky: OWNER, handle: session })
+      .mockReturnValue(null);
+
+    await expect(drainReceiverPublishRetry(Date.now() + 15_000)).resolves.toBe(true);
+
+    expect(publishReceiverMarker).toHaveBeenCalledTimes(2);
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({ stage: "capability" });
+    expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(true);
+  });
+
+  it("increases persistent publish failures with exponential backoff", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      getReceiverMarker.mockRejectedValue(new Error("network"));
+      const session = { pubky: () => OWNER };
+
+      await expect(provisionReceiver(session as never, OWNER)).rejects.toThrow("network");
+      expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+        attempts: 1,
+        nextRetryAt: Date.now() + 15_000,
+      });
+
+      await expect(provisionReceiver(session as never, OWNER)).rejects.toThrow("network");
+      expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+        attempts: 2,
+        nextRetryAt: Date.now() + 30_000,
+      });
+
+      await expect(provisionReceiver(session as never, OWNER)).rejects.toThrow("network");
+      expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+        attempts: 3,
+        nextRetryAt: Date.now() + 60_000,
+      });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("deletes a capped retry without publishing", async () => {
+    const session = { pubky: () => OWNER };
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "marker",
+      attempts: 10,
+      nextRetryAt: 0,
+    });
+    getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+
+    await expect(drainReceiverPublishRetry(1)).resolves.toBe(false);
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull();
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+  });
+
+  it("resolves after marker confirmation when capability GET never settles and retains a retry row", async () => {
+    const session = { pubky: () => OWNER };
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+    publicGet.mockReturnValue(new Promise<Uint8Array>(() => {}));
+
+    await expect(provisionReceiver(session as never, OWNER)).resolves.toMatchObject({
+      receiverRole: "active",
+    });
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+      noisePublicKey: "local-pk",
+      attempts: 0,
+    });
+  });
+
+  it("records a transient retry after a capability GET times out", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const nativeSetTimeout = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, "setTimeout").mockImplementation(((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay === 15_000) {
+        queueMicrotask(() => {
+          if (typeof handler === "function") (handler as (...callbackArgs: unknown[]) => void)(...args);
+        });
+        return 0 as unknown as ReturnType<typeof setTimeout>;
+      }
+      return nativeSetTimeout(handler, delay, ...args);
+    }) as typeof setTimeout);
+    try {
+      const session = { pubky: () => OWNER };
+      getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+      getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+      publicGet.mockReturnValue(new Promise<Uint8Array>(() => {}));
+
+      await expect(provisionReceiver(session as never, OWNER)).resolves.toMatchObject({
+        receiverRole: "active",
+      });
+      await vi.waitFor(async () =>
+        expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+          attempts: 1,
+          nextRetryAt: 1_700_000_015_000,
+        }),
+      );
+    } finally {
+      timer.mockRestore();
+      now.mockRestore();
+    }
+  });
+
+  it("clears a capability retry after an asynchronous successful drain", async () => {
+    const session = { pubky: () => OWNER };
+    getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+
+    await expect(provisionReceiver(session as never, OWNER)).resolves.toMatchObject({
+      receiverRole: "active",
+    });
+    await vi.waitFor(async () => expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull());
+    expect((await StorageService.getLinkReceiver(OWNER))?.markerPublished).toBe(true);
+  });
+
+  it("routes a capability retry with an absent marker through marker republish", async () => {
+    const session = { pubky: () => OWNER };
     await KeyStore.setPubky(OWNER);
-    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, persisted);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, new Uint8Array(32).fill(7));
     await StorageService.upsertLinkReceiver({
       ownerPubky: OWNER,
       receiverAlias: LINK_RECEIVER_PATH,
       receiverPath: LINK_RECEIVER_PATH,
       markerPublished: false,
+      receiverRole: "active",
+      lastSeenOwnMarkerPk: null,
     });
-    const derived = new Uint8Array(persisted);
-    const spy = vi
-      .spyOn(KeyStore, "getReceiverNoiseSecret")
-      .mockResolvedValueOnce(derived);
-    noisePublicKeyFromSecret.mockResolvedValue("noise-pk-re");
-    publishReceiverMarker.mockResolvedValue(undefined);
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "capability",
+      attempts: 0,
+      nextRetryAt: 0,
+    });
+    getLiveSession
+      .mockReturnValueOnce({ pubky: OWNER, handle: session })
+      .mockReturnValueOnce({ pubky: OWNER, handle: session })
+      .mockReturnValue(null);
+    getReceiverMarker
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue({ noisePublicKey: "local-pk" });
+    publicGet.mockResolvedValueOnce(undefined).mockResolvedValue(VALID_CAPABILITY);
+
+    await expect(drainReceiverPublishRetry(1)).resolves.toBe(true);
+
+    expect(publishReceiverMarker).toHaveBeenCalledWith(
+      session,
+      LINK_RECEIVER_PATH,
+      "local-pk",
+      true,
+      false,
+      false,
+      false,
+    );
+  });
+
+  it("keeps a rerouted marker retry after marker provisioning fails transiently", async () => {
+    const session = { pubky: () => OWNER };
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setReceiverNoiseSecret(LINK_RECEIVER_PATH, new Uint8Array(32).fill(7));
+    await StorageService.upsertLinkReceiver({
+      ownerPubky: OWNER,
+      receiverAlias: LINK_RECEIVER_PATH,
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: false,
+      receiverRole: "active",
+      lastSeenOwnMarkerPk: null,
+    });
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "capability",
+      attempts: 0,
+      nextRetryAt: 0,
+    });
+    getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+    getReceiverMarker.mockResolvedValue(null);
+    publishReceiverMarker.mockRejectedValue(new Error("network"));
+
+    await expect(drainReceiverPublishRetry(1)).resolves.toBe(false);
+
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toMatchObject({
+      stage: "marker",
+      attempts: 3,
+    });
+  });
+
+  it("does not retain a rerouted retry after sign-out during the reroute", async () => {
+    const session = { pubky: () => OWNER };
+    await StorageService.upsertLinkReceiver({
+      ownerPubky: OWNER,
+      receiverAlias: LINK_RECEIVER_PATH,
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: false,
+      receiverRole: "active",
+      lastSeenOwnMarkerPk: null,
+    });
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "capability",
+      attempts: 0,
+      nextRetryAt: 0,
+    });
+    getLiveSession.mockReturnValueOnce({ pubky: OWNER, handle: session }).mockReturnValue(null);
+    getReceiverMarker.mockResolvedValue(null);
+    const receiver = await StorageService.getLinkReceiver(OWNER);
+    const getReceiver = vi.spyOn(StorageService, "getLinkReceiver").mockImplementationOnce(async () => {
+      await StorageService.deleteLinkReceiverRetry(OWNER);
+      return receiver;
+    });
 
     try {
-      await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
-      expect(derived).toEqual(new Uint8Array(32));
-      expect(generateNoiseSecretKey).not.toHaveBeenCalled();
+      await expect(drainReceiverPublishRetry(1)).resolves.toBe(false);
+
+      expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull();
+      expect(publishReceiverMarker).not.toHaveBeenCalled();
     } finally {
-      spy.mockRestore();
+      getReceiver.mockRestore();
     }
+  });
+
+  it("does not restore a retry row after sign-out wipes it during a transient drain failure", async () => {
+    const session = { pubky: () => OWNER };
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "capability",
+      attempts: 0,
+      nextRetryAt: 0,
+    });
+    getLiveSession.mockReturnValueOnce({ pubky: OWNER, handle: session }).mockReturnValue(null);
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+    publicGet.mockImplementation(async () => {
+      await StorageService.deleteLinkReceiverRetry(OWNER);
+      throw new Error("network");
+    });
+
+    await expect(drainReceiverPublishRetry(1)).resolves.toBe(false);
+
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull();
+  });
+
+  it("contains retry retention errors after the database closes", async () => {
+    const session = { pubky: () => OWNER };
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: LINK_RECEIVER_PATH,
+      noisePublicKey: "local-pk",
+      stage: "capability",
+      attempts: 0,
+      nextRetryAt: 0,
+    });
+    getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "local-pk" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    publicGet.mockImplementation(async () => {
+      setDbForTests(null);
+      throw new Error("network");
+    });
+
+    try {
+      await expect(drainReceiverPublishRetry(1)).resolves.toBe(false);
+      expect(warn).toHaveBeenCalledWith(
+        "[provisionReceiver] capability retry retain failed:",
+        expect.any(Error),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not overwrite a foreign production marker", async () => {
+    getReceiverMarker.mockResolvedValue({ noisePublicKey: "foreign-pk" });
+    const result = await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    expect(result.receiverRole).toBe("standby");
+    expect(publishReceiverMarker).not.toHaveBeenCalled();
+    expect(putPublic).not.toHaveBeenCalled();
+  });
+
+  it("reconciles takeover before publishing the capability", async () => {
+    publicGet.mockResolvedValueOnce(undefined).mockResolvedValue(VALID_CAPABILITY);
+    getReceiverMarker
+      .mockResolvedValueOnce({ noisePublicKey: "foreign-pk" })
+      .mockResolvedValue({ noisePublicKey: "local-pk" });
+    const session = { pubky: () => OWNER };
+    getLiveSession.mockReturnValue({ pubky: OWNER, handle: session });
+    await provisionReceiver(session as never, OWNER);
+    publishReceiverMarker.mockClear();
+    await takeoverReceiver(session as never, OWNER);
+    expect(publishReceiverMarker).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(putPublic).toHaveBeenCalledWith(
+      expect.anything(),
+      "/pub/hypercolor.app/v1/receivers/local-pk/capabilities.json",
+      expect.any(Uint8Array),
+    ));
+    await vi.waitFor(async () => expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull());
+  });
+
+  it("preserves an active role when discovery later sees the marker absent", async () => {
+    getReceiverMarker.mockResolvedValueOnce(null).mockResolvedValue({ noisePublicKey: "local-pk" });
+    await provisionReceiver({ pubky: () => OWNER } as never, OWNER);
+    getReceiverMarker.mockResolvedValue(null);
+    expect(await syncOwnReceiverRole(OWNER)).toBe("active");
+    expect(useReceiverRoleStore.getState().needsReenable).toBe(true);
   });
 });

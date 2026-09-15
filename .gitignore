@@ -17,12 +17,19 @@
 /coverage
 /test-results/
 /playwright-report/
+/ux-vrt-report/
 /blob-report/
 /playwright/.cache/
 
 # next.js
 /.next/
+/.next-e2e/
 /out/
+/out-e2e/
+/out-e2e.tmp-*/
+/out-e2e.old-*/
+/.e2e-build/
+/.build-e2e-static.lock/
 
 # production
 /build

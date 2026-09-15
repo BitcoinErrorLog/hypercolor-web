@@ -400,3 +400,13 @@ by pre-owner-scoping builds have no `ownerPubky`.
 `removeQueueItemsForRecipient` never deletes them
 (`queuePayloadBelongsToOwner` is false) and drains skip them
 (`parseRetryPayload` returns null). Inert cruft.
+
+## P1-1 backlog — initiator msg1 leftover after establish
+
+Do **not** call `clearLinkOutbox` from initiator `completeEstablished`.
+That primitive deletes the whole local write path (msg1, unconsumed
+msg3, unread transport). Slot-scoped msg1 delete is also unsafe until
+paykit exposes a per-slot delete **and** the protocol has an ack that
+the responder consumed msg1. Until then orphan msg1 stays as garbage
+on the write path; two-phase re-key already prevents it from wedging
+a live link.

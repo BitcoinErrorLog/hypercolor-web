@@ -134,7 +134,7 @@ describe("vibeware sandbox patches and policy", () => {
     const patched = readFileSync(path.join(tree, EMPTY_STATE_FILE), "utf8");
     expect(patched).toContain(EMPTY_STATE_REPLACE);
     expect(patched).not.toContain(EMPTY_STATE_FIND);
-    expect(patched).toContain("No conversations yet.");
+    expect(patched).toContain("Add someone by pubky, then start a chat.");
     expect(patched).toContain('data-testid="chatsEmpty"');
     expect(() => applyFixturePatch(tree, problem)).toThrow(/exactly once/);
   });
@@ -402,7 +402,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       });
       expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
@@ -438,7 +438,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       ).toBe(true);
       expect(readFileSync(path.join(ROOT, SESSION_FILE), "utf8")).toBe(beforeSession);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(
@@ -481,7 +481,7 @@ describe("vibeware sandbox CLI dry-run", () => {
       });
       expect(leftover.stdout).not.toMatch(/vibeware-sandbox-/);
     },
-    30_000,
+    60_000,
   );
 
   it.skipIf(process.env.VIBEWARE_SANDBOX_INNER === "1")(

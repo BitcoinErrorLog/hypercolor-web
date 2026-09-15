@@ -5,9 +5,12 @@ import { defineConfig } from "vitest/config";
 const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
+  define: {
+    __HYPERCOLOR_E2E_HARNESS__: JSON.stringify(false),
+  },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts", "scripts/**/*.test.mjs"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/**/*.test.mjs"],
     exclude: [
       "**/._*",
       "**/._*.test.ts",
@@ -21,6 +24,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(root, "src"),
+      "server-only": path.resolve(root, "node_modules/next/dist/compiled/server-only/empty.js"),
     },
   },
 });

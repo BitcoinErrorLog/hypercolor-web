@@ -5,6 +5,8 @@ import { KeyStore } from "@/services/KeyStore";
 import { startLinkRetryDrainOnVisibility } from "@/services/link/LinkService";
 import { warmPaykitClient } from "@/services/link/PaykitLinkWeb";
 import { getEnableStatus, restoreSessionOnLoad } from "@/services/link/session";
+import { StorageService } from "@/services/StorageService";
+import { setReceiverRoleState } from "@/services/link/receiverRoleStore";
 import { hydratePersistedAuth } from "@/stores/hydrateAuthSession";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
@@ -46,6 +48,14 @@ export function SessionBootstrap() {
         restore.status === "live" ||
         restore.status === "session-offline";
       setFromRestore(restore, enable, { hasIdentity });
+      if (pubky) {
+        try {
+          const receiver = await StorageService.getLinkReceiver(pubky);
+          setReceiverRoleState(receiver?.receiverRole ?? null);
+        } catch {
+          setReceiverRoleState(null);
+        }
+      }
       if (enable === "enabled") {
         stopDrain = startLinkRetryDrainOnVisibility();
       }

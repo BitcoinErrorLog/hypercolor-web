@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useGuardedRouter } from "@/hooks/useBlockingGate";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ContactDetail } from "@/components/contact-detail";
 import { FollowsImportPanel } from "@/components/follows-import-panel";
+import { ErrorDetails } from "@/components/error-details";
+import { rememberAndOpen } from "@/components/detail-back";
 import { PubkyAnchors } from "@/components/pubky-anchors";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { IconUsers } from "@/components/ui/icons";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Avatar } from "@/components/ui/avatar";
+import { MasterDetail } from "@/components/shell/master-detail";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import {
   followSuggestionContacts,
@@ -16,7 +23,10 @@ import {
 } from "@/lib/contacts-sort";
 import { sanitizePublicBio, sanitizePublicName } from "@/lib/public-text";
 import { shortPubky } from "@/lib/format";
+import { contactRowDomId, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
+import { ContactQrScanner, type ContactScannerFixture } from "@/components/contact-qr-scanner";
 import { addManualContact } from "@/services/contacts/addManualContact";
+import { parsePubkyPayload } from "@/lib/pubkyPayload";
 import {
   isFollowsImportEnabled,
 } from "@/services/contacts/followsImportPreference";
@@ -30,37 +40,57 @@ import { useContactStore } from "@/stores/contactStore";
 import type { Contact } from "@/types";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
-import { parsePubky } from "@/utils/pubkyId";
 
-export function ContactsPage() {
-  const router = useRouter();
-  const selected = usePathSegment("contacts");
-  const ownerPubky = useAuthStore((s) => s.pubky);
+const CONTACTS_FORM_ERROR = "Could not add or find this contact.";
+
+export type ContactsPageFixture = {
+  ownerPubky: string | null;
+  selected: string | null;
+  contacts: Contact[];
+  draft: string;
+  busy: boolean;
+  searchBusy: boolean;
+  error: string | null;
+  hits: UsernameSearchHit[] | null;
+  scanner?: ContactScannerFixture;
+};
+
+export function ContactsPage({ fixture }: { fixture?: ContactsPageFixture } = {}) {
+  const router = useGuardedRouter();
+  const routeSelected = usePathSegment("contacts");
+  const selected = fixture?.selected ?? routeSelected;
+  const storedOwnerPubky = useAuthStore((s) => s.pubky);
+  const ownerPubky = fixture?.ownerPubky ?? storedOwnerPubky;
   const upsertContact = useContactStore((s) => s.upsertContact);
-  const [contacts, setContacts] = useState<Contact[]>([]);
-  const [pending, setPending] = useState(0);
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [searchBusy, setSearchBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [hits, setHits] = useState<UsernameSearchHit[] | null>(null);
+  const [contacts, setContacts] = useState<Contact[]>(fixture?.contacts ?? []);
+  const [draft, setDraft] = useState(fixture?.draft ?? "");
+  const [busy, setBusy] = useState(fixture?.busy ?? false);
+  const [searchBusy, setSearchBusy] = useState(fixture?.searchBusy ?? false);
+  const [error, setError] = useState<string | null>(fixture?.error ?? null);
+  const [hits, setHits] = useState<UsernameSearchHit[] | null>(fixture?.hits ?? null);
+  const [scannerOpen, setScannerOpen] = useState(Boolean(fixture?.scanner));
 
   const reload = useCallback(async () => {
-    if (!ownerPubky) {
-      setContacts([]);
-      setPending(0);
+    if (fixture) {
+      setContacts(fixture.contacts);
+      setDraft(fixture.draft);
+      setBusy(fixture.busy);
+      setSearchBusy(fixture.searchBusy);
+      setError(fixture.error);
+      setHits(fixture.hits);
       return;
     }
-    const [rows, count] = await Promise.all([
-      StorageService.getAllContacts(ownerPubky),
-      StorageService.countPendingMessageRequests(ownerPubky),
-    ]);
+    if (!ownerPubky) {
+      setContacts([]);
+      return;
+    }
+    const rows = await StorageService.getAllContacts(ownerPubky);
     rows.forEach(upsertContact);
     setContacts(rows);
-    setPending(count);
-  }, [ownerPubky, upsertContact]);
+  }, [ownerPubky, upsertContact, fixture]);
 
   useEffect(() => {
+    if (fixture) return;
     void (async () => {
       await reload();
       if (ownerPubky && isFollowsImportEnabled(ownerPubky)) {
@@ -68,10 +98,17 @@ export function ContactsPage() {
         if (result.ok && !result.skipped) await reload();
       }
     })();
-  }, [reload, ownerPubky]);
+  }, [reload, ownerPubky, fixture]);
 
   const roster = rosterContacts(contacts);
   const suggestions = followSuggestionContacts(contacts);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    if (selected) return;
+    const rowId = takeListRow("contacts");
+    restoreListFocus(rowId, headingRef.current);
+  }, [selected]);
 
   async function addPeer(raw: string, displayName?: string): Promise<void> {
     if (!ownerPubky) {
@@ -98,7 +135,7 @@ export function ContactsPage() {
       await reload();
       router.push(`/contacts/${encodeURIComponent(result.contact.pubky)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not add contact");
+      setError(err instanceof Error ? err.message : CONTACTS_FORM_ERROR);
       emitCoarseError("contacts", err);
     } finally {
       setBusy(false);
@@ -107,20 +144,26 @@ export function ContactsPage() {
 
   return (
     <div
-      className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]"
+      className="flex h-full min-h-0 flex-1 flex-col"
       data-testid="contactsScreen"
+      data-surface="contacts-page"
     >
-      <aside className={selected ? "hidden md:block" : undefined}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Contacts</h1>
-          <Link
-            href="/requests"
-            className="text-sm text-brand underline-offset-4 hover:underline"
-            data-testid="contactsRequests"
-          >
-            Requests{pending > 0 ? ` (${pending})` : ""}
-          </Link>
-        </div>
+      <PageHeader className="shrink-0">
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          id="contactsHeading"
+          className="text-2xl font-bold tracking-tight outline-none focus:outline-none focus-visible:outline-none hc-programmatic-focus"
+        >
+          Contacts
+        </h1>
+        <PageSubtitle>People you have an encrypted link with.</PageSubtitle>
+      </PageHeader>
+      <MasterDetail
+        listClassName={selected ? "hidden md:block" : undefined}
+        detailClassName={!selected ? "hidden md:flex" : undefined}
+        list={
+      <aside className="px-3 py-3">
 
         <FollowsImportPanel key={ownerPubky ?? "none"} ownerPubky={ownerPubky} onImported={reload} />
 
@@ -128,7 +171,7 @@ export function ContactsPage() {
           className="mt-4 space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            const asPubky = parsePubky(draft);
+            const asPubky = parsePubkyPayload(draft);
             if (asPubky) {
               void addPeer(draft);
               return;
@@ -152,7 +195,7 @@ export function ContactsPage() {
                 }
               })
               .catch((err) => {
-                setError(err instanceof Error ? err.message : "Search failed");
+                setError(err instanceof Error ? err.message : CONTACTS_FORM_ERROR);
                 emitCoarseError("contacts", err);
               })
               .finally(() => setSearchBusy(false));
@@ -176,7 +219,16 @@ export function ContactsPage() {
             and paste a pubky if you do not want that query. Adding by pubky does not ask the index.
           </p>
           <div className="flex flex-wrap gap-2">
-            {parsePubky(draft) ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="contactsScanQr"
+              onClick={() => setScannerOpen(true)}
+            >
+              Scan QR
+            </Button>
+            {parsePubkyPayload(draft) ? (
               <Button type="submit" size="sm" disabled={busy} data-testid="contactSearchAdd">
                 {busy ? "Adding…" : "Add contact"}
               </Button>
@@ -203,8 +255,27 @@ export function ContactsPage() {
               </>
             )}
           </div>
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
+          {error ? (
+            <ErrorDetails
+              fallback={CONTACTS_FORM_ERROR}
+              details={error}
+              onTakeOver={() => {
+                void import("@/services/tabLock").then((m) => m.requestTakeover());
+              }}
+              repairHref="/settings#repair-local-data"
+            />
+          ) : null}
         </form>
+        <ContactQrScanner
+          key={scannerOpen ? "open" : "closed"}
+          open={scannerOpen}
+          fixture={fixture?.scanner}
+          onClose={() => setScannerOpen(false)}
+          onDecoded={(raw) => {
+            setScannerOpen(false);
+            void addPeer(raw);
+          }}
+        />
 
         {hits && hits.length > 0 ? (
           <ul className="mt-3 divide-y divide-border rounded-md border border-border" data-testid="contactSearchResults">
@@ -215,7 +286,7 @@ export function ContactsPage() {
                 </p>
                 <PubkyAnchors pubky={hit.pubky} />
                 {hit.lookalike ? (
-                  <p className="text-xs text-amber-400" data-testid="contactSearchLookalike">
+                  <p className="text-xs hc-warning-text" data-testid="contactSearchLookalike">
                     This name mixes character sets that can look alike. The check is incomplete — compare the full pubky.
                   </p>
                 ) : null}
@@ -240,9 +311,9 @@ export function ContactsPage() {
 
         {suggestions.length > 0 ? (
           <div className="mt-6" data-testid="followSuggestions">
-            <p className="text-sm font-medium">Suggestions from pubky.app follows</p>
+            <p className="text-sm font-medium">Suggestions from your follows</p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Not your contact list. Add one to keep them. Hypercolor does not write a follow.
+              Not your contact list. Add one to keep them. Hypercolor never writes a follow.
             </p>
             <ul className="mt-2 divide-y divide-border">
               {suggestions.map((contact) => (
@@ -269,20 +340,35 @@ export function ContactsPage() {
         ) : null}
 
         {roster.length === 0 ? (
-          <p className="mt-8 text-muted-foreground" data-testid="contactsEmpty">
-            No contacts yet.
-          </p>
+          <div className="mt-8 space-y-2" data-testid="contactsEmpty">
+            <IllustratedEmptyState
+              icon={IconUsers}
+              title="No contacts yet."
+              subtitle="Add someone by pubky, or use your public pubky.app follows to recognise people you already know."
+            />
+          </div>
         ) : (
-          <ul className="mt-4 divide-y divide-border">
+          <ul className="mt-4">
             {roster.map((contact) => (
-              <li key={contact.pubky}>
+              <li
+                key={contact.pubky}
+                className={selected === contact.pubky ? "rounded-lg hc-wash px-2" : "px-2"}
+              >
                 <Link
+                  id={contactRowDomId(contact.pubky)}
                   href={`/contacts/${encodeURIComponent(contact.pubky)}`}
                   data-testid="contactRow"
-                  aria-label={contact.pubky}
-                  className="block py-3 hover:bg-accent/40"
+                  aria-label={`Open contact ${
+                    contact.displayName
+                      ? sanitizeDisplayName(contact.displayName)
+                      : shortPubky(contact.pubky)
+                  }`}
+                  className="flex min-h-11 items-center gap-2 py-2 hover:bg-accent/40"
+                  onClick={() => rememberAndOpen("contacts", contactRowDomId(contact.pubky))}
                 >
-                  <span className="font-medium">
+                  <Avatar seed={contact.pubky} size="md" />
+                  <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-bold">
                     {contact.displayName
                       ? sanitizeDisplayName(contact.displayName)
                       : shortPubky(contact.pubky)}
@@ -297,19 +383,22 @@ export function ContactsPage() {
                       </span>
                     ))}
                   </span>
+                  </span>
                 </Link>
               </li>
             ))}
           </ul>
         )}
       </aside>
-      <section className={!selected ? "hidden md:block" : undefined}>
-        {selected ? (
+        }
+        detail={
+        selected ? (
           <ContactDetail ownerPubky={ownerPubky} pubky={selected} />
         ) : (
-          <p className="text-sm text-muted-foreground">Select a contact.</p>
-        )}
-      </section>
+          <p className="flex h-full min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">Select a contact.</p>
+        )
+        }
+      />
     </div>
   );
 }

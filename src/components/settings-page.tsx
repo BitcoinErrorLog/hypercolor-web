@@ -1,29 +1,66 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Avatar } from "@/components/ui/avatar";
+import { Toast } from "@/components/ui/toast";
+import { DetailBackLink } from "@/components/detail-back";
+import { ErrorDetails } from "@/components/error-details";
+import { TruncatedPubky } from "@/components/truncated-pubky";
+import { EnableMessagingCta } from "@/components/enable-messaging-cta";
+import { SignOutConfirm } from "@/components/sign-out-confirm";
 import { useSignOut } from "@/hooks/useSignOut";
-import { canDismissRecoveryCode } from "@/lib/backup-gate";
-import { sessionStatusLabel } from "@/lib/session-ui";
+import { repairLocalData } from "@/db/repair";
+import {
+  canDismissRecoveryCode,
+  chunkRecoveryCode,
+  clearBackupGate,
+  getBackupGate,
+  rememberBackupCreated,
+  setBackupGate,
+} from "@/lib/backup-gate";
+import { BACKUP_CUSTODY_LINE, CUSTODY_LINE, sessionStatusLabel } from "@/lib/session-ui";
 import { BackupService } from "@/services/backup/BackupService";
+import { StorageService } from "@/services/StorageService";
 import { emit } from "@/services/vibeware/collector";
 import { emitCoarseError } from "@/services/vibeware/coarse";
 import { useLeaveOnce } from "@/services/vibeware/leave";
 import { useAuthStore } from "@/stores/authStore";
 import { useSessionStatusStore } from "@/stores/sessionStatusStore";
 
-export function SettingsPage() {
+export type SettingsPageFixture = {
+  recoveryCode?: string | null;
+  confirmedSaved?: boolean;
+  copied?: boolean;
+  backupError?: string | null;
+  restoreCode?: string;
+  restoreError?: string | null;
+  restoreNote?: string | null;
+  receiptsEnabled?: boolean;
+};
+
+export function SettingsPage({ fixture }: { fixture?: SettingsPageFixture } = {}) {
   const homeserver = useAuthStore((s) => s.homeserver);
   const pubky = useAuthStore((s) => s.pubky);
   const status = useSessionStatusStore((s) => s.status);
   const { signOut, busy: signingOut } = useSignOut();
   const [backupBusy, setBackupBusy] = useState(false);
-  const [recoveryCode, setRecoveryCode] = useState<string | null>(null);
-  const [confirmedSaved, setConfirmedSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [restoreCode, setRestoreCode] = useState("");
-  const [note, setNote] = useState<string | null>(null);
+  const [recoveryCode, setRecoveryCode] = useState<string | null>(
+    () => fixture?.recoveryCode ?? getBackupGate().recoveryCode,
+  );
+  const [confirmedSaved, setConfirmedSaved] = useState(() => fixture?.confirmedSaved ?? getBackupGate().confirmedSaved);
+  const [copied, setCopied] = useState(fixture?.copied ?? false);
+  const [restoreCode, setRestoreCode] = useState(fixture?.restoreCode ?? "");
+  const [backupError, setBackupError] = useState<string | null>(fixture?.backupError ?? null);
+  const [restoreError, setRestoreError] = useState<string | null>(fixture?.restoreError ?? null);
+  const [restoreNote, setRestoreNote] = useState<string | null>(fixture?.restoreNote ?? null);
+  const [repairConfirm, setRepairConfirm] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const [repairNote, setRepairNote] = useState<string | null>(null);
+  const [receiptsEnabled, setReceiptsEnabled] = useState(fixture?.receiptsEnabled ?? true);
 
   useLeaveOnce(
     "settings-backup",
@@ -33,20 +70,81 @@ export function SettingsPage() {
     },
   );
 
+  useEffect(() => {
+    setBackupGate({ recoveryCode, confirmedSaved });
+  }, [recoveryCode, confirmedSaved]);
+
+  useEffect(() => {
+    if (!pubky || fixture?.receiptsEnabled !== undefined) return;
+    void StorageService.ensureChatDevicePrefs(pubky).then((prefs) => {
+      setReceiptsEnabled(prefs.receiptsEnabled);
+    });
+  }, [pubky, fixture?.receiptsEnabled]);
+
+  useEffect(() => {
+    if (!__HYPERCOLOR_E2E_HARNESS__ || typeof window === "undefined") return;
+    const host = window as Window & {
+      __hypercolorShowRecovery?: (code: string) => void;
+    };
+    host.__hypercolorShowRecovery = (code) => {
+      setRecoveryCode(code);
+      setConfirmedSaved(false);
+      setCopied(false);
+      setBackupGate({ recoveryCode: code, confirmedSaved: false });
+    };
+    return () => {
+      delete host.__hypercolorShowRecovery;
+    };
+  }, []);
+
   return (
-    <article className="space-y-8" data-testid="settingsScreen">
-      <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+    <article className="space-y-8" data-testid="settingsScreen" data-surface="settings-page">
+      <DetailBackLink href="/profile" listLabel="Profile" always />
+      <PageHeader>
+        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+        <PageSubtitle>{pubky ? "Signed in" : "This device"}</PageSubtitle>
+      </PageHeader>
+      <section className="space-y-2">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Identity
+        </h2>
+        {pubky ? (
+          <div className="flex items-center gap-3">
+            <Avatar seed={pubky} size="lg" ring />
+            <TruncatedPubky pubky={pubky} />
+          </div>
+        ) : (
+          <p className="break-all font-mono text-sm text-muted-foreground">
+            No identity on this device
+          </p>
+        )}
+        <p className="text-sm text-muted-foreground">{CUSTODY_LINE}</p>
+        <p className="text-sm text-muted-foreground">
+          Homeserver: {homeserver || "not set"}
+        </p>
+      </section>
 
       <section className="space-y-2">
         <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-          Session
+          Messaging
         </h2>
         <p className="text-sm">{sessionStatusLabel(status)}</p>
-        <p className="break-all font-mono text-sm text-muted-foreground">
-          {pubky ?? "No identity on this device"}
-        </p>
+        <EnableMessagingCta testId="settingsEnableMessaging" layout="panel" />
+        <label className="flex min-h-11 items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            data-testid="settingsReceipts"
+            checked={receiptsEnabled}
+            onChange={(event) => {
+              const enabled = event.target.checked;
+              setReceiptsEnabled(enabled);
+              if (pubky) void StorageService.setReceiptsEnabled(pubky, enabled);
+            }}
+          />
+          Send read receipts
+        </label>
         <p className="text-sm text-muted-foreground">
-          Homeserver: {homeserver || "not set"}
+          When this is on, this device tells the other person when their messages are delivered and read. Receipts never go to anyone except that conversation’s peer.
         </p>
       </section>
 
@@ -55,40 +153,44 @@ export function SettingsPage() {
           Encrypted backup
         </h2>
         <p className="text-sm text-muted-foreground">
-          Backup uses a random recovery code, not a passphrase. History (contacts,
-          chats, groups, payments, tip lists) restores. Live Encrypted Links
-          re-establish on this device. Attachment files without keys show as
-          unavailable until re-shared. The recovery code is shown once and is
-          never stored here.
+          A backup encrypts your local history with a recovery code. Only you have that code —
+          Hypercolor cannot restore your history without it.
         </p>
+        <p className="text-sm text-muted-foreground">{BACKUP_CUSTODY_LINE}</p>
         <Button
           type="button"
           disabled={backupBusy}
           data-testid="settingsBackup"
           onClick={() => {
             setBackupBusy(true);
-            setNote(null);
+            setBackupError(null);
+            setRestoreError(null);
+            setRestoreNote(null);
             setConfirmedSaved(false);
             setCopied(false);
             void BackupService.exportBackup()
               .then((result) => {
                 setRecoveryCode(result.recoveryCode);
+                setBackupGate({ recoveryCode: result.recoveryCode, confirmedSaved: false });
                 void emit("app.backup.export_outcome", { outcome: "shown" });
               })
               .catch((err) => {
-                setNote(err instanceof Error ? err.message : "Backup failed");
+                setBackupError(err instanceof Error ? err.message : "Backup failed");
                 emitCoarseError("settings", err);
               })
               .finally(() => setBackupBusy(false));
           }}
         >
-          {backupBusy ? "Working…" : "Backup now"}
+          {backupBusy && !recoveryCode ? "Encrypting…" : "Backup now"}
         </Button>
+        {backupError ? (
+          <ErrorDetails fallback="Could not create a backup." details={backupError} />
+        ) : null}
         {recoveryCode ? (
           <div className="space-y-3 rounded-md border border-border bg-card p-4" data-testid="recoveryCodePanel">
             <p className="text-sm font-medium">Write this recovery code down</p>
             <p className="break-all font-mono text-sm" data-testid="recoveryCode">
-              {recoveryCode}
+              {chunkRecoveryCode(recoveryCode)}
             </p>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -102,27 +204,30 @@ export function SettingsPage() {
                 {copied ? "Copied" : "Copy"}
               </Button>
             </div>
-            <label className="flex items-start gap-2 text-sm">
+            <label className="flex min-h-11 items-start gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={confirmedSaved}
                 onChange={(event) => setConfirmedSaved(event.target.checked)}
                 data-testid="recoveryCodeSaved"
               />
-              I have saved this recovery code somewhere I control.
+              I have written this code down
             </label>
             <Button
               type="button"
               size="sm"
               disabled={!canDismissRecoveryCode({ recoveryCode, confirmedSaved })}
+              data-testid="recoveryCodeDone"
               onClick={() => {
                 void emit("app.backup.export_outcome", { outcome: "confirmed" });
+                rememberBackupCreated();
+                clearBackupGate();
                 setRecoveryCode(null);
                 setConfirmedSaved(false);
                 setCopied(false);
               }}
             >
-              I saved it — hide this code
+              Done
             </Button>
           </div>
         ) : null}
@@ -143,35 +248,107 @@ export function SettingsPage() {
           onClick={() => {
             const code = restoreCode.trim();
             setBackupBusy(true);
-            setNote(null);
+            setRestoreError(null);
+            setBackupError(null);
+            setRestoreNote(null);
             void BackupService.restoreBackup(code)
               .then(() => {
                 setRestoreCode("");
-                setNote(
+                setRestoreNote(
                   "Restore complete. History is local. Enable messaging again so links re-handshake. Attachments without keys stay unavailable until re-shared.",
                 );
               })
               .catch((err) => {
-                setNote(err instanceof Error ? err.message : "Restore failed");
+                setRestoreError(err instanceof Error ? err.message : "Restore failed");
               })
               .finally(() => setBackupBusy(false));
           }}
         >
           Restore from backup
         </Button>
-        {note ? <p className="text-sm text-muted-foreground">{note}</p> : null}
+        {restoreError ? (
+          <ErrorDetails fallback="That recovery code did not work." details={restoreError} />
+        ) : null}
+        {restoreNote ? (
+          <Toast title="Restore complete" description={restoreNote} />
+        ) : null}
+      </section>
+
+      <section id="repair-local-data" className="space-y-3">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          Repair local data
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Deletes the saved chat database on this device and rebuilds it from your
+          homeserver. Your identity and Ring session stay. Messages that have not
+          finished saving in another tab will be lost.
+        </p>
+        {repairConfirm ? (
+          <div className="space-y-3 rounded-xl bg-card p-6 text-card-foreground shadow-sm">
+            <p className="text-sm">
+              Repair now? This cannot be undone. Unsent messages that were not
+              saved yet will be gone.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={repairBusy}
+                data-testid="settingsRepairConfirm"
+                onClick={() => {
+                  setRepairBusy(true);
+                  setRepairError(null);
+                  void repairLocalData()
+                    .then(() => {
+                      setRepairNote("Local database rebuilt. Chats will refill from the homeserver.");
+                      setRepairConfirm(false);
+                    })
+                    .catch((err) => {
+                      setRepairError(err instanceof Error ? err.message : "Repair failed");
+                    })
+                    .finally(() => setRepairBusy(false));
+                }}
+              >
+                {repairBusy ? "Repairing…" : "Yes, repair"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={repairBusy}
+                onClick={() => setRepairConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="settingsRepair"
+            onClick={() => {
+              setRepairConfirm(true);
+              setRepairError(null);
+              setRepairNote(null);
+            }}
+          >
+            Repair local data
+          </Button>
+        )}
+        {repairError ? (
+          <ErrorDetails fallback="Could not repair local data." details={repairError} />
+        ) : null}
+        {repairNote ? <p className="text-sm text-muted-foreground">{repairNote}</p> : null}
       </section>
 
       <section>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={signingOut}
-          data-testid="settingsSignOut"
-          onClick={() => void signOut()}
-        >
-          Sign out
-        </Button>
+        <SignOutConfirm
+          triggerTestId="settingsSignOut"
+          busy={signingOut}
+          onSignOut={() => signOut()}
+        />
       </section>
     </article>
   );

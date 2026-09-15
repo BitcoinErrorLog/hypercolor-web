@@ -6,6 +6,12 @@ test("ring-callback without params explains the miss", async ({ page }) => {
   await expect(page.getByText("Missing channel id")).toBeVisible();
 });
 
+test("ring-callback document opts out of Referer", async ({ page }) => {
+  await page.goto("/ring-callback");
+  const referrer = page.locator('meta[name="referrer"]');
+  await expect(referrer).toHaveAttribute("content", "no-referrer");
+});
+
 test("welcome shows a paykit-connect QR and a copy control", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Hypercolor" })).toBeVisible();

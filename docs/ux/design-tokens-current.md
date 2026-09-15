@@ -1,5 +1,8 @@
 # Design tokens as implemented — Hypercolor web
 
+Superseded by `docs/ux/design-tokens-web.md` in Wave 4b. This file is retained
+as the pre-migration audit record and raw-value source for the mapping table.
+
 Source of truth for colors, radii, type, shadcn, icons, PWA assets, and accessibility gaps. Counts are from `src/**` and `app/**` only unless noted. `vendor/`, `node_modules/`, `out/`, `.next/` excluded.
 
 ---

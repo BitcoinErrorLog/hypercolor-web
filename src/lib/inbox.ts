@@ -5,7 +5,9 @@ import {
   type GroupChannel,
 } from "@/types/group";
 import type { LinkConversationSummary } from "@/types/link";
+import { queuedThreadSubtitle } from "@/lib/delivery-status";
 import { isPaykitPaymentKind } from "@/types/payment";
+import { paymentKindTitle } from "@/lib/payment-notice";
 
 export type InboxKind = "dm" | "group";
 
@@ -17,6 +19,7 @@ export type InboxRow = {
   lastMessageAt: number;
   unreadCount: number;
   href: string;
+  linkStatus?: string | null;
 };
 
 export function groupConversationId(channelId: string): string {
@@ -31,7 +34,7 @@ export function parseGroupConversationId(conversationId: string): string | null 
 
 export function messagePreview(kind: string, body: string): string {
   if (kind === CHAT_ATTACHMENT_KIND) return "Attachment";
-  if (isPaykitPaymentKind(kind)) return "Payment";
+  if (isPaykitPaymentKind(kind)) return paymentKindTitle(kind);
   if (kind === GROUP_REACTION_KIND) return body.trim() || "Reaction";
   if (kind === GROUP_MEMBERSHIP_KIND) {
     switch (body) {
@@ -52,14 +55,23 @@ export function messagePreview(kind: string, body: string): string {
 }
 
 export function inboxRowFromDm(row: LinkConversationSummary): InboxRow {
+  const waiting = queuedThreadSubtitle({
+    linkStatus: row.linkStatus,
+    lastDeliveryState: row.lastDeliveryState,
+    receiverRole: row.receiverRole,
+  });
+  const preview = isPaykitPaymentKind(row.lastKind)
+      ? paymentKindTitle(row.lastKind)
+      : (waiting ?? row.lastMessage ?? "No messages yet");
   return {
     id: row.conversationId,
     kind: "dm",
     title: row.participantPubky,
-    preview: row.lastMessage || "No messages yet",
+    preview,
     lastMessageAt: row.lastMessageAt,
     unreadCount: row.unreadCount,
     href: `/chats/${encodeURIComponent(row.conversationId)}`,
+    linkStatus: row.linkStatus,
   };
 }
 
@@ -88,16 +100,16 @@ export function sortInboxRows(rows: readonly InboxRow[]): InboxRow[] {
   });
 }
 
-export function mergeInboxRows(input: {
-  dms: readonly LinkConversationSummary[];
+export function dmInboxRows(dms: readonly LinkConversationSummary[]): InboxRow[] {
+  return sortInboxRows(dms.map(inboxRowFromDm));
+}
+
+export function channelListRows(
   groups: readonly {
     channel: GroupChannel;
     preview: string;
     unreadCount: number;
-  }[];
-}): InboxRow[] {
-  return sortInboxRows([
-    ...input.dms.map(inboxRowFromDm),
-    ...input.groups.map(inboxRowFromGroup),
-  ]);
+  }[],
+): InboxRow[] {
+  return sortInboxRows(groups.map(inboxRowFromGroup));
 }

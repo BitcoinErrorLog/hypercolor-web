@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { chromium, expect, test, type Page } from "@playwright/test";
+import { cacheNameFromWorkerFile } from "./sw-cache-name";
 
 /**
  * Returning-visitor upgrade proof against a real deployment.
@@ -28,6 +30,7 @@ const ALIAS = process.env.SW_UPGRADE_ALIAS?.trim() ?? "";
 const TARGET = process.env.SW_UPGRADE_TARGET_DEPLOYMENT?.trim() ?? "";
 const BYPASS = process.env.VERCEL_PROTECTION_BYPASS?.trim() ?? "";
 const GENERATE = process.env.PUBKY_STAGING_INVITE_SCRIPT?.trim() ?? "";
+const CURRENT_CACHE = cacheNameFromWorkerFile(join(__dirname, "..", "public", "sw.js"));
 
 type SignupResult = { pubky: string; receiverPath: string };
 
@@ -117,7 +120,7 @@ async function expectChatsSettled(page: Page): Promise<void> {
     timeout: 60_000,
   });
   await expect(page.getByPlaceholder("Paste a pubky to start a chat")).toBeVisible();
-  await expect(page.getByText("No conversations yet.")).toBeVisible();
+  await expect(page.getByText("No chats yet.")).toBeVisible();
   // Messaging is enabled, so the chats screen must not still be asking for it.
   await expect(
     page.getByText("Encrypted chats need a Ring-approved Paykit session on this device."),
@@ -191,7 +194,7 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
     // 2. Deploy: the bytes at /sw.js change under the live registration.
     const aliasStart = performance.now();
     await repointAlias(TARGET);
-    await waitForServedWorker(page, "hypercolor-shell-v3");
+    await waitForServedWorker(page, CURRENT_CACHE);
     console.info(`[live] new worker live at the edge in ${elapsed(aliasStart)}ms`);
 
     // 3. The returning visitor comes back. /sw.js is served max-age=0, so every
@@ -209,7 +212,7 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
       const settled = await Promise.resolve(
         expect
           .poll(() => cacheKeys(page), { timeout: 20_000, intervals: [500] })
-          .toEqual(["hypercolor-shell-v3"]),
+          .toEqual([CURRENT_CACHE]),
       ).then(
         () => true,
         () => false,
@@ -217,11 +220,11 @@ test("a returning v2 visitor upgrades, enables messaging, and opens chats", asyn
       if (settled) break;
       console.info(`[live] no takeover after load ${loads}; caches=${await cacheKeys(page)}`);
     }
-    expect(await cacheKeys(page)).toEqual(["hypercolor-shell-v3"]);
+    expect(await cacheKeys(page)).toEqual([CURRENT_CACHE]);
     const upgradeMs = elapsed(upgradeStart);
     await waitForController(page);
     console.info(
-      `[live] v3 took over after ${loads} load(s) in ${upgradeMs}ms; v2 cache purged`,
+      `[live] current worker took over after ${loads} load(s) in ${upgradeMs}ms; v2 cache purged`,
     );
 
     // 4. Enable encrypted messaging. This is the same durable state Ring

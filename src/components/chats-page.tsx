@@ -1,23 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { sanitizeDisplayName } from "@/lib/display-name";
-import { formatRelativeTime, shortPubky, unreadLabel } from "@/lib/format";
+import { IllustratedEmptyState } from "@/components/ui/illustrated-empty-state";
+import { IconMessageCircle } from "@/components/ui/icons";
+import { PageHeader, PageSubtitle } from "@/components/ui/page-header";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar } from "@/components/ui/avatar";
+import { MasterDetail } from "@/components/shell/master-detail";
+import { ErrorDetails } from "@/components/error-details";
+import { isReadOnlyTabError } from "@/db/errors";
+import { rememberAndOpen } from "@/components/detail-back";
+import { contactPrimaryLabel } from "@/lib/contact-label";
+import { formatRelativeTime, unreadLabel } from "@/lib/format";
+import { chatRowDomId, rememberThreadOrigin, restoreListFocus, takeListRow } from "@/lib/list-detail-focus";
+import { canComposeMessages } from "@/lib/session-ui";
+import type { SessionUiStatus } from "@/stores/sessionStatusStore";
 
 export type ChatsPageRow = {
   key: string;
   href: string;
   title: string;
-  kind: "dm" | "group";
+  kind: "dm";
   preview: string;
   lastMessageAt: number;
   unreadCount: number;
+  nickname?: string | null;
+  displayName?: string | null;
+  pubky?: string;
+  muted?: boolean;
+  archived?: boolean;
+  linkStatus?: string | null;
 };
 
-export const CHATS_EMPTY_STATE_CONTROL_HINT = "Start a new chat from the field above.";
+export const CHATS_EMPTY_STATE_CONTROL_HINT =
+  "Start a new chat from the field above.";
+export const CHATS_EMPTY_STATE_BODY =
+  "Add someone by pubky, then start a chat. Nobody can message you first until you have talked before or you invite them.";
 export const CHATS_EMPTY_STATE_CANDIDATE_HINT = "Try the search field above to start a chat.";
 
 export function ChatsPage({
@@ -27,12 +48,21 @@ export function ChatsPage({
   rows,
   pendingRequests,
   inboxError,
+  inboxLoading,
+  onRetryInbox,
   peerDraft,
   starting,
   startError,
+  status,
   onChangePeerDraft,
   onStartChat,
-  emptyStateHint = CHATS_EMPTY_STATE_CONTROL_HINT,
+  emptyStateHint = CHATS_EMPTY_STATE_BODY,
+  now,
+  listFilter = "inbox",
+  onChangeListFilter,
+  searchQuery = "",
+  searchHits,
+  onChangeSearchQuery,
 }: {
   conversationId: string | null;
   enableCta: ReactNode;
@@ -40,26 +70,97 @@ export function ChatsPage({
   rows: ChatsPageRow[];
   pendingRequests: number;
   inboxError: string | null;
+  inboxLoading?: boolean;
+  onRetryInbox?: () => void;
   peerDraft: string;
   starting: boolean;
   startError: string | null;
+  status: SessionUiStatus;
   onChangePeerDraft: (value: string) => void;
   onStartChat: () => void;
   emptyStateHint?: string;
+  now?: number;
+  listFilter?: "inbox" | "archived" | "muted";
+  onChangeListFilter?: (filter: "inbox" | "archived" | "muted") => void;
+  searchQuery?: string;
+  searchHits?: { threadKey: string; eventId: string; snippet: string }[];
+  onChangeSearchQuery?: (value: string) => void;
 }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const composeEnabled = canComposeMessages(status);
+
+  useEffect(() => {
+    if (conversationId) return;
+    const rowId = takeListRow("chats");
+    restoreListFocus(rowId, headingRef.current);
+  }, [conversationId]);
+
   return (
-    <div className="grid min-h-[70vh] gap-6 md:grid-cols-[minmax(16rem,20rem)_1fr]" data-testid="chatsScreen">
-      <aside className={conversationId ? "hidden md:block" : undefined}>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold tracking-tight">Chats</h1>
-          <Link
-            href="/requests"
-            className="text-sm text-brand underline-offset-4 hover:underline"
-            data-testid="chatsRequests"
-          >
-            Requests{pendingRequests > 0 ? ` (${pendingRequests})` : ""}
-          </Link>
+    <div className="flex h-full min-h-0 flex-1 flex-col" data-testid="chatsScreen" data-surface="chats-page">
+      <PageHeader className="shrink-0">
+        <h1
+          ref={headingRef}
+          tabIndex={-1}
+          className="text-2xl font-bold tracking-tight outline-none focus:outline-none focus-visible:outline-none hc-programmatic-focus"
+        >
+          Chats
+        </h1>
+        <PageSubtitle>Encrypted threads on this device.</PageSubtitle>
+        <form
+          className="mt-3"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          <Input
+            value={searchQuery}
+            onChange={(event) => onChangeSearchQuery?.(event.target.value)}
+            placeholder="Search messages"
+            data-testid="chatsSearch"
+            aria-label="Search messages"
+          />
+        </form>
+        {searchHits && searchHits.length > 0 ? (
+          <ul className="mt-2 space-y-1 text-sm" data-testid="chatsSearchHits">
+            {searchHits.map((hit) => (
+              <li key={`${hit.threadKey}:${hit.eventId}`} className="truncate text-muted-foreground">
+                {hit.snippet}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="mt-3 flex gap-2" role="tablist" aria-label="Chat filters">
+          {(["inbox", "archived", "muted"] as const).map((filter) => (
+            <Button
+              key={filter}
+              type="button"
+              size="sm"
+              variant={listFilter === filter ? "brand" : "outline"}
+              role="tab"
+              aria-selected={listFilter === filter}
+              data-testid={`chatsFilter-${filter}`}
+              onClick={() => onChangeListFilter?.(filter)}
+            >
+              {filter === "inbox" ? "Inbox" : filter === "archived" ? "Archived" : "Muted"}
+            </Button>
+          ))}
         </div>
+      </PageHeader>
+      <MasterDetail
+        listClassName={conversationId ? "hidden md:block" : undefined}
+        detailClassName={!conversationId ? "hidden md:flex" : undefined}
+        list={
+        <aside className="px-3 py-3" aria-busy={inboxLoading || undefined}>
+        <Link
+          href="/requests"
+          data-testid="chatsRequests"
+          className="flex min-h-11 items-center justify-between py-2 text-sm"
+        >
+          <span>Message requests</span>
+          {pendingRequests > 0 ? (
+            <span className="rounded-full hc-brand-fill px-2 py-0.5 text-xs">
+              {unreadLabel(pendingRequests)}
+            </span>
+          ) : null}
+        </Link>
 
         {enableCta}
 
@@ -67,7 +168,7 @@ export function ChatsPage({
           className="mt-4 space-y-2"
           onSubmit={(event) => {
             event.preventDefault();
-            onStartChat();
+            if (composeEnabled) onStartChat();
           }}
         >
           <Input
@@ -77,65 +178,121 @@ export function ChatsPage({
             data-testid="chatsNewInput"
             autoCapitalize="none"
             autoCorrect="off"
+            disabled={!composeEnabled}
           />
-          <Button type="submit" size="sm" disabled={starting} data-testid="chatsNew">
+          <Button
+            type="submit"
+            variant="brand"
+            size="sm"
+            disabled={starting || !composeEnabled}
+            data-testid="chatsNew"
+          >
             {starting ? "Starting…" : "New chat"}
           </Button>
-          {startError ? <p className="text-sm text-red-400">{startError}</p> : null}
+          {startError && !isReadOnlyTabError(new Error(startError)) ? (
+            <ErrorDetails fallback="Could not start this chat." details={startError} />
+          ) : null}
         </form>
 
-        {rows.length === 0 ? (
+        {inboxLoading && rows.length === 0 ? (
+          <ul className="mt-4 space-y-2" data-testid="chatsLoading">
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+            <li><Skeleton className="h-14 w-full rounded-lg" /></li>
+          </ul>
+        ) : rows.length === 0 ? (
           <div className="mt-8 space-y-2" data-testid="chatsEmpty">
-            <p className="text-muted-foreground">No conversations yet.</p>
-            <p className="text-sm text-muted-foreground">
-              {emptyStateHint}
-            </p>
+            <IllustratedEmptyState
+              icon={IconMessageCircle}
+              title="No chats yet."
+              subtitle={emptyStateHint}
+            >
+              <Button asChild size="sm">
+                <Link href="/contacts">Add a contact</Link>
+              </Button>
+            </IllustratedEmptyState>
           </div>
         ) : (
-          <ul className="mt-4 divide-y divide-border">
-            {rows.map((row) => (
-              <li key={row.key}>
-                <Link
-                  href={row.href}
-                  data-testid="chatRow"
-                  aria-label={row.title}
-                  className="flex items-start gap-3 py-3 hover:bg-accent/40"
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary text-brand">
-                    {row.title.charAt(0).toUpperCase()}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium">
-                        {row.kind === "group" ? sanitizeDisplayName(row.title) : shortPubky(row.title)}
+          <ul className="mt-4">
+            {rows
+              .filter((row) => {
+                if (listFilter === "archived") return Boolean(row.archived);
+                if (listFilter === "muted") return Boolean(row.muted);
+                return !row.archived;
+              })
+              .map((row) => {
+              const rowId = chatRowDomId(row.key);
+              const labels = contactPrimaryLabel({
+                nickname: row.nickname,
+                displayName: row.displayName ?? (row.pubky ? null : row.title),
+                pubky: row.pubky ?? row.title,
+              });
+              const labelName = labels.primary;
+              const selected = conversationId !== null && row.href.endsWith(conversationId);
+              return (
+                <li key={row.key} className={selected ? "rounded-lg hc-wash px-2" : "px-2"}>
+                  <Link
+                    id={rowId}
+                    href={row.href}
+                    data-testid="chatRow"
+                    aria-label={`Open chat ${labelName}`}
+                    className="flex min-h-11 items-center gap-2 py-2 hover:bg-accent/40"
+                    onClick={() => {
+                      rememberAndOpen("chats", rowId);
+                      rememberThreadOrigin({ kind: "chats" });
+                    }}
+                  >
+                    <Avatar seed={row.pubky ?? row.title} size="md" />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center justify-between gap-2">
+                        <span className="truncate text-sm font-bold">{labelName}</span>
+                        {row.lastMessageAt ? (
+                          <span className="text-xs text-muted-foreground">
+                            {formatRelativeTime(row.lastMessageAt, now)}
+                          </span>
+                        ) : null}
                       </span>
-                      {row.lastMessageAt ? (
-                        <span className="text-xs text-muted-foreground">
-                          {formatRelativeTime(row.lastMessageAt)}
-                        </span>
+                      {labels.secondary ? (
+                        <span className="block truncate text-xs text-muted-foreground">{labels.secondary}</span>
                       ) : null}
-                    </span>
-                    <span className="mt-1 flex items-center justify-between gap-2">
-                      <span className="truncate text-sm text-muted-foreground">
-                        {row.kind === "group" ? `Group · ${row.preview}` : row.preview}
+                      <span className="mt-1 flex items-center justify-between gap-2">
+                        <span className="truncate text-base text-muted-foreground">{row.preview}</span>
+                        {row.linkStatus === "reconnect_required" ? (
+                          <span className="text-xs font-light hc-brand-muted">
+                            Connection lost — re-linking will be available in the next update.
+                          </span>
+                        ) : null}
+                        {row.unreadCount > 0 ? (
+                          <span className="rounded-full hc-brand-fill px-2 text-xs">
+                            {unreadLabel(row.unreadCount)}
+                          </span>
+                        ) : null}
                       </span>
-                      {row.unreadCount > 0 ? (
-                        <span className="rounded-full bg-brand px-2 text-xs text-white">
-                          {unreadLabel(row.unreadCount)}
-                        </span>
-                      ) : null}
                     </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         )}
-        {inboxError ? <p className="mt-3 text-sm text-red-400">{inboxError}</p> : null}
+        {inboxError && !isReadOnlyTabError(new Error(inboxError)) ? (
+          <div className="mt-3">
+            <ErrorDetails
+              fallback="Could not load your chats."
+              details={inboxError}
+              onRetry={onRetryInbox}
+              live="status"
+              repairHref="/settings#repair-local-data"
+            />
+          </div>
+        ) : null}
+        <p className="sr-only" role="status" aria-live="polite">
+          {inboxLoading ? "Loading chats" : `${rows.length} chats`}
+        </p>
       </aside>
-      <section className={!conversationId ? "hidden md:block" : undefined}>
-        {thread}
-      </section>
+        }
+        detail={thread}
+      />
     </div>
   );
 }

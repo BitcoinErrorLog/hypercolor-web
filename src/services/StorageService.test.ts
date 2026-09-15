@@ -3,14 +3,21 @@
  * (fake-indexeddb). Mobile mocks KeyStore; web exercises the async methods.
  */
 import "fake-indexeddb/auto";
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { setDbForTests } from "../db";
 import { openMemoryDb } from "../db/__tests__/betterSqliteAdapter";
-import { runMigrations } from "../db/migrations";
+import { CURRENT_VERSION, runMigrations } from "../db/migrations";
 import { CHAT_MESSAGE_KIND } from "../types/link";
 import { GROUP_MESSAGE_KIND } from "../types/group";
 import { KeyStore } from "./KeyStore";
 import { StorageService } from "./StorageService";
+
+const deleteCacheFilesMock = vi.hoisted(() => vi.fn());
+vi.mock("./attachments/fileIo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./attachments/fileIo")>()),
+  deleteCacheFiles: deleteCacheFilesMock,
+}));
 
 const OWNER = "a".repeat(52);
 const PEER = "z".repeat(52);
@@ -25,25 +32,49 @@ const ATTACHMENT_SECRET = {
 };
 
 describe("StorageService (v13 SQL + KeyStore)", () => {
+  it("keeps every owner-scoped schema table in the sign-out wipe", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const tables = (db.executeSync(
+      "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    ).rows ?? [])
+      .filter((row) => String(row.sql).includes("owner_pubky"))
+      .map((row) => String(row.name))
+      .filter((name) => name !== "message_search_fts");
+    const storageSource = readFileSync(new URL("./StorageService.ts", import.meta.url), "utf8");
+    const wipedTables = new Set(
+      [...storageSource.matchAll(/DELETE FROM ([a-z0-9_]+) WHERE owner_pubky/g)].map(
+        (match) => match[1],
+      ),
+    );
+    wipedTables.add("message_search");
+    const intentionallyRetained = new Set(["pending_cleanup"]);
+    expect(
+      tables.filter((table) => !wipedTables.has(table) && !intentionallyRetained.has(table)),
+    ).toEqual([]);
+  });
+
   beforeAll(async () => {
     await KeyStore.initKeyStore();
   });
 
   beforeEach(async () => {
     await KeyStore.clear();
+    deleteCacheFilesMock.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
     setDbForTests(null);
   });
 
-  it("migrates to v13, inserts and reads a contact and a link", async () => {
+  it("migrates to v14, inserts and reads a contact and a link", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
     await runMigrations(db);
 
     expect(db.executeSync("PRAGMA user_version").rows?.[0]?.user_version).toBe(
-      13,
+      CURRENT_VERSION,
     );
 
     await StorageService.upsertContact({
@@ -85,6 +116,67 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
         status: "established",
       }),
     );
+  });
+
+  it("recording last_seen_peer_marker_pk does not bump links.updated_at", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    await StorageService.upsertLink({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "handshaking",
+      snapshot: "cipher-hs",
+      remoteNoisePublicKey: "noise",
+      localReceiverPath: "hypercolor/wallet",
+      remoteReceiverPath: "hypercolor/wallet",
+      consecutiveFailures: 0,
+    });
+    const before = await StorageService.getLink(OWNER, PEER);
+    expect(before).not.toBeNull();
+    db.executeSync(
+      "UPDATE links SET updated_at = 111 WHERE owner_pubky = ? AND peer_pubky = ?",
+      [OWNER, PEER],
+    );
+
+    await StorageService.recordLastSeenPeerMarkerPk(OWNER, PEER, "marker-pk-2");
+
+    const after = await StorageService.getLink(OWNER, PEER);
+    expect(after?.lastSeenPeerMarkerPk).toBe("marker-pk-2");
+    expect(after?.updatedAt).toBe(111);
+    expect(after?.snapshot).toBe("cipher-hs");
+  });
+
+  it("retains the opaque snapshot when an established link requires reconnect", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+
+    await StorageService.upsertLink({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "established",
+      snapshot: "captured-opaque-snapshot",
+      remoteNoisePublicKey: "noise",
+      localReceiverPath: "hypercolor/wallet",
+      remoteReceiverPath: "hypercolor/wallet",
+      consecutiveFailures: 0,
+    });
+
+    await StorageService.markLinkReconnectRequired(OWNER, PEER, "network");
+    const link = await StorageService.getLink(OWNER, PEER);
+
+    expect(link).toEqual(
+      expect.objectContaining({
+        status: "reconnect_required",
+        snapshot: "captured-opaque-snapshot",
+        reconnectErrorCategory: "network",
+      }),
+    );
+    expect(link?.reconnectRequiredAt).toEqual(expect.any(Number));
   });
 
   it("clearAccountData wipes owner rows and leaves the other account", async () => {
@@ -134,11 +226,51 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
       remoteReceiverPath: "hypercolor/wallet",
       consecutiveFailures: 0,
     });
+    await StorageService.upsertLinkReceiverRetry({
+      ownerPubky: OWNER,
+      sessionAlias: "hypercolor/wallet",
+      noisePublicKey: "noise",
+      stage: "marker",
+      nextRetryAt: 10,
+      attempts: 1,
+    });
+
+    db.executeSync(
+      `INSERT INTO contact_nicknames (owner_pubky, peer_pubky, nickname, updated_at)
+       VALUES (?, ?, 'Star', 1)`,
+      [OWNER, PEER],
+    );
+    db.executeSync(
+      `INSERT INTO thread_local_state (owner_pubky, thread_key, muted, archived, updated_at)
+       VALUES (?, 'dm:x', 1, 0, 1)`,
+      [OWNER],
+    );
+    const { indexDecryptedMessage, ensureMessageSearchFts } = await import("./localChatState");
+    ensureMessageSearchFts(db);
+    indexDecryptedMessage(db, {
+      ownerPubky: OWNER,
+      threadKey: "dm:x",
+      eventId: EVENT,
+      senderPubky: PEER,
+      body: "Secret hello world",
+      sentAt: 1,
+    });
 
     await StorageService.clearAccountData(OWNER);
 
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM contact_nicknames WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM thread_local_state WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM message_search WHERE owner_pubky = ?", [OWNER]).rows?.[0]?.n).toBe(0);
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM message_search_fts").rows?.[0]?.n).toBe(0);
+    expect(
+      db.executeSync(
+        `SELECT COUNT(*) AS n FROM message_search_fts WHERE message_search_fts MATCH 'hello'`,
+      ).rows?.[0]?.n,
+    ).toBe(0);
+
     expect(await StorageService.getContact(PEER, OWNER)).toBeNull();
     expect(await StorageService.getLink(OWNER, PEER)).toBeNull();
+    expect(await StorageService.getLinkReceiverRetry(OWNER)).toBeNull();
     expect(await StorageService.getContact(PEER, OTHER)).toEqual(
       expect.objectContaining({ ownerPubky: OTHER, isFollower: true }),
     );
@@ -673,5 +805,302 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(txn.filter((sql) => /^COMMIT\b/i.test(sql))).toHaveLength(1);
     expect(await StorageService.getDeliveryQueueItem("q-owed")).toBeNull();
     expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toEqual([]);
+  });
+
+  it("redacts retained stream data and evicts attachment material on tombstone", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({
+        version: 1,
+        kind: CHAT_MESSAGE_KIND,
+        event_id: ATTACH_EVENT,
+        sent_at: 1,
+        body: "stream-secret",
+      }),
+      body: "stream-secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT),
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      localCachePath: null,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+    await StorageService.saveLinkStreamItems([
+      {
+        id: "stream-target",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: JSON.stringify({
+          kind: CHAT_MESSAGE_KIND,
+          event_id: ATTACH_EVENT,
+          sent_at: 1,
+          body: "stream-secret",
+        }),
+        receivedAt: 1,
+      },
+      {
+        id: "stream-malformed",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: "{malformed historical row",
+        receivedAt: 1,
+      },
+    ]);
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).toBeNull();
+    expect(await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT)).toEqual(
+      expect.objectContaining({ resolveState: "unavailable-from-backup" }),
+    );
+    const stream = await StorageService.getUnprocessedLinkStreamItems(OWNER, PEER);
+    expect(stream.find((row) => row.id === "stream-target")?.rawJson).not.toContain(
+      "stream-secret",
+    );
+    expect(stream.find((row) => row.id === "stream-target")?.rawJson).toContain('"deleted":true');
+    expect(stream.find((row) => row.id === "stream-malformed")?.rawJson).toBe(
+      "{malformed historical row",
+    );
+  });
+
+  it("journals a failed attachment cache deletion before clearing its path", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const cachePath = "/tmp/plaintext-attachment";
+    deleteCacheFilesMock.mockResolvedValueOnce([cachePath]);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: "attachment-key",
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      localCachePath: cachePath,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([{ target_kind: "cache", target: cachePath }]);
+    expect((await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT))?.localCachePath).toBeNull();
+  });
+
+  it("journals a failed attachment key deletion after tombstoning", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    const service = KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT);
+    const deleteSpy = vi
+      .spyOn(KeyStore, "deleteAttachmentSecretByService")
+      .mockResolvedValueOnce(false);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: ATTACH_EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: service,
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      createdAt: 1,
+      updatedAt: 1,
+      localCachePath: null,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      conversationId: `dm:${PEER}`,
+      eventId: ATTACH_EVENT,
+      senderPubky: PEER,
+    });
+
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, `dm:${PEER}`, ATTACH_EVENT))?.body,
+    ).toBe("");
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).not.toBeNull();
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([{ target_kind: "keystore", target: service }]);
+    deleteSpy.mockRestore();
+  });
+
+  it("rolls back SQLite tombstone changes after deleting the attachment key", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setAttachmentSecret(OWNER, PEER, ATTACH_EVENT, ATTACHMENT_SECRET);
+    const service = KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: ATTACH_EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: service,
+      contentType: "image/png",
+      size: 32,
+      thumbnailLocation: null,
+      createdAt: 1,
+      updatedAt: 1,
+      localCachePath: null,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+    const originalExecute = db.executeSync.bind(db);
+    let failed = false;
+    db.executeSync = (query, params = []) => {
+      if (!failed && /^UPDATE link_messages\s/i.test(query.trim())) {
+        failed = true;
+        throw new Error("injected SQLite transaction failure");
+      }
+      return originalExecute(query, params);
+    };
+
+    await expect(
+      StorageService.tombstoneLinkMessage({
+        ownerPubky: OWNER,
+        conversationId: `dm:${PEER}`,
+        eventId: ATTACH_EVENT,
+        senderPubky: PEER,
+      }),
+    ).rejects.toThrow("injected SQLite transaction failure");
+    db.executeSync = originalExecute;
+
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, `dm:${PEER}`, ATTACH_EVENT))?.body,
+    ).toBe("secret");
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).toBeNull();
+  });
+
+  it("drains an already-absent cache cleanup row", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const cachePath = "/tmp/already-absent-attachment";
+    db.executeSync(
+      `INSERT INTO pending_cleanup (owner_pubky, target_kind, target, created_at)
+       VALUES (?, 'cache', ?, 1)`,
+      [OWNER, cachePath],
+    );
+
+    await StorageService.retryPendingCleanup();
+
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([]);
+    expect(deleteCacheFilesMock).toHaveBeenCalledWith([cachePath]);
   });
 });
