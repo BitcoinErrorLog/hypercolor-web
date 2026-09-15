@@ -35,6 +35,33 @@ function dm(partial: Partial<LinkMessage> = {}): LinkMessage {
 describe("apply chat.tag.v0 / chat.receipt.v0", () => {
   afterEach(() => setDbForTests(null));
 
+  it("processes invalid inbound labels without storing a row", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage(dm());
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: "chat.tag.v0",
+      event_id: "11111111-1111-4111-8111-111111111111",
+      sent_at: ts,
+      target_event_id: uuid,
+      target_author_pubky: OWNER,
+      label: "final-tag",
+      op: "add",
+    });
+
+    await expect(
+      applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson,
+      }),
+    ).resolves.toBe("processed");
+    await expect(StorageService.listChatTagsForScope(OWNER, dmScopeKey(PEER))).resolves.toEqual([]);
+  });
+
   it("stores tags, ignores replay, rejects spoofed tagger via sender", async () => {
     const db = openMemoryDb();
     setDbForTests(db);

@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ChatTagAggregate } from "@/types/chatKinds";
-import { isEmojiTagLabel } from "@/types/chatKinds";
+import { CHAT_KIND_WORD_LABEL, isEmojiTagLabel, normalizeChatTagLabel, type ChatTagAggregate } from "@/types/chatKinds";
 
 const QUICK = ["👍", "❤️", "😂", "🔥", "👎"] as const;
 
@@ -46,6 +45,11 @@ export function TagPicker({
   onPick: (label: string) => void;
 }) {
   const [word, setWord] = useState("");
+  const normalizedWord = normalizeChatTagLabel(word);
+  const wordError =
+    word.length > 0 && (normalizedWord === null || !CHAT_KIND_WORD_LABEL.test(normalizedWord))
+      ? "Use 1–32 lowercase letters, numbers, or underscores."
+      : null;
   if (!open) return null;
   return (
     <div
@@ -75,9 +79,8 @@ export function TagPicker({
         className="flex gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          const label = word.trim().toLowerCase();
-          if (!label) return;
-          onPick(label);
+          if (!normalizedWord || !CHAT_KIND_WORD_LABEL.test(normalizedWord)) return;
+          onPick(normalizedWord);
           setWord("");
           onClose();
         }}
@@ -88,12 +91,22 @@ export function TagPicker({
           onChange={(event) => setWord(event.target.value)}
           placeholder="word tag"
           aria-label="Word tag"
-          maxLength={32}
+          aria-invalid={wordError !== null}
+          aria-describedby={wordError ? "tagPickerWordError" : undefined}
         />
-        <button type="submit" className="min-h-11 px-2 text-sm underline">
+        <button
+          type="submit"
+          className="min-h-11 px-2 text-sm underline disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!normalizedWord || !CHAT_KIND_WORD_LABEL.test(normalizedWord)}
+        >
           Tag
         </button>
       </form>
+      {wordError ? (
+        <p id="tagPickerWordError" className="text-sm text-destructive" role="alert">
+          {wordError}
+        </p>
+      ) : null}
     </div>
   );
 }

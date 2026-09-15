@@ -196,7 +196,9 @@ export async function applyKnownChatKind(input: {
   const ctx = ctxFor(input.ownerPubky, input.senderPubky);
   if (kind === CHAT_TAG_KIND) {
     const parsed = parseChatTagV0(input.rawJson, ctx);
-    if ("error" in parsed) return { error: parsed.error };
+    if ("error" in parsed) {
+      return parsed.error === "invalid-label" ? "processed" : { error: parsed.error };
+    }
     return applyTagEnvelope(input.ownerPubky, input.senderPubky, input.peerPubky, parsed.ok);
   }
   if (kind === CHAT_REACTION_KIND) {
