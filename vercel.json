@@ -1,0 +1,8 @@
+{
+  "framework": "nextjs",
+  "rewrites": [
+    { "source": "/chats/:conversationId", "destination": "/chats" },
+    { "source": "/channels/:id", "destination": "/channels" },
+    { "source": "/contacts/:pubky", "destination": "/contacts" }
+  ]
+}

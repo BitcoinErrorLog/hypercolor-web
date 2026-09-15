@@ -1,5 +1,5 @@
-import { UnavailablePage } from "@/components/unavailable-page";
+import { WelcomePageHost } from "@/services/onboarding/welcomeActions";
 
 export default function HomePage() {
-  return <UnavailablePage />;
+  return <WelcomePageHost />;
 }

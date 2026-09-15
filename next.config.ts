@@ -6,6 +6,30 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
+  webpack: (config, { isServer, webpack }) => {
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    };
+    if (!isServer) {
+      config.plugins.push(
+        new webpack.NormalModuleReplacementPlugin(/^node:/, (resource: { request: string }) => {
+          resource.request = resource.request.replace(/^node:/, "");
+        }),
+      );
+      config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false,
+        path: false,
+        os: false,
+        "node:fs": false,
+        "node:fs/promises": false,
+        "node:path": false,
+        "node:os": false,
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
