@@ -100,6 +100,7 @@ export function ThreadViewHost({ conversationId }: { conversationId: string | nu
       }}
       tagsByTarget={thread.tagsByTarget}
       onToggleTag={(message, label, mine) => void thread.toggleTag(message, label, mine)}
+      onUnsend={(message) => thread.unsend(message)}
     />
   );
 }

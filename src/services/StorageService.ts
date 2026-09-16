@@ -439,6 +439,7 @@ export const StorageService = {
     const result = db.executeSync(
       `SELECT * FROM link_messages
        WHERE owner_pubky = ? AND direction = 'sent' AND delivery_state = 'sending'
+         AND deleted = 0
        ORDER BY sent_at ASC`,
       [ownerPubky],
     );
@@ -998,6 +999,7 @@ export const StorageService = {
                  WHERE u.owner_pubky = m.owner_pubky
                    AND u.conversation_id = m.conversation_id
                    AND u.direction = 'received'
+                   AND u.deleted = 0
                    AND u.sent_at > COALESCE(c.last_read_at, 0)
               ) AS unread_count
          FROM link_messages m
@@ -1010,6 +1012,7 @@ export const StorageService = {
             SELECT m2.rowid FROM link_messages m2
              WHERE m2.owner_pubky = m.owner_pubky
                AND m2.conversation_id = m.conversation_id
+               AND m2.deleted = 0
              ORDER BY m2.sent_at DESC, m2.event_id DESC
              LIMIT 1
           )
@@ -1417,6 +1420,19 @@ export const StorageService = {
         );
       }
     }
+  },
+
+  async completePendingCleanup(
+    ownerPubky: PubkyKey,
+    targetKind: "keystore" | "cache",
+    target: string,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `DELETE FROM pending_cleanup
+       WHERE owner_pubky = ? AND target_kind = ? AND target = ?`,
+      [ownerPubky, targetKind, target],
+    );
   },
 
   // ── Attachments (M4) ──────────────────────────────────────────────────────
@@ -2087,61 +2103,84 @@ export const StorageService = {
   async tombstoneLinkMessage(input: {
     ownerPubky: PubkyKey;
     conversationId: string;
+    peerPubky?: PubkyKey;
     eventId: string;
     senderPubky: PubkyKey;
-  }): Promise<void> {
+    redactedRawJson?: string;
+    attachmentKeyService?: string;
+    attachmentCachePaths?: readonly string[];
+    controlQueueItem?: DeliveryQueueItem;
+  }): Promise<boolean> {
     const db = await getDb();
     const existing = await StorageService.findLinkMessageInConversation(
       input.ownerPubky,
       input.conversationId,
       input.eventId,
     );
-    if (!existing || existing.senderPubky !== input.senderPubky) return;
+    if (!existing || existing.senderPubky !== input.senderPubky || existing.deleted) return false;
     const attachment = await StorageService.getAttachment(
       input.ownerPubky,
       input.senderPubky,
       input.eventId,
     );
-    const attachmentService = attachment
-      ? KeyStore.attachmentKeyService(input.ownerPubky, input.senderPubky, input.eventId)
-      : null;
-    const attachmentKeyDeleted = attachmentService
-      ? await KeyStore.deleteAttachmentSecretByService(input.ownerPubky, attachmentService)
-      : true;
-    let cacheCleanupFailed = false;
-    if (attachment?.localCachePath) {
-      cacheCleanupFailed =
-        (await deleteCacheFiles([attachment.localCachePath])).length > 0;
-    }
+    const attachmentService =
+      input.attachmentKeyService ??
+      (attachment
+        ? KeyStore.attachmentKeyService(input.ownerPubky, input.senderPubky, input.eventId)
+        : null);
+    const attachmentCachePaths =
+      input.attachmentCachePaths ??
+      (attachment ? cachePathsForAttachment(attachment) : []);
     const tombstoneJson = JSON.stringify({
       version: 1,
       kind: existing.kind,
       event_id: existing.eventId,
       sent_at: existing.sentAt,
-      body: '',
       deleted: true,
     });
+    const redactedRawJson = input.redactedRawJson ?? tombstoneJson;
+    const cleanupTargets = [
+      ...(attachmentService ? [{ kind: "keystore" as const, target: attachmentService }] : []),
+      ...[...new Set(attachmentCachePaths)].map((target) => ({
+        kind: "cache" as const,
+        target,
+      })),
+    ];
+    let tombstoned = false;
     transact(db, () => {
       db.executeSync(
         `UPDATE link_messages
-         SET body = '', raw_json = ?, updated_at = ?
-         WHERE owner_pubky = ? AND conversation_id = ? AND event_id = ? AND sender_pubky = ?`,
+         SET deleted = 1, body = '', raw_json = ?, delivery_state = 'unsent', updated_at = ?
+         WHERE owner_pubky = ? AND conversation_id = ? AND peer_pubky = ?
+           AND event_id = ? AND sender_pubky = ? AND deleted = 0`,
         [
-          tombstoneJson,
+          redactedRawJson,
           now(),
           input.ownerPubky,
           input.conversationId,
+          input.peerPubky ?? existing.peerPubky,
           input.eventId,
           input.senderPubky,
         ],
       );
+      tombstoned = Number(db.executeSync("SELECT changes() AS n").rows?.[0]?.n ?? 0) > 0;
+      if (!tombstoned) return;
+      if (input.controlQueueItem) insertQueueItem(db, input.controlQueueItem);
+      for (const cleanup of cleanupTargets) {
+        db.executeSync(
+          `INSERT OR IGNORE INTO pending_cleanup
+            (owner_pubky, target_kind, target, created_at)
+           VALUES (?, ?, ?, ?)`,
+          [input.ownerPubky, cleanup.kind, cleanup.target, now()],
+        );
+      }
       const streamRows = db.executeSync(
         `SELECT id, kind, raw_json FROM link_stream_items
          WHERE owner_pubky = ? AND peer_pubky = ?`,
-        [input.ownerPubky, existing.peerPubky],
+        [input.ownerPubky, input.peerPubky ?? existing.peerPubky],
       ).rows ?? [];
       for (const row of streamRows) {
-        let parsed: { event_id?: unknown; kind?: unknown; sent_at?: unknown };
+        let parsed: { event_id?: unknown };
         try {
           parsed = JSON.parse(String(row.raw_json)) as typeof parsed;
         } catch {
@@ -2151,44 +2190,58 @@ export const StorageService = {
         if (parsed.event_id !== input.eventId) continue;
         db.executeSync(
           `UPDATE link_stream_items SET raw_json = ? WHERE id = ?`,
-          [
-            JSON.stringify({
-              kind: typeof parsed.kind === "string" ? parsed.kind : row.kind,
-              event_id: input.eventId,
-              sent_at: typeof parsed.sent_at === "number" ? parsed.sent_at : existing.sentAt,
-              deleted: true,
-            }),
-            row.id,
-          ],
+          [redactedRawJson, row.id],
         );
       }
-      db.executeSync('DELETE FROM delivery_queue WHERE message_id = ?', [input.eventId]);
+      db.executeSync(
+        `DELETE FROM delivery_queue
+         WHERE message_id = ?
+           AND json_extract(payload, '$.ownerPubky') = ?`,
+        [input.eventId, input.ownerPubky],
+      );
       if (attachment) {
-        if (cacheCleanupFailed && attachment.localCachePath) {
-          db.executeSync(
-            `INSERT OR IGNORE INTO pending_cleanup
-              (owner_pubky, target_kind, target, created_at)
-             VALUES (?, 'cache', ?, ?)`,
-            [input.ownerPubky, attachment.localCachePath, now()],
-          );
-        }
         db.executeSync(
           `UPDATE attachments
            SET resolve_state = 'unavailable-from-backup', local_cache_path = NULL, updated_at = ?
            WHERE owner_pubky = ? AND sender_pubky = ? AND event_id = ?`,
           [now(), input.ownerPubky, input.senderPubky, input.eventId],
         );
-        if (!attachmentKeyDeleted && attachmentService) {
-          db.executeSync(
-            `INSERT OR IGNORE INTO pending_cleanup
-              (owner_pubky, target_kind, target, created_at)
-             VALUES (?, 'keystore', ?, ?)`,
-            [input.ownerPubky, attachmentService, now()],
-          );
-        }
       }
       removeSearchMessage(db, input.ownerPubky, dmThreadKey(input.conversationId), input.eventId);
     });
+    if (!tombstoned) return false;
+    const keyTargets = cleanupTargets.filter((cleanup) => cleanup.kind === "keystore");
+    const cacheTargets = cleanupTargets.filter((cleanup) => cleanup.kind === "cache");
+    for (const cleanup of keyTargets) {
+      try {
+        if (await KeyStore.deleteAttachmentSecretByService(input.ownerPubky, cleanup.target)) {
+          await StorageService.completePendingCleanup(
+            input.ownerPubky,
+            cleanup.kind,
+            cleanup.target,
+          );
+        }
+      } catch {
+        // Cleanup is journaled and must never block the delete PAM.
+      }
+    }
+    try {
+      const failed = new Set(
+        await deleteCacheFiles(cacheTargets.map((cleanup) => cleanup.target)),
+      );
+      for (const cleanup of cacheTargets) {
+        if (!failed.has(cleanup.target)) {
+          await StorageService.completePendingCleanup(
+            input.ownerPubky,
+            cleanup.kind,
+            cleanup.target,
+          );
+        }
+      }
+    } catch {
+      // Cleanup is journaled and must never block the delete PAM.
+    }
+    return true;
   },
 
   async tombstoneGroupMessage(
@@ -2815,6 +2868,7 @@ export const StorageService = {
     if (channelId) {
       const row = await StorageService.findGroupMessageByEventId(ownerPubky, channelId, eventId);
       if (!row) return;
+      if (row.deleted) return;
       const current = row.deliveryState;
       if (next === 'delivered' && (current === 'delivered' || current === 'read')) return;
       if (next === 'read' && current === 'read') return;
@@ -2827,6 +2881,7 @@ export const StorageService = {
     }
     const row = await StorageService.findLinkMessageByEventId(ownerPubky, eventId);
     if (!row) return;
+    if (row.deleted || row.deliveryState === "unsent") return;
     if (next === 'delivered' && (row.deliveryState === 'delivered' || row.deliveryState === 'read')) return;
     if (next === 'read' && row.deliveryState === 'read') return;
     db.executeSync(
@@ -3024,6 +3079,7 @@ function rowToLinkMessage(row: any): LinkMessage {
     sentAt: row.sent_at,
     receivedAt: row.received_at ?? null,
     deliveryState: row.delivery_state as LinkDeliveryState,
+    deleted: row.deleted === 1,
   };
 }
 

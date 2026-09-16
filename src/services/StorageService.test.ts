@@ -927,6 +927,165 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     );
   });
 
+  it("makes a sending tombstone terminal for lost-delivery recovery", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: null,
+      deliveryState: "sending",
+    });
+    await StorageService.enqueue({
+      id: "original-send",
+      messageId: EVENT,
+      recipientPubky: PEER,
+      payload: JSON.stringify({ type: "link.chat.message", ownerPubky: OWNER }),
+      attempts: 0,
+      nextRetryAt: 1,
+      createdAt: 1,
+    });
+
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      conversationId: `dm:${PEER}`,
+      eventId: EVENT,
+      senderPubky: OWNER,
+      redactedRawJson: JSON.stringify({
+        kind: CHAT_MESSAGE_KIND,
+        event_id: EVENT,
+        sent_at: 1,
+        deleted: true,
+      }),
+      controlQueueItem: {
+        id: "delete-intent",
+        messageId: "00000000-0000-4000-8000-0000000000de",
+        recipientPubky: PEER,
+        payload: JSON.stringify({ type: "link.chat.control", ownerPubky: OWNER }),
+        attempts: 0,
+        nextRetryAt: 1,
+        createdAt: 1,
+      },
+    });
+
+    const row = await StorageService.findLinkMessageInConversation(
+      OWNER,
+      `dm:${PEER}`,
+      EVENT,
+    );
+    expect(row).toEqual(expect.objectContaining({ deleted: true, deliveryState: "unsent" }));
+    expect(await StorageService.listOwedOutboundLinkMessages(OWNER)).toEqual([]);
+    expect(await StorageService.getDeliveryQueueItem("original-send")).toBeNull();
+    expect(await StorageService.getDeliveryQueueItem("delete-intent")).not.toBeNull();
+  });
+
+  it("falls back to the previous live message when the latest is tombstoned", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ event_id: EVENT, body: "previous" }),
+      body: "previous",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    const latestEvent = "00000000-0000-4000-8000-0000000000a2";
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: latestEvent,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ event_id: latestEvent, body: "latest" }),
+      body: "latest",
+      sentAt: 2,
+      receivedAt: 2,
+      deliveryState: "delivered",
+    });
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      conversationId: `dm:${PEER}`,
+      eventId: latestEvent,
+      senderPubky: PEER,
+    });
+
+    const summary = (await StorageService.listLinkConversations(OWNER))[0];
+    expect(summary).toEqual(
+      expect.objectContaining({
+        lastMessage: "previous",
+        lastMessageAt: 1,
+      }),
+    );
+  });
+
+  it("does not count a tombstoned received message as unread", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const conversationId = `dm:${PEER}`;
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: EVENT,
+      conversationId,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ event_id: EVENT, body: "live" }),
+      body: "live",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    const tombstonedEvent = "00000000-0000-4000-8000-0000000000a3";
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: tombstonedEvent,
+      conversationId,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ event_id: tombstonedEvent, body: "unread" }),
+      body: "unread",
+      sentAt: 2,
+      receivedAt: 2,
+      deliveryState: "delivered",
+    });
+    await StorageService.setLinkReadCursor(OWNER, conversationId, 1);
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      conversationId,
+      eventId: tombstonedEvent,
+      senderPubky: PEER,
+    });
+
+    const summary = (await StorageService.listLinkConversations(OWNER))[0];
+    expect(summary?.unreadCount).toBe(0);
+  });
+
   it("journals a failed attachment cache deletion before clearing its path", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
@@ -979,7 +1138,11 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
          WHERE owner_pubky = ?`,
         [OWNER],
       ).rows,
-    ).toEqual([{ target_kind: "cache", target: cachePath }]);
+    ).toEqual(
+      expect.arrayContaining([
+        { target_kind: "cache", target: cachePath },
+      ]),
+    );
     expect((await StorageService.getAttachment(OWNER, PEER, ATTACH_EVENT))?.localCachePath).toBeNull();
   });
 
@@ -1044,10 +1207,73 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
         [OWNER],
       ).rows,
     ).toEqual([{ target_kind: "keystore", target: service }]);
+    deleteSpy.mockResolvedValueOnce(true);
+    await StorageService.retryPendingCleanup();
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup
+         WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([]);
     deleteSpy.mockRestore();
   });
 
-  it("rolls back SQLite tombstone changes after deleting the attachment key", async () => {
+  it("completes attachment cleanup when the key is already absent", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: PEER,
+      direction: "received",
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: ATTACH_EVENT, body: "secret" }),
+      body: "secret",
+      sentAt: 1,
+      receivedAt: 1,
+      deliveryState: "delivered",
+    });
+    await StorageService.saveAttachment({
+      ownerPubky: OWNER,
+      eventId: ATTACH_EVENT,
+      conversationId: `dm:${PEER}`,
+      channelId: null,
+      senderPubky: PEER,
+      direction: "received",
+      location: `/pub/hypercolor.app/v1/attachments/${ATTACH_EVENT}`,
+      keyRef: KeyStore.attachmentKeyService(OWNER, PEER, ATTACH_EVENT),
+      contentType: "image/png",
+      size: 1,
+      thumbnailLocation: null,
+      localCachePath: null,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryState: "delivered",
+      resolveState: "ready",
+    });
+
+    await expect(
+      StorageService.tombstoneLinkMessage({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        conversationId: `dm:${PEER}`,
+        eventId: ATTACH_EVENT,
+        senderPubky: PEER,
+      }),
+    ).resolves.toBe(true);
+    expect(
+      db.executeSync(
+        `SELECT target_kind, target FROM pending_cleanup WHERE owner_pubky = ?`,
+        [OWNER],
+      ).rows,
+    ).toEqual([]);
+  });
+
+  it("does not delete attachment material before a tombstone transaction commits", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
     await runMigrations(db);
@@ -1109,7 +1335,7 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(
       (await StorageService.findLinkMessageInConversation(OWNER, `dm:${PEER}`, ATTACH_EVENT))?.body,
     ).toBe("secret");
-    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).toBeNull();
+    expect(await KeyStore.getAttachmentSecret(OWNER, PEER, ATTACH_EVENT)).not.toBeNull();
   });
 
   it("drains an already-absent cache cleanup row", async () => {

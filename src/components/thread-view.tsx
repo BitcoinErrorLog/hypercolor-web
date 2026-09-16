@@ -141,6 +141,7 @@ export function ThreadView({
   onOfferAttach,
   tagsByTarget,
   onToggleTag,
+  onUnsend,
 }: {
   conversationId: string | null;
   participantPubky: string | null;
@@ -183,6 +184,7 @@ export function ThreadView({
   onOfferAttach?: (file: File) => void;
   tagsByTarget?: Map<string, ChatTagAggregate[]>;
   onToggleTag?: (message: LinkMessage, label: string, mine: boolean) => void;
+  onUnsend?: (message: LinkMessage) => Promise<void>;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const origin = useSyncExternalStore(
@@ -359,6 +361,11 @@ export function ThreadView({
                 onCopy={() => {
                   void navigator.clipboard.writeText(message.body);
                 }}
+                onUnsend={
+                  onUnsend && message.senderPubky === localPubky
+                    ? () => onUnsend(message)
+                    : undefined
+                }
                 tags={tagsByTarget?.get(`${message.senderPubky}:${message.eventId}`) ?? []}
                 onToggleTag={
                   onToggleTag

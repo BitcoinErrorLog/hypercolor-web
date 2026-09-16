@@ -84,6 +84,7 @@ vi.mock("@/services/StorageService", () => ({
     enqueue: vi.fn(),
     hasQueueItemForMessage: vi.fn(async () => false),
     getLinkMessageByEventId: vi.fn(),
+    getAttachment: vi.fn(async () => null),
     tombstoneLinkMessage: vi.fn(),
     clearPaymentPendingEvent: vi.fn(),
     removeQueueItemsForRecipient: vi.fn(),
@@ -261,6 +262,9 @@ describe("LinkService persist-then-send", () => {
     vi.mocked(StorageService.enqueue).mockReset();
     vi.mocked(StorageService.hasQueueItemForMessage).mockReset().mockResolvedValue(false);
     vi.mocked(StorageService.getLinkMessageByEventId).mockReset();
+    vi.mocked(StorageService.getAttachment).mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.tombstoneLinkMessage).mockReset().mockResolvedValue(true);
+    vi.mocked(StorageService.finalizeControlSend).mockReset().mockResolvedValue(undefined);
     vi.mocked(StorageService.listPaymentRequestsWithPendingEvent).mockReset().mockResolvedValue([]);
     vi.mocked(StorageService.updateAttachmentDelivery).mockReset();
     vi.mocked(StorageService.countDeliveryQueueForMessage).mockReset().mockResolvedValue(0);
@@ -329,6 +333,187 @@ describe("LinkService persist-then-send", () => {
     const finalizeOrder = finalizeSend.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(sendOrder);
     expect(sendOrder).toBeLessThan(finalizeOrder);
+  });
+
+  it("tombstones an owned message before dispatching one persisted delete PAM", async () => {
+    const deleteEventId = "00000000-0000-4000-8000-0000000000de";
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: JSON.stringify({ kind: CHAT_MESSAGE_KIND, event_id: EVENT_ID, body: "secret" }),
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(crypto.randomUUID)
+      .mockReset()
+      .mockReturnValueOnce(deleteEventId)
+      .mockReturnValueOnce(QUEUE_ID);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue({
+      id: QUEUE_ID,
+      messageId: deleteEventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: "link.chat.control",
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_DELETE_KIND,
+        eventId: deleteEventId,
+        rawJson: JSON.stringify({
+          version: 1,
+          kind: CHAT_DELETE_KIND,
+          event_id: deleteEventId,
+          sent_at: NOW,
+          target_event_id: EVENT_ID,
+        }),
+      }),
+      attempts: 0,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    });
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(StorageService.tombstoneLinkMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        conversationId: `dm:${PEER}`,
+        eventId: EVENT_ID,
+        senderPubky: OWNER,
+        controlQueueItem: expect.objectContaining({
+          messageId: deleteEventId,
+          recipientPubky: PEER,
+          payload: expect.stringContaining(CHAT_DELETE_KIND),
+        }),
+      }),
+    );
+    expect(sendPrivate).toHaveBeenCalledWith(
+      expect.anything(),
+      JSON.stringify({
+        version: 1,
+        kind: CHAT_DELETE_KIND,
+        event_id: deleteEventId,
+        sent_at: NOW,
+        target_event_id: EVENT_ID,
+      }),
+    );
+    expect(StorageService.finalizeControlSend).toHaveBeenCalledWith(
+      expect.objectContaining({ queueId: QUEUE_ID, ownerPubky: OWNER, peerPubky: PEER }),
+    );
+    expect(StorageService.getDeliveryQueueItem).toHaveBeenCalledWith(QUEUE_ID);
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not dispatch when the owned tombstone loses a race", async () => {
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(StorageService.tombstoneLinkMessage).mockResolvedValue(false);
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(sendPrivate).not.toHaveBeenCalled();
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+  });
+
+  it("does not requeue a sending tombstone during startup recovery", async () => {
+    vi.mocked(StorageService.listOwedOutboundLinkMessages).mockResolvedValue([
+      {
+        ownerPubky: OWNER,
+        eventId: EVENT_ID,
+        conversationId: `dm:${PEER}`,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        direction: "sent",
+        kind: CHAT_MESSAGE_KIND,
+        rawJson: JSON.stringify({ deleted: true }),
+        body: "",
+        sentAt: NOW,
+        receivedAt: null,
+        deliveryState: "sending",
+        deleted: true,
+      },
+    ]);
+
+    await LinkService.recoverPendingSends();
+
+    expect(StorageService.enqueue).not.toHaveBeenCalled();
+    expect(sendPrivate).not.toHaveBeenCalled();
+  });
+
+  it("does not dispatch an immediate control PAM when persistence lost the intent", async () => {
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(StorageService.tombstoneLinkMessage).mockResolvedValue(true);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(null);
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(sendPrivate).not.toHaveBeenCalled();
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+  });
+
+  it("aborts before mutation when ownership changes mid-flight", async () => {
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    getPubky.mockResolvedValueOnce("b".repeat(52));
+
+    await expect(LinkService.unsendDm(PEER, EVENT_ID)).rejects.toThrow(
+      "Message is no longer available to unsend",
+    );
+    expect(StorageService.tombstoneLinkMessage).not.toHaveBeenCalled();
+    expect(sendPrivate).not.toHaveBeenCalled();
   });
 
   it("leaves the queued rawJson for retry when send fails", async () => {
@@ -1737,6 +1922,7 @@ describe("LinkService inbound accept gate", () => {
     });
     vi.mocked(StorageService.tombstoneLinkMessage).mockImplementationOnce(async () => {
       targetTombstoned = true;
+      return true;
     });
     receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
 
@@ -1807,6 +1993,7 @@ describe("LinkService inbound accept gate", () => {
     );
     vi.mocked(StorageService.tombstoneLinkMessage).mockImplementationOnce(async () => {
       tombstoned = true;
+      return true;
     });
     receivePrivate.mockResolvedValue({ messages: [], snapshot: "recv-1" });
 
