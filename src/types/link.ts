@@ -369,7 +369,7 @@ export type LinkMessageDirection = 'sent' | 'received';
  * ships; received messages persist as `delivered` on arrival. `failed` is
  * set when the retry queue permanently drops an outbound item.
  */
-export type LinkDeliveryState = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type LinkDeliveryState = 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unsent';
 
 // ─── Storage row shapes ─────────────────────────────────────────────────────
 
@@ -459,6 +459,8 @@ export interface LinkMessage {
   /** Local arrival time (Unix ms); `null` for sent messages. */
   receivedAt: number | null;
   deliveryState: LinkDeliveryState;
+  /** Present when a delete kind has tombstoned the row. */
+  deleted?: boolean;
 }
 
 /**

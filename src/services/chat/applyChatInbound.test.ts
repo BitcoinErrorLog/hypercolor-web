@@ -8,6 +8,7 @@ import { buildChatReceiptEnvelope, buildChatTagEnvelope, dmScopeKey } from "../.
 import { CHAT_DELETE_KIND, CHAT_MESSAGE_KIND, buildDmConversationId, type LinkMessage } from "../../types/link";
 import { GROUP_MESSAGE_KIND } from "../../types/group";
 import { LocalChatState } from "../localChatState";
+import { PAYKIT_PAYMENT_REQUEST_KIND } from "../../types/payment";
 
 const OWNER = "o".repeat(52);
 const PEER = "p".repeat(52);
@@ -375,5 +376,73 @@ describe("apply chat.tag.v0 / chat.receipt.v0", () => {
         rawJson: del,
       }),
     ).toEqual({ error: "wrong-author" });
+  });
+
+  it("rejects an inbound delete targeting a payment message", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage(
+      dm({
+        senderPubky: PEER,
+        direction: "received",
+        kind: PAYKIT_PAYMENT_REQUEST_KIND,
+      }),
+    );
+    const del = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: "33333333-3333-4333-8333-333333333333",
+      sent_at: ts,
+      target_event_id: uuid,
+    });
+
+    expect(
+      await applyKnownChatKind({
+        ownerPubky: OWNER,
+        senderPubky: PEER,
+        peerPubky: PEER,
+        rawJson: del,
+      }),
+    ).toEqual({ error: "not-deletable" });
+    expect(
+      (await StorageService.findLinkMessageInConversation(OWNER, buildDmConversationId(PEER), uuid))
+        ?.deleted,
+    ).toBe(false);
+  });
+
+  it("does not upgrade an unsent row when a late receipt arrives", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.saveLinkMessage(dm({ deliveryState: "sending" }));
+    await StorageService.tombstoneLinkMessage({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      conversationId: buildDmConversationId(PEER),
+      eventId: uuid,
+      senderPubky: OWNER,
+    });
+    const receipt = buildChatReceiptEnvelope({
+      eventId: "44444444-4444-4444-8444-444444444444",
+      sentAt: ts,
+      status: "read",
+      eventIds: [uuid],
+    });
+
+    await applyKnownChatKind({
+      ownerPubky: OWNER,
+      senderPubky: PEER,
+      peerPubky: PEER,
+      rawJson: receipt.json,
+    });
+
+    expect(
+      await StorageService.findLinkMessageInConversation(
+        OWNER,
+        buildDmConversationId(PEER),
+        uuid,
+      ),
+    ).toEqual(expect.objectContaining({ deleted: true, deliveryState: "unsent" }));
   });
 });

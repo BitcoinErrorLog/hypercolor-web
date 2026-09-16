@@ -223,6 +223,26 @@ export function useThread(conversationId: string | null) {
     [participantPubky, reload],
   );
 
+  const unsend = useCallback(
+    async (message: LinkMessage) => {
+      if (!participantPubky || message.senderPubky !== localPubky) {
+        throw new Error("Could not unsend this message.");
+      }
+      try {
+        await ensureWriter();
+        await LinkService.unsendDm(participantPubky, message.eventId);
+        await pollerRef.current?.kick();
+        await reload();
+      } catch (err) {
+        if (!isReadOnlyTabError(err)) {
+          setError("Could not unsend this message.");
+        }
+        throw err;
+      }
+    },
+    [localPubky, participantPubky, reload],
+  );
+
   return {
     localPubky,
     participantPubky,
@@ -245,5 +265,6 @@ export function useThread(conversationId: string | null) {
     linkReady,
     tagsByTarget,
     toggleTag,
+    unsend,
   };
 }

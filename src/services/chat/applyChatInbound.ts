@@ -27,6 +27,7 @@ import {
   type ChatTagRow,
 } from "../../types/chatKinds";
 import type { PubkyKey } from "../../types";
+import { isPaykitPaymentKind } from "../../types/payment";
 
 const tagRate = new Map<string, number[]>();
 
@@ -195,6 +196,7 @@ async function applyReceiptEnvelope(
     if (target.senderPubky === senderPubky) continue;
     selfOnly = false;
     if (target.senderPubky !== ownerPubky) continue;
+    if (target.deleted || target.deliveryState === "unsent") continue;
     await StorageService.upgradeMessageDelivery(ownerPubky, eventId, next, envelope.channel_id);
     applied += 1;
   }
@@ -299,6 +301,7 @@ async function applyDeleteEnvelope(
   );
   if (!target) return "deferred";
   if (target.senderPubky !== senderPubky) return { error: "wrong-author" };
+  if (isPaykitPaymentKind(target.kind)) return { error: "not-deletable" };
   await StorageService.tombstoneLinkMessage({
     ownerPubky,
     conversationId,

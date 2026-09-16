@@ -38,7 +38,13 @@ import type { DeliveryQueueItem, PubkyKey } from "../../types";
 import { GROUP_MESSAGE_KIND, decodeGroupEnvelope, isGroupWireKind, LINK_GROUP_FANOUT_PAYLOAD_TYPE, peekEnvelopeKind } from "../../types/group";
 import { applyGroupInbound } from "../group/applyGroupInbound";
 import { applyKnownChatKind, replayDeferredChatTags } from "../chat/applyChatInbound";
-import { buildChatReceiptEnvelope, buildChatTagEnvelope, CHAT_RECEIPT_EVENT_IDS_CAP, dmScopeKey } from "../../types/chatKinds";
+import {
+  buildChatDeleteEnvelope,
+  buildChatReceiptEnvelope,
+  buildChatTagEnvelope,
+  CHAT_RECEIPT_EVENT_IDS_CAP,
+  dmScopeKey,
+} from "../../types/chatKinds";
 import { CHAT_KINDS_V, normalizeChatKindsV } from "../../types/receiverMarker";
 import { persistPeerChatKindsVFromMarker } from "./chatKindsAdvertisement";
 import { classifyInboundPeer, wotInputFromContact } from "./wotGate";
@@ -57,6 +63,7 @@ import {
 import { applyPaymentInbound } from "../payments/applyPaymentInbound";
 import { isPaykitPaymentKind } from "../../types/payment";
 import { shouldDropOversizedKnownInbound } from "./inboundEnvelope";
+import { cachePathsForAttachment } from "../attachments/fileIo";
 import { CHAT_DELETE_DEFERRED_TTL_MS } from "../../flags/config";
 import {
   drainReceiverPublishRetry,
@@ -608,7 +615,7 @@ export const LinkService = {
             payload.kind,
             payload.eventId,
           );
-          if (!row || !isDeliveryOwed(row.deliveryState)) return;
+          if (!row || row.deleted || !isDeliveryOwed(row.deliveryState)) return;
         }
         await deliverQueuedPayloadWithBudget(item, payload);
       });
@@ -760,6 +767,84 @@ export const LinkService = {
   ): Promise<void> {
     const ownerPubky = await requireOwner();
     await sendControlPam({ ownerPubky, peerPubky, kind, eventId, rawJson });
+  },
+
+  async unsendDm(peerPubky: PubkyKey, eventId: string): Promise<void> {
+    return withQueue(peerPubky, async () => {
+      const ownerPubky = await requireOwner();
+      const target = await StorageService.getLinkMessageByEventId(
+        ownerPubky,
+        ownerPubky,
+        eventId,
+      );
+      if (
+        !target ||
+        target.peerPubky !== peerPubky ||
+        target.direction !== "sent" ||
+        target.deleted
+      ) {
+        throw new Error("Message is no longer available to unsend");
+      }
+      if (isPaykitPaymentKind(target.kind)) {
+        throw new Error("Payment messages cannot be unsent");
+      }
+      const attachment =
+        target.kind === CHAT_ATTACHMENT_KIND
+          ? await StorageService.getAttachment(ownerPubky, ownerPubky, eventId)
+          : null;
+      if ((await KeyStore.getPubky()) !== ownerPubky) {
+        throw new Error("Message is no longer available to unsend");
+      }
+      const built = buildChatDeleteEnvelope({
+        eventId: crypto.randomUUID(),
+        sentAt: Date.now(),
+        targetEventId: eventId,
+      });
+      const queueItem: DeliveryQueueItem = {
+        id: crypto.randomUUID(),
+        messageId: built.envelope.event_id,
+        recipientPubky: peerPubky,
+        payload: JSON.stringify({
+          type: LINK_CONTROL_PAYLOAD_TYPE,
+          ownerPubky,
+          peerPubky,
+          senderPubky: ownerPubky,
+          kind: CHAT_DELETE_KIND,
+          eventId: built.envelope.event_id,
+          rawJson: built.json,
+        } satisfies ControlRetryPayload),
+        attempts: 0,
+        nextRetryAt: Date.now(),
+        createdAt: Date.now(),
+      };
+      const redactedRawJson = JSON.stringify({
+        kind: target.kind,
+        event_id: target.eventId,
+        sent_at: target.sentAt,
+        deleted: true,
+      });
+      const tombstoned = await StorageService.tombstoneLinkMessage({
+        ownerPubky,
+        peerPubky,
+        conversationId: target.conversationId,
+        eventId,
+        senderPubky: ownerPubky,
+        redactedRawJson,
+        controlQueueItem: queueItem,
+        ...(attachment
+          ? {
+              attachmentKeyService: KeyStore.attachmentKeyService(
+                ownerPubky,
+                ownerPubky,
+                eventId,
+              ),
+              attachmentCachePaths: cachePathsForAttachment(attachment),
+            }
+          : {}),
+      });
+      if (!tombstoned) return;
+      await dispatchPersistedControlPam(ownerPubky, peerPubky, queueItem.id);
+    });
   },
 
   async collectInboxCandidates(): Promise<PubkyKey[]> {
@@ -2998,7 +3083,7 @@ async function reconcilePaymentPendingSends(): Promise<void> {
       await StorageService.clearPaymentPendingEvent(ownerPubky, eventId);
       continue;
     }
-    if (message.deliveryState !== "sending") continue;
+    if (message.deleted || message.deliveryState !== "sending") continue;
     const secretFingerprint = await fingerprintForRetryHeal(ownerPubky, ownerPubky, message.kind, eventId);
     // R4-F2: check + insert under the peer mutex so a heal enqueue is
     // ordered against in-flight deliveries for that peer, never mid-encrypt.
@@ -3034,7 +3119,7 @@ async function reconcileLostOwedDeliveries(): Promise<void> {
   for (const message of owed) {
     // Defense in depth (R4-F3/F4): `failed` is terminal for heal even if a
     // caller ever widens `listOwedOutboundLinkMessages` again.
-    if (message.deliveryState !== "sending") continue;
+    if (message.deleted || message.deliveryState !== "sending") continue;
     const secretFingerprint = await fingerprintForRetryHeal(
       ownerPubky,
       message.senderPubky,
@@ -3290,20 +3375,34 @@ async function sendControlPam(input: {
     nextRetryAt: ts,
     createdAt: ts,
   });
+  await dispatchPersistedControlPam(input.ownerPubky, input.peerPubky, queueId);
+}
+
+async function dispatchPersistedControlPam(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  queueId: string,
+): Promise<void> {
+  if ((await KeyStore.getPubky()) !== ownerPubky) return;
   // Must not call withQueue: syncPeerLocked already holds the per-peer mutex.
   try {
-    const outcome = await ensureLinkLocked(input.peerPubky, true, false, "auto");
+    const item = await StorageService.getDeliveryQueueItem(queueId);
+    if (!item) return;
+    const payload = parseRetryPayload(item.payload);
+    if (!payload || payload.type !== LINK_CONTROL_PAYLOAD_TYPE) return;
+    const outcome = await ensureLinkLocked(peerPubky, true, false, "auto");
     if (outcome !== "ready") return;
-    const handle = requireEstablishedHandle(input.ownerPubky, input.peerPubky);
-    const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, input.rawJson);
+    if ((await KeyStore.getPubky()) !== ownerPubky) return;
+    const handle = requireEstablishedHandle(ownerPubky, peerPubky);
+    const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, payload.rawJson);
     await StorageService.finalizeControlSend({
-      ownerPubky: input.ownerPubky,
-      peerPubky: input.peerPubky,
+      ownerPubky,
+      peerPubky,
       snapshot,
-      queueId,
+      queueId: item.id,
     });
   } catch (err) {
-    console.warn(`[LinkService] Control PAM send deferred for ${input.peerPubky}:`, errorMessage(err));
+    console.warn(`[LinkService] Control PAM send deferred for ${peerPubky}:`, errorMessage(err));
   }
 }
 
@@ -3405,7 +3504,7 @@ async function emitReceiptsForOpenThread(input: {
     200,
   );
   const ids = messages
-    .filter((message) => message.senderPubky === input.peerPubky)
+    .filter((message) => message.senderPubky === input.peerPubky && !message.deleted)
     .map((message) => message.eventId);
   await emitReceiptsToAuthor({
     ownerPubky: input.ownerPubky,

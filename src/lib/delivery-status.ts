@@ -1,6 +1,6 @@
 import type { LinkDeliveryState } from "@/types/link";
 
-export type DeliveryStatusLabel = "Queued" | "Sent" | "Delivered" | "Read" | "Failed";
+export type DeliveryStatusLabel = "Queued" | "Sent" | "Delivered" | "Read" | "Failed" | "Unsent";
 
 export const QUEUED_HANDSHAKE_SUBTITLE =
   "Waiting for the other person — retrying if they switched devices.";
@@ -40,6 +40,8 @@ export function formatDeliveryStatus(
   state: LinkDeliveryState | string,
 ): DeliveryStatusLabel {
   switch (state) {
+    case "unsent":
+      return "Unsent";
     case "sending":
       return "Queued";
     case "failed":
@@ -66,6 +68,7 @@ export function queuedThreadSubtitle(input: {
   if (input.linkStatus === "restoring") return "Restoring encrypted link…";
   if (input.linkStatus === "ready") return null;
   if (input.linkStatus === "error") return CONNECTION_CHANGED_RETRY;
+  if (input.lastDeliveryState === "unsent") return null;
   if (input.lastDeliveryState === "sent" || input.lastDeliveryState === "delivered") return null;
   if (input.linkStatus === "established") return null;
   const handshake =

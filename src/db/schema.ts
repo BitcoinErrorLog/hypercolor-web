@@ -102,6 +102,11 @@ export const SCHEMA_V22_STATEMENTS: readonly string[] = [
     ON chat_pending_tags(owner_pubky, peer_pubky, target_event_id, expires_at)`,
 ];
 
+/** Schema v23 — DM unsend tombstone state. */
+export const SCHEMA_V23_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+];
+
 /**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the
@@ -811,7 +816,7 @@ export const SCHEMA_V4_STATEMENTS: readonly string[] = [
     body            TEXT    NOT NULL,
     sent_at         INTEGER NOT NULL,
     received_at     INTEGER,
-    delivery_state  TEXT    NOT NULL,              -- 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
+    delivery_state  TEXT    NOT NULL,              -- 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unsent'
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     PRIMARY KEY (owner_pubky, sender_pubky, kind, event_id)

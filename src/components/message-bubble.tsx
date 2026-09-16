@@ -11,6 +11,8 @@ import { CHAT_ATTACHMENT_KIND } from "@/types/attachment";
 import type { LinkMessage } from "@/types/link";
 import type { ChatTagAggregate } from "@/types/chatKinds";
 import { TagChips, TagPicker } from "@/components/tag-picker";
+import { ModalSheet } from "@/components/ui/sheet";
+import { isPaykitPaymentKind } from "@/types/payment";
 import {
   GROUP_MESSAGE_KIND,
   GROUP_MEMBERSHIP_KIND,
@@ -36,6 +38,7 @@ export function DmMessageBubble({
   mine,
   onRetry,
   onCopy,
+  onUnsend,
   tags = [],
   onToggleTag,
 }: {
@@ -44,11 +47,15 @@ export function DmMessageBubble({
   mine: boolean;
   onRetry?: () => void;
   onCopy?: () => void;
+  onUnsend?: () => Promise<void>;
   tags?: readonly ChatTagAggregate[];
   onToggleTag?: (label: string, mine: boolean) => void;
 }) {
   const failed = mine && isFailedDelivery(message.deliveryState);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [unsendOpen, setUnsendOpen] = useState(false);
+  const [unsending, setUnsending] = useState(false);
+  const [unsendError, setUnsendError] = useState(false);
   return (
     <div className={`flex ${mine ? "justify-end" : "justify-start"}`} data-testid="dmMessage" data-surface="message-bubble">
       <div
@@ -60,14 +67,18 @@ export function DmMessageBubble({
           setPickerOpen(true);
         }}
       >
-        {attachmentSlot ?? (
-          <MessageBody text={message.body} />
+        {message.deleted ? (
+          <p className="italic opacity-70">Message unsent</p>
+        ) : (
+          attachmentSlot ?? <MessageBody text={message.body} />
         )}
         <TagChips tags={tags} onToggle={onToggleTag} />
-        <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
-          {formatClock(message.sentAt)}
-          {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
-        </p>
+        {!message.deleted ? (
+          <p className={`hc-meta ${mine ? "hc-on-brand-muted" : "text-muted-foreground"}`}>
+            {formatClock(message.sentAt)}
+            {mine ? ` · ${deliveryLabel(message.deliveryState)}` : ""}
+          </p>
+        ) : null}
         <div className="flex flex-wrap gap-1">
           {onToggleTag ? (
             <button
@@ -78,13 +89,25 @@ export function DmMessageBubble({
               Tag
             </button>
           ) : null}
-          {onCopy ? (
+          {onCopy && !message.deleted ? (
             <button
               type="button"
               className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
               onClick={onCopy}
             >
               Copy
+            </button>
+          ) : null}
+          {mine && onUnsend && !message.deleted && !isPaykitPaymentKind(message.kind) ? (
+            <button
+              type="button"
+              className="inline-flex min-h-11 items-center text-sm underline"
+              onClick={() => {
+                setUnsendError(false);
+                setUnsendOpen(true);
+              }}
+            >
+              Unsend
             </button>
           ) : null}
         </div>
@@ -98,6 +121,53 @@ export function DmMessageBubble({
             Retry
           </Button>
         ) : null}
+        <ModalSheet
+          open={unsendOpen}
+          onClose={() => {
+            if (!unsending) setUnsendOpen(false);
+          }}
+          role="alertdialog"
+          titleId={`unsend-title-${message.eventId}`}
+          descriptionId={`unsend-body-${message.eventId}`}
+          testId="unsendDialog"
+          surface="unsend-confirm"
+        >
+          <h2 id={`unsend-title-${message.eventId}`} className="text-lg font-semibold">
+            Unsend message
+          </h2>
+          <p id={`unsend-body-${message.eventId}`} className="text-sm text-muted-foreground">
+            This message will be unsent for everyone.
+          </p>
+          {unsendError ? <p className="text-sm hc-danger-text">Could not unsend this message.</p> : null}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={unsending}
+              data-testid="unsendCancel"
+              onClick={() => setUnsendOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={unsending}
+              data-testid="unsendConfirm"
+              onClick={() => {
+                if (!onUnsend || unsending) return;
+                setUnsending(true);
+                setUnsendError(false);
+                void onUnsend()
+                  .then(() => setUnsendOpen(false))
+                  .catch(() => setUnsendError(true))
+                  .finally(() => setUnsending(false));
+              }}
+            >
+              {unsending ? "Unsending…" : "Unsend"}
+            </Button>
+          </div>
+        </ModalSheet>
       </div>
     </div>
   );

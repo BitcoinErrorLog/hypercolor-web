@@ -400,6 +400,19 @@ describe("link schema v13 (real SQL via better-sqlite3)", () => {
     );
   });
 
+  it("adds the owner-scoped DM tombstone column", async () => {
+    const db = openMemoryDb();
+    await runMigrations(db);
+
+    const columns = (db.executeSync("PRAGMA table_info(link_messages)").rows ?? []).map(
+      (column) => column.name,
+    );
+    expect(columns).toContain("deleted");
+    expect(
+      db.executeSync("SELECT deleted FROM link_messages").rows ?? [],
+    ).toEqual([]);
+  });
+
   it("creates v11 payment tables with owner-scoped primary key", async () => {
     const db = openMemoryDb();
     setDbForTests(db);
