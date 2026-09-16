@@ -81,6 +81,27 @@ export const SCHEMA_V21_STATEMENTS: readonly string[] = [
   `ALTER TABLE link_stream_items ADD COLUMN processing_error_category TEXT`,
 ];
 
+/** Schema v22 — bounded deferred DM tag replay. */
+export const SCHEMA_V22_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS chat_pending_tags (
+    owner_pubky          TEXT NOT NULL,
+    peer_pubky           TEXT NOT NULL,
+    sender_pubky         TEXT NOT NULL,
+    event_id             TEXT NOT NULL,
+    target_event_id      TEXT NOT NULL,
+    target_author_pubky  TEXT NOT NULL,
+    label                TEXT NOT NULL,
+    op                   TEXT NOT NULL,
+    channel_id           TEXT,
+    sent_at              INTEGER NOT NULL,
+    received_at          INTEGER NOT NULL,
+    expires_at            INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky, sender_pubky, event_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_pending_tags_replay
+    ON chat_pending_tags(owner_pubky, peer_pubky, target_event_id, expires_at)`,
+];
+
 /**
  * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
  * decrypted message search index. No wire kinds. FTS5 is created when the

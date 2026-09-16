@@ -3,7 +3,7 @@ import { setDbForTests } from "../../db";
 import { runMigrations } from "../../db/migrations";
 import { openMemoryDb } from "../../db/__tests__/betterSqliteAdapter";
 import { StorageService } from "../StorageService";
-import { applyKnownChatKind } from "./applyChatInbound";
+import { applyKnownChatKind, replayDeferredChatTags } from "./applyChatInbound";
 import { buildChatReceiptEnvelope, buildChatTagEnvelope, dmScopeKey } from "../../types/chatKinds";
 import { CHAT_DELETE_KIND, CHAT_MESSAGE_KIND, buildDmConversationId, type LinkMessage } from "../../types/link";
 import { GROUP_MESSAGE_KIND } from "../../types/group";
@@ -92,6 +92,38 @@ describe("apply chat.tag.v0 / chat.receipt.v0", () => {
     const rows = await StorageService.listChatTagsForScope(OWNER, dmScopeKey(PEER));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.taggerPubky).toBe(PEER);
+  });
+
+  it("bounds hostile deferred tags and replays one when its target arrives", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    const targetEventId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    for (let index = 0; index < 1000; index += 1) {
+      const eventId = `${String(index).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+      const envelope = buildChatTagEnvelope({
+        eventId,
+        sentAt: ts,
+        targetEventId,
+        targetAuthorPubky: OWNER,
+        label: "ok",
+        op: "add",
+      });
+      await expect(
+        applyKnownChatKind({
+          ownerPubky: OWNER,
+          senderPubky: PEER,
+          peerPubky: PEER,
+          rawJson: envelope.json,
+          receivedAt: ts,
+        }),
+      ).resolves.toBe("deferred");
+    }
+    expect(db.executeSync("SELECT COUNT(*) AS n FROM chat_pending_tags").rows?.[0]?.n).toBe(32);
+
+    await StorageService.saveLinkMessage(dm({ eventId: targetEventId, senderPubky: OWNER }));
+    await replayDeferredChatTags(OWNER, PEER);
+    await expect(StorageService.listChatTagsForScope(OWNER, dmScopeKey(PEER))).resolves.toHaveLength(1);
   });
 
   it("applies receipts monotonically and drops self ids", async () => {

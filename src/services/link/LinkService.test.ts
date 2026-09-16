@@ -117,6 +117,8 @@ vi.mock("@/services/StorageService", () => ({
     deleteArchivedLink: vi.fn(),
     upsertArchivedLink: vi.fn(),
     getArchivedLink: vi.fn(),
+    listPendingChatTags: vi.fn(async () => []),
+    deletePendingChatTag: vi.fn(),
   },
 }));
 

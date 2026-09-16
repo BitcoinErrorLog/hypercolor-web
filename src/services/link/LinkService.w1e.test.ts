@@ -26,6 +26,7 @@ const receivePrivate = vi.fn(
 const upsertArchivedLink = vi.fn();
 const getArchivedLink = vi.fn();
 const applyKnownChatKind = vi.fn();
+const replayDeferredChatTags = vi.fn();
 
 vi.mock("./PaykitLinkWeb", async () => {
   const actual = await vi.importActual<typeof import("./PaykitLinkWeb")>("./PaykitLinkWeb");
@@ -110,11 +111,14 @@ vi.mock("@/services/StorageService", () => ({
     removeQueueItemsAndAbandonOwedForPeer: vi.fn(),
     deleteLinkStreamItemsForPeer: vi.fn(),
     deleteLinkMessagesForPeer: vi.fn(),
+    listPendingChatTags: vi.fn(async () => []),
+    deletePendingChatTag: vi.fn(),
   },
 }));
 
 vi.mock("../chat/applyChatInbound", () => ({
   applyKnownChatKind: (...args: unknown[]) => applyKnownChatKind(...args),
+  replayDeferredChatTags: (...args: unknown[]) => replayDeferredChatTags(...args),
 }));
 
 vi.mock("@/services/KeyStore", () => ({

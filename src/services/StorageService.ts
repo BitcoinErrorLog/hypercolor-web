@@ -28,12 +28,13 @@ import type {
   LinkStreamItemInput,
   StoredLinkStatus,
 } from '../types/link';
-import { CHAT_MESSAGE_KIND } from '../types/link';
+import { CHAT_MESSAGE_KIND, CHAT_TAG_KIND } from '../types/link';
 import { normalizeChatKindsV } from '../types/receiverMarker';
 import {
   CHAT_TAG_LIVE_CAP_PER_TARGET,
   dmScopeKey,
   type ChatDevicePrefs,
+  type ChatTagEnvelope,
   type ChatTagRow,
 } from '../types/chatKinds';
 import type {
@@ -44,7 +45,12 @@ import type {
   GroupMessage,
 } from '../types/group';
 import { peekEnvelopeKind, GROUP_MESSAGE_KIND, PUBLIC_CHANNEL_MESSAGE_KIND } from '../types/group';
-import { GROUP_DEFERRED_QUOTA_PER_SENDER, GROUP_DEFERRED_TTL_MS } from '../flags/config';
+import {
+  CHAT_TAG_DEFERRED_QUOTA_PER_SENDER,
+  CHAT_TAG_DEFERRED_TTL_MS,
+  GROUP_DEFERRED_QUOTA_PER_SENDER,
+  GROUP_DEFERRED_TTL_MS,
+} from '../flags/config';
 import type { AttachmentRecord, AttachmentResolveState } from '../types/attachment';
 import {
   CHAT_ATTACHMENT_KIND,
@@ -787,7 +793,9 @@ export const StorageService = {
     const db = await getDb();
     db.executeSync(
       `UPDATE links
-       SET snapshot = ?, status = ?, consecutive_failures = 0, updated_at = ?
+       SET snapshot = ?, status = ?, consecutive_failures = 0,
+           reconnect_error_category = NULL, reconnect_required_at = NULL,
+           updated_at = ?
        WHERE owner_pubky = ? AND peer_pubky = ?`,
       [snapshot, status, now(), ownerPubky, peerPubky],
     );
@@ -1368,6 +1376,7 @@ export const StorageService = {
       db.executeSync('DELETE FROM contact_nicknames WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM thread_local_state WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM chat_tags WHERE owner_pubky = ?', [ownerPubky]);
+      db.executeSync('DELETE FROM chat_pending_tags WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM chat_pins WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM chat_group_invites WHERE owner_pubky = ?', [ownerPubky]);
       db.executeSync('DELETE FROM chat_device_prefs WHERE owner_pubky = ?', [ownerPubky]);
@@ -2626,6 +2635,98 @@ export const StorageService = {
     return 'inserted';
   },
 
+  async deferChatTag(input: {
+    ownerPubky: PubkyKey;
+    peerPubky: PubkyKey;
+    senderPubky: PubkyKey;
+    eventId: string;
+    targetEventId: string;
+    targetAuthorPubky: string;
+    label: string;
+    op: 'add' | 'remove';
+    channelId?: string;
+    sentAt: number;
+    receivedAt: number;
+  }): Promise<'inserted' | 'duplicate' | 'cap'> {
+    const db = await getDb();
+    const ts = now();
+    db.executeSync('DELETE FROM chat_pending_tags WHERE expires_at <= ?', [ts]);
+    const existing = db.executeSync(
+      `SELECT 1 FROM chat_pending_tags
+       WHERE owner_pubky = ? AND peer_pubky = ? AND sender_pubky = ? AND event_id = ?`,
+      [input.ownerPubky, input.peerPubky, input.senderPubky, input.eventId],
+    );
+    if ((existing.rows?.length ?? 0) > 0) return 'duplicate';
+    const count = db.executeSync(
+      `SELECT COUNT(*) AS n FROM chat_pending_tags
+       WHERE owner_pubky = ? AND peer_pubky = ? AND sender_pubky = ?`,
+      [input.ownerPubky, input.peerPubky, input.senderPubky],
+    ).rows?.[0];
+    if (Number(count?.n ?? 0) >= CHAT_TAG_DEFERRED_QUOTA_PER_SENDER) return 'cap';
+    db.executeSync(
+      `INSERT INTO chat_pending_tags
+        (owner_pubky, peer_pubky, sender_pubky, event_id, target_event_id,
+         target_author_pubky, label, op, channel_id, sent_at, received_at, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.ownerPubky,
+        input.peerPubky,
+        input.senderPubky,
+        input.eventId,
+        input.targetEventId,
+        input.targetAuthorPubky,
+        input.label,
+        input.op,
+        input.channelId ?? null,
+        input.sentAt,
+        input.receivedAt,
+        ts + CHAT_TAG_DEFERRED_TTL_MS,
+      ],
+    );
+    return 'inserted';
+  },
+
+  async listPendingChatTags(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+  ): Promise<Array<ChatTagEnvelope & { senderPubky: PubkyKey }>> {
+    const db = await getDb();
+    const ts = now();
+    db.executeSync('DELETE FROM chat_pending_tags WHERE expires_at <= ?', [ts]);
+    const rows = db.executeSync(
+      `SELECT * FROM chat_pending_tags
+       WHERE owner_pubky = ? AND peer_pubky = ?
+       ORDER BY received_at ASC`,
+      [ownerPubky, peerPubky],
+    ).rows ?? [];
+    return rows.map(row => ({
+      senderPubky: String(row.sender_pubky),
+      version: 1,
+      kind: CHAT_TAG_KIND,
+      event_id: String(row.event_id),
+      sent_at: Number(row.sent_at),
+      target_event_id: String(row.target_event_id),
+      target_author_pubky: String(row.target_author_pubky),
+      label: String(row.label),
+      op: row.op === 'remove' ? 'remove' : 'add',
+      ...(row.channel_id == null ? {} : { channel_id: String(row.channel_id) }),
+    }));
+  },
+
+  async deletePendingChatTag(
+    ownerPubky: PubkyKey,
+    peerPubky: PubkyKey,
+    senderPubky: PubkyKey,
+    eventId: string,
+  ): Promise<void> {
+    const db = await getDb();
+    db.executeSync(
+      `DELETE FROM chat_pending_tags
+       WHERE owner_pubky = ? AND peer_pubky = ? AND sender_pubky = ? AND event_id = ?`,
+      [ownerPubky, peerPubky, senderPubky, eventId],
+    );
+  },
+
   async deleteChatTag(input: {
     ownerPubky: PubkyKey;
     scopeKey: string;
@@ -2896,7 +2997,12 @@ function rowToLink(row: any): LinkRecord {
       typeof row.last_seen_peer_marker_pk === 'string' ? row.last_seen_peer_marker_pk : null,
     chatKindsV: normalizeChatKindsV(row.chat_kinds_v),
     reconnectErrorCategory:
-      typeof row.reconnect_error_category === 'string' ? row.reconnect_error_category : null,
+      row.reconnect_error_category === 'network' ||
+      row.reconnect_error_category === 'protocol' ||
+      row.reconnect_error_category === 'application' ||
+      row.reconnect_error_category === 'unknown'
+        ? row.reconnect_error_category
+        : null,
     reconnectRequiredAt:
       typeof row.reconnect_required_at === 'number' ? row.reconnect_required_at : null,
     updatedAt: row.updated_at,

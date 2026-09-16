@@ -19,6 +19,7 @@ import {
   parseChatReceiptV0,
   parseChatTagV0,
   parseChatTypingV0,
+  normalizeChatTagLabel,
   serializedUtf8Bytes,
   type ChatKindParseCtx,
 } from "./chatKinds";
@@ -32,6 +33,23 @@ const CHAT_LWW = 6 * 60 * 1000;
 const ctx: ChatKindParseCtx = { senderPubky: pk, ownerPubky: "b".repeat(52), peerTrust: "accepted", now: ts };
 
 describe("chat kinds v1.1 vectors", () => {
+  it("shares grapheme-based emoji vectors with mobile", () => {
+    const accepted = [
+      "😀",
+      "❤️",
+      "👍🏽",
+      "🏴‍☠️",
+      "👨‍👩‍👧‍👦",
+      "🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+      "🇺🇸",
+      "🇯🇵",
+    ];
+    for (const label of accepted) expect(normalizeChatTagLabel(label)).toBe(label);
+    expect(normalizeChatTagLabel("\u0001")).toBeNull();
+    expect(normalizeChatTagLabel("ok👍")).toBeNull();
+    expect(normalizeChatTagLabel("😀".repeat(9))).toBeNull();
+  });
+
   it("accepts valid tag word and emoji", () => {
     const word = buildChatTagEnvelope({
       eventId: uuid,

@@ -22,6 +22,7 @@ import {
   SCHEMA_V19_STATEMENTS,
   SCHEMA_V20_STATEMENTS,
   SCHEMA_V21_STATEMENTS,
+  SCHEMA_V22_STATEMENTS,
 } from './schema';
 import type { SqlExecutor } from './sql';
 
@@ -41,7 +42,7 @@ import type { SqlExecutor } from './sql';
  * `ALTER TABLE … ADD COLUMN IF NOT EXISTS`, so we guard via table_info.
  */
 
-const CURRENT_VERSION = 21;
+const CURRENT_VERSION = 22;
 
 type Migration = {
   version: number;
@@ -70,6 +71,7 @@ const MIGRATIONS: readonly Migration[] = [
   { version: 19, statements: SCHEMA_V19_STATEMENTS },
   { version: 20, statements: SCHEMA_V20_STATEMENTS },
   { version: 21, statements: SCHEMA_V21_STATEMENTS },
+  { version: 22, statements: SCHEMA_V22_STATEMENTS },
 ];
 
 export function tableExists(db: SqlExecutor, table: string): boolean {

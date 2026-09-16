@@ -98,6 +98,7 @@ function Probe({ initialDraft = "" }: { initialDraft?: string }) {
       <button type="button" data-testid="send" onClick={() => void thread.send()}>
         send
       </button>
+      <output data-testid="error">{thread.error ?? ""}</output>
     </div>
   );
 }
@@ -173,5 +174,21 @@ describe("useThread inbox poll", () => {
     });
     expect(syncInbox.mock.calls.length).toBeGreaterThan(syncsBeforeSend);
     expect(syncInbox).toHaveBeenCalledWith([PEER]);
+  });
+
+  it("keeps thrown URLs out of rendered send errors", async () => {
+    sendDm.mockRejectedValueOnce(new Error("https://attacker.example/private"));
+    await render(<Probe initialDraft="hello" />);
+    await act(async () => {
+      host.querySelector("[data-testid=send]")?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await vi.waitFor(() => {
+      expect(host.querySelector("[data-testid=error]")?.textContent).toBe(
+        "Could not send this message.",
+      );
+    });
+    expect(host.textContent).not.toContain("attacker.example");
   });
 });

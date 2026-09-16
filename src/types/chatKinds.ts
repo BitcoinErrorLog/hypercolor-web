@@ -198,10 +198,12 @@ function graphemeCount(value: string): number {
 
 function isAllowedEmojiTagLabel(label: string): boolean {
   if (graphemeCount(label) !== 1) return false;
+  if (/^\p{Regional_Indicator}{2}$/u.test(label)) return true;
   for (const ch of label) {
     const code = ch.codePointAt(0);
     if (code === undefined) return false;
     if (code === 0x200d || (code >= 0xfe00 && code <= 0xfe0f)) continue;
+    if (code >= 0xe0000 && code <= 0xe007f) continue;
     if (isInvisibleOrControlCodePoint(code)) return false;
   }
   return /\p{Extended_Pictographic}/u.test(label);

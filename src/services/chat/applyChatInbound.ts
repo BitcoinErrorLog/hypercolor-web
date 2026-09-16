@@ -138,11 +138,27 @@ async function applyTagEnvelope(
   senderPubky: PubkyKey,
   peerPubky: PubkyKey,
   envelope: ChatTagEnvelope,
+  receivedAt = Date.now(),
 ): Promise<"applied" | "deferred" | "processed" | { error: ChatKindParseReason }> {
   if (envelope.channel_id && !(await senderIsActiveMember(ownerPubky, envelope.channel_id, senderPubky))) {
     return { error: "not-member" };
   }
-  if (!(await targetExists(ownerPubky, peerPubky, envelope))) return "deferred";
+  if (!(await targetExists(ownerPubky, peerPubky, envelope))) {
+    await StorageService.deferChatTag({
+      ownerPubky,
+      peerPubky,
+      senderPubky,
+      eventId: envelope.event_id,
+      targetEventId: envelope.target_event_id,
+      targetAuthorPubky: envelope.target_author_pubky,
+      label: envelope.label,
+      op: envelope.op,
+      channelId: envelope.channel_id,
+      sentAt: envelope.sent_at,
+      receivedAt,
+    });
+    return "deferred";
+  }
   if (envelope.op === "remove") {
     await StorageService.deleteChatTag({
       ownerPubky,
@@ -191,6 +207,7 @@ export async function applyKnownChatKind(input: {
   senderPubky: PubkyKey;
   peerPubky: PubkyKey;
   rawJson: string;
+  receivedAt?: number;
 }): Promise<ChatKindApplyOutcome> {
   const kind = peekEnvelopeKind(input.rawJson);
   const ctx = ctxFor(input.ownerPubky, input.senderPubky);
@@ -199,12 +216,24 @@ export async function applyKnownChatKind(input: {
     if ("error" in parsed) {
       return parsed.error === "invalid-label" ? "processed" : { error: parsed.error };
     }
-    return applyTagEnvelope(input.ownerPubky, input.senderPubky, input.peerPubky, parsed.ok);
+    return applyTagEnvelope(
+      input.ownerPubky,
+      input.senderPubky,
+      input.peerPubky,
+      parsed.ok,
+      input.receivedAt,
+    );
   }
   if (kind === CHAT_REACTION_KIND) {
     const parsed = parseChatReactionAlias(input.rawJson, ctx);
     if ("error" in parsed) return { error: parsed.error };
-    return applyTagEnvelope(input.ownerPubky, input.senderPubky, input.peerPubky, parsed.ok);
+    return applyTagEnvelope(
+      input.ownerPubky,
+      input.senderPubky,
+      input.peerPubky,
+      parsed.ok,
+      input.receivedAt,
+    );
   }
   if (kind === CHAT_RECEIPT_KIND) {
     const parsed = parseChatReceiptV0(input.rawJson, ctx);
@@ -237,6 +266,23 @@ export async function applyKnownChatKind(input: {
     return "processed";
   }
   return "unprocessed";
+}
+
+export async function replayDeferredChatTags(
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+): Promise<void> {
+  for (const envelope of await StorageService.listPendingChatTags(ownerPubky, peerPubky)) {
+    const outcome = await applyTagEnvelope(ownerPubky, envelope.senderPubky, peerPubky, envelope);
+    if (outcome !== "deferred") {
+      await StorageService.deletePendingChatTag(
+        ownerPubky,
+        peerPubky,
+        envelope.senderPubky,
+        envelope.event_id,
+      );
+    }
+  }
 }
 
 async function applyDeleteEnvelope(

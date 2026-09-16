@@ -179,6 +179,37 @@ describe("StorageService (v13 SQL + KeyStore)", () => {
     expect(link?.reconnectRequiredAt).toEqual(expect.any(Number));
   });
 
+  it("clears reconnect metadata and whitelists link error categories on snapshot update", async () => {
+    const db = openMemoryDb();
+    setDbForTests(db);
+    await runMigrations(db);
+    await StorageService.upsertLink({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "reconnect_required",
+      snapshot: "old",
+      remoteNoisePublicKey: "noise",
+      localReceiverPath: "hypercolor/wallet",
+      remoteReceiverPath: "hypercolor/wallet",
+      consecutiveFailures: 4,
+      reconnectErrorCategory: "network",
+      reconnectRequiredAt: 123,
+    });
+    db.executeSync(
+      "UPDATE links SET reconnect_error_category = 'forged' WHERE owner_pubky = ? AND peer_pubky = ?",
+      [OWNER, PEER],
+    );
+    await StorageService.updateLinkSnapshot(OWNER, PEER, "new", "established");
+    const link = await StorageService.getLink(OWNER, PEER);
+    expect(link).toEqual(expect.objectContaining({
+      snapshot: "new",
+      status: "established",
+      reconnectErrorCategory: null,
+      reconnectRequiredAt: null,
+    }));
+  });
+
   it("clearAccountData wipes owner rows and leaves the other account", async () => {
     const db = openMemoryDb();
     setDbForTests(db);

@@ -46,9 +46,12 @@ export function TagPicker({
 }) {
   const [word, setWord] = useState("");
   const normalizedWord = normalizeChatTagLabel(word);
+  const validLabel =
+    normalizedWord !== null &&
+    (CHAT_KIND_WORD_LABEL.test(normalizedWord) || isEmojiTagLabel(normalizedWord));
   const wordError =
-    word.length > 0 && (normalizedWord === null || !CHAT_KIND_WORD_LABEL.test(normalizedWord))
-      ? "Use 1–32 lowercase letters, numbers, or underscores."
+    word.length > 0 && !validLabel
+      ? "Use 1–32 lowercase letters, numbers, underscores, or one emoji."
       : null;
   if (!open) return null;
   return (
@@ -79,7 +82,7 @@ export function TagPicker({
         className="flex gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          if (!normalizedWord || !CHAT_KIND_WORD_LABEL.test(normalizedWord)) return;
+          if (!normalizedWord || !validLabel) return;
           onPick(normalizedWord);
           setWord("");
           onClose();
@@ -97,7 +100,7 @@ export function TagPicker({
         <button
           type="submit"
           className="min-h-11 px-2 text-sm underline disabled:cursor-not-allowed disabled:opacity-50"
-          disabled={!normalizedWord || !CHAT_KIND_WORD_LABEL.test(normalizedWord)}
+          disabled={!normalizedWord || !validLabel}
         >
           Tag
         </button>

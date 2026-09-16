@@ -20,6 +20,7 @@ import {
   CHAT_DELETE_KIND,
   CHAT_MESSAGE_KIND,
   CHAT_RECEIPT_KIND,
+  CHAT_REACTION_KIND,
   CHAT_TAG_KIND,
   coerceReceiverPath,
   decodeLinkEnvelope,
@@ -36,7 +37,7 @@ import {
 import type { DeliveryQueueItem, PubkyKey } from "../../types";
 import { GROUP_MESSAGE_KIND, decodeGroupEnvelope, isGroupWireKind, LINK_GROUP_FANOUT_PAYLOAD_TYPE, peekEnvelopeKind } from "../../types/group";
 import { applyGroupInbound } from "../group/applyGroupInbound";
-import { applyKnownChatKind } from "../chat/applyChatInbound";
+import { applyKnownChatKind, replayDeferredChatTags } from "../chat/applyChatInbound";
 import { buildChatReceiptEnvelope, buildChatTagEnvelope, CHAT_RECEIPT_EVENT_IDS_CAP, dmScopeKey } from "../../types/chatKinds";
 import { CHAT_KINDS_V, normalizeChatKindsV } from "../../types/receiverMarker";
 import { persistPeerChatKindsVFromMarker } from "./chatKindsAdvertisement";
@@ -2062,11 +2063,10 @@ function assertLinkSendable(
 /**
  * After this device takes over the receiver marker, in-flight initiator
  * handshakes that targeted the previous (dead) published key cannot complete:
- * the peer already answered msg1 against that key. Wipe unestablished rows
- * and re-initiate. Takeover is explicit user intent: clear any exhausted
- * budget first so a long-standby peer is recovered rather than abandoned
- * (queued sends stay queued). Re-initiate with `user` intent so the
- * follow-up does not re-charge.
+ * the peer already answered msg1 against that key. Retire the local
+ * unestablished row and re-initiate. Takeover is explicit user intent:
+ * clear any exhausted budget first so a long-standby peer is recovered
+ * rather than abandoned; queued sends remain queued.
  */
 async function restartQueuedUnestablishedHandshakes(): Promise<void> {
   const ownerPubky = await requireOwner();
@@ -2075,7 +2075,7 @@ async function restartQueuedUnestablishedHandshakes(): Promise<void> {
     if (link.status === "established" || link.status === "reconnect_required") continue;
     await withQueue(link.peerPubky, async () => {
       const current = await StorageService.getLink(ownerPubky, link.peerPubky);
-      if (!current || current.status === "established") return;
+      if (!current || current.status === "established" || current.status === "reconnect_required") return;
       await StorageService.clearHandshakeBudget(ownerPubky, current.peerPubky);
       await retireLocalLinkState(current, { failQueued: false });
       await ensureLinkLocked(current.peerPubky, true, true, "user");
@@ -2307,6 +2307,7 @@ async function routeUnprocessedStreamItems(
       senderPubky: peerPubky,
       peerPubky,
       rawJson: item.rawJson,
+      receivedAt: item.receivedAt,
     });
     if (kindOutcome !== "unprocessed") {
       if (kindOutcome === "applied" && peeked === CHAT_DELETE_KIND) {
@@ -2318,6 +2319,8 @@ async function routeUnprocessedStreamItems(
         peeked === CHAT_DELETE_KIND &&
         Date.now() - item.receivedAt >= CHAT_DELETE_DEFERRED_TTL_MS
       ) {
+        await StorageService.markLinkStreamItemProcessed(item.id);
+      } else if (peeked === CHAT_TAG_KIND || peeked === CHAT_REACTION_KIND) {
         await StorageService.markLinkStreamItemProcessed(item.id);
       } else {
         deferred = true;
@@ -2378,6 +2381,7 @@ async function routeUnprocessedStreamItems(
     await StorageService.saveLinkMessage(row);
     await StorageService.markLinkStreamItemProcessed(item.id);
     received.push(row);
+    await replayDeferredChatTags(ownerPubky, peerPubky);
     await emitReceiptsToAuthor({
       ownerPubky,
       authorPubky: peerPubky,

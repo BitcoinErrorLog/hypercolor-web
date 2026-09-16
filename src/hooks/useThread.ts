@@ -75,7 +75,7 @@ export function useThread(conversationId: string | null) {
     } catch (err) {
       setLoading(false);
       if (!isReadOnlyTabError(err)) {
-        setError(err instanceof Error ? err.message : "Could not load this thread.");
+        setError("Could not load this thread.");
       }
     }
   }, [conversationId, localPubky, participantPubky]);
@@ -138,7 +138,7 @@ export function useThread(conversationId: string | null) {
       await reload();
     } catch (err) {
       if (!isReadOnlyTabError(err)) {
-        setError(err instanceof Error ? err.message : "Could not send this message.");
+        setError("Could not send this message.");
       }
       setDraft(text);
       void emit("app.thread.send_settled", { channel: "dm", outcome: "failed", kind: "text" });
@@ -159,7 +159,7 @@ export function useThread(conversationId: string | null) {
       await reload();
     } catch (err) {
       if (!isReadOnlyTabError(err)) {
-        setError(err instanceof Error ? err.message : "Retry failed.");
+        setError("Retry failed.");
         emitCoarseError("thread", err);
       }
     }
@@ -187,7 +187,7 @@ export function useThread(conversationId: string | null) {
         await reload();
       } catch (err) {
         if (!isReadOnlyTabError(err)) {
-          setError(err instanceof Error ? err.message : "Attachment failed.");
+          setError("Attachment failed.");
         }
         void emit("app.thread.send_settled", {
           channel: "dm",
@@ -216,7 +216,7 @@ export function useThread(conversationId: string | null) {
         await reload();
       } catch (err) {
         if (!isReadOnlyTabError(err)) {
-          setError(err instanceof Error ? err.message : "Could not tag this message.");
+          setError("Could not tag this message.");
         }
       }
     },
