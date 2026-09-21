@@ -21,7 +21,7 @@ export function SessionBanner({ fixtureStatus }: { fixtureStatus?: SessionUiStat
       data-surface="session-banner"
     >
       <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-3">
-        <p>{sessionStatusLabel(status)}</p>
+        <p className="whitespace-nowrap">{sessionStatusLabel(status)}</p>
         <Button
           type="button"
           size="sm"
