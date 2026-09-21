@@ -25,21 +25,6 @@ import {
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = path.join(SCRIPT_ROOT, "vibeware.yaml");
 const BANNED_IDENTIFIERS = /\b(fetch|sendBeacon|XMLHttpRequest|WebSocket)\b/;
-/**
- * Pre-existing writable-surface imports of otherwise-forbidden modules.
- * Exact path + resolved module only; a new file or a new forbidden specifier
- * still fails. Do not grow this list to hide a candidate rewrite.
- */
-export const BASELINE_WRITABLE_IMPORT_WAIVERS = [
-  {
-    path: "src/components/thread-view.tsx",
-    resolved: "src/services/link/provisionReceiver.ts",
-  },
-  {
-    path: "src/components/welcome-page.tsx",
-    resolved: "src/services/ringChannelId.ts",
-  },
-];
 const STATIC_IMPORT_RE =
   /(?:import\s+(?:type\s+)?[\s\S]*?from\s*|export\s+[\s\S]*?from\s*|import\s+)["']([^"']+)["']/g;
 const CALL_IMPORT_RE = /\b(?:require|import)\s*\(/g;
@@ -232,16 +217,7 @@ export function checkWritableImports(manifest, options = {}) {
     const source = readFileSync(abs, "utf8");
     findings.push(...scanWritableFile(source, filePath, forbiddenPatterns, repoRoot));
   }
-  const remaining = findings.filter((item) => !isBaselineWritableImportWaiver(item));
-  return { ok: remaining.length === 0, findings: remaining };
-}
-
-export function isBaselineWritableImportWaiver(finding) {
-  if (finding.reason !== "forbidden_import") return false;
-  const detail = finding.detail || "";
-  return BASELINE_WRITABLE_IMPORT_WAIVERS.some(
-    (waiver) => finding.path === waiver.path && detail.includes(waiver.resolved),
-  );
+  return { ok: findings.length === 0, findings };
 }
 
 function usage() {

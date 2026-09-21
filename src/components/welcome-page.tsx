@@ -7,7 +7,7 @@ import { ErrorDetails } from "@/components/error-details";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { CUSTODY_LINE } from "@/lib/session-ui";
 import { resolveWelcomePhase, type WelcomePhase } from "@/components/welcome-phase";
-import { formatRingVerificationCode } from "@/services/ringChannelId";
+import { formatRingVerificationCode } from "@/lib/ring-verification-code";
 
 export type { WelcomePhase };
 export { resolveWelcomePhase };

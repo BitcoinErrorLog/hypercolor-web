@@ -77,8 +77,9 @@ function isDotEnvFile(rel) {
  * @param {string} rel
  * @returns {boolean}
  */
-function shouldExcludeFromE2eCopy(rel) {
-  const top = rel.replace(/\\/g, "/").split("/")[0];
+export function shouldExcludeFromE2eCopy(rel) {
+  const normalized = rel.replace(/\\/g, "/");
+  const top = normalized.split("/")[0];
   if (
     top === "node_modules" ||
     top === ".next" ||
@@ -91,7 +92,8 @@ function shouldExcludeFromE2eCopy(rel) {
   if (top === OUT_NAME || top === OUT_E2E_NAME || top.startsWith(`${OUT_E2E_NAME}.`)) {
     return true;
   }
-  if (rel.replace(/\\/g, "/").startsWith("app/api/")) return true;
+  if (normalized.startsWith("app/api/")) return true;
+  if (/\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(normalized)) return true;
   if (isDotEnvFile(rel)) return true;
   return false;
 }

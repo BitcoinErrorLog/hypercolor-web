@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Composer, type ComposerQuote } from "@/components/composer";
 import { StandbyReceiveButton } from "@/components/standby-takeover-dialog";
-import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";
 import { Button } from "@/components/ui/button";
 import { DetailBackLink } from "@/components/detail-back";
 import { DetailHeading } from "@/components/detail-heading";
@@ -390,9 +389,7 @@ export function ThreadView({
                 {STANDBY_COMPOSER_NOTICE}
               </p>
               {onTakeoverReceive ? (
-                <StandbyReceiveButton testId="threadStandbyTakeover" onTakeover={onTakeoverReceive}>
-                  {STANDBY_PRIMARY}
-                </StandbyReceiveButton>
+                <StandbyReceiveButton testId="threadStandbyTakeover" onTakeover={onTakeoverReceive} />
               ) : null}
             </div>
           ) : null}

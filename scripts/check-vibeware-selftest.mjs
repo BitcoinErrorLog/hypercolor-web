@@ -283,6 +283,16 @@ try {
 try {
   const imports = checkWritableImports();
   assert(imports.ok, `writable-import check failed: ${JSON.stringify(imports.findings)}`);
+  const threadView = readFileSync(path.join(ROOT, "src/components/thread-view.tsx"), "utf8");
+  const welcomePage = readFileSync(path.join(ROOT, "src/components/welcome-page.tsx"), "utf8");
+  assert(
+    !threadView.includes("@/services/link/provisionReceiver"),
+    "thread-view must not import provisionReceiver",
+  );
+  assert(
+    !welcomePage.includes("@/services/ringChannelId"),
+    "welcome-page must not import ringChannelId",
+  );
   const extraProvision = scanWritableFile(
     `import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";\n`,
     "src/components/composer.tsx",

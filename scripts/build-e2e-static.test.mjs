@@ -21,6 +21,7 @@ import {
   E2E_STATIC_LOCK_DIR,
   isolPrefixForRoot,
   runBuildE2eStatic,
+  shouldExcludeFromE2eCopy,
 } from "./build-e2e-static.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./build-e2e-static.mjs", import.meta.url));
@@ -188,6 +189,17 @@ afterEach(() => {
     const dir = temps.pop();
     if (dir) rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("shouldExcludeFromE2eCopy", () => {
+  it("drops app/api routes and unit tests so static export typecheck cannot import them", () => {
+    expect(shouldExcludeFromE2eCopy("app/api/gif/fetch/route.ts")).toBe(true);
+    expect(shouldExcludeFromE2eCopy("src/server/gif-proxy.test.ts")).toBe(true);
+    expect(shouldExcludeFromE2eCopy("src/components/thread-view.test.tsx")).toBe(true);
+    expect(shouldExcludeFromE2eCopy("e2e/production-hooks.spec.ts")).toBe(true);
+    expect(shouldExcludeFromE2eCopy("src/server/gif-proxy.ts")).toBe(false);
+    expect(shouldExcludeFromE2eCopy("src/components/thread-view.tsx")).toBe(false);
+  });
 });
 
 describe("build-e2e-static isolation", () => {

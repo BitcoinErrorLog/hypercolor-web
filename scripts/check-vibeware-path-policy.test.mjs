@@ -461,9 +461,15 @@ describe("writable import scan", () => {
     expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
   });
 
-  it("waives only the two pre-existing writable-surface couplings", () => {
+  it("writable surfaces pass without forbidden imports; composer provisionReceiver and thread-view session remain forbidden", () => {
     const result = checkWritableImports();
     expect(result.ok, JSON.stringify(result.findings)).toBe(true);
+    expect(readFileSync(path.join(ROOT, "src/components/thread-view.tsx"), "utf8")).not.toMatch(
+      /@\/services\/link\/provisionReceiver/,
+    );
+    expect(readFileSync(path.join(ROOT, "src/components/welcome-page.tsx"), "utf8")).not.toMatch(
+      /@\/services\/ringChannelId/,
+    );
     const extra = scanWritableFile(
       `import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";\n`,
       "src/components/composer.tsx",
