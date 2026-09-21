@@ -265,6 +265,26 @@ function copyProjectSources(srcRoot, destRoot) {
   if (existsSync(nmSrc) && !existsSync(nmDest)) {
     symlinkSync(nmSrc, nmDest, "dir");
   }
+  stripAppleDouble(destRoot);
+}
+
+/** macOS ExFAT sidecars; Linux Next cannot copy them (EPERM). */
+function stripAppleDouble(dir) {
+  if (!dir || !existsSync(dir)) return;
+  let names;
+  try {
+    names = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of names) {
+    const full = path.join(dir, ent.name);
+    if (ent.name.startsWith("._") || ent.name === ".DS_Store") {
+      rmSync(full, { recursive: true, force: true });
+      continue;
+    }
+    if (ent.isDirectory()) stripAppleDouble(full);
+  }
 }
 
 /**

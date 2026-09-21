@@ -201,6 +201,29 @@ describe("shouldExcludeFromE2eCopy", () => {
     expect(shouldExcludeFromE2eCopy("src/server/gif-proxy.ts")).toBe(false);
     expect(shouldExcludeFromE2eCopy("src/components/thread-view.tsx")).toBe(false);
   });
+
+  it("strips AppleDouble sidecars from isolated public/ before the Next build", async () => {
+    const root = tempDir();
+    initTrackedRepo(root, {
+      "README.md": "tracked\n",
+      "public/sqlite3.wasm": "wasm\n",
+    });
+    writeFileSync(path.join(root, "public", "._sqlite3.wasm"), "sidecar\n");
+    writeProdOut(root, "prod");
+    const result = await runBuildE2eStatic({
+      root,
+      handleSignals: false,
+      runBuild: (buildRoot) => {
+        expect(existsSync(path.join(buildRoot, "public", "sqlite3.wasm"))).toBe(true);
+        expect(existsSync(path.join(buildRoot, "public", "._sqlite3.wasm"))).toBe(false);
+        mkdirSync(path.join(buildRoot, "out"), { recursive: true });
+        writeFileSync(path.join(buildRoot, "out", "index.html"), "harness");
+        writeFileSync(path.join(buildRoot, "out", ".e2e-harness"), "1\n");
+        return { status: 0 };
+      },
+    });
+    expect(result.status).toBe(0);
+  });
 });
 
 describe("build-e2e-static isolation", () => {
