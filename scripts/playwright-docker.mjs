@@ -67,6 +67,11 @@ function alreadyInPinnedContainer() {
   return existsSync("/.dockerenv") && existsSync("/ms-playwright");
 }
 
+function ensureGitSafeDirectory() {
+  spawnSync("git", ["config", "--global", "--add", "safe.directory", "*"], { stdio: "ignore" });
+  spawnSync("git", ["config", "--global", "--add", "safe.directory", REPO_ROOT], { stdio: "ignore" });
+}
+
 function parseCommand(argv) {
   const dash = argv.indexOf("--");
   const command = dash >= 0 ? argv.slice(dash + 1) : argv;
@@ -114,6 +119,7 @@ function extraGitMounts() {
 function main() {
   const command = parseCommand(process.argv.slice(2));
   if (alreadyInPinnedContainer()) {
+    ensureGitSafeDirectory();
     process.exit(run(command, { env: { ...process.env, PLAYWRIGHT_IN_DOCKER: "1" } }));
   }
 

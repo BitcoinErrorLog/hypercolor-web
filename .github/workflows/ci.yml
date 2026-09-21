@@ -97,6 +97,11 @@ jobs:
       - name: Checkout hypercolor-web
         uses: actions/checkout@v4
 
+      - name: Git safe.directory
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory '*'
+
       - name: Native module build tools
         run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 make g++
 
@@ -166,6 +171,11 @@ jobs:
     steps:
       - name: Checkout hypercolor-web
         uses: actions/checkout@v4
+
+      - name: Git safe.directory
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory '*'
 
       - name: Native module build tools
         run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 make g++
