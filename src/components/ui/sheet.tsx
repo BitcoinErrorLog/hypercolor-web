@@ -21,14 +21,18 @@ function isUsefulRestoreTarget(el: HTMLElement | null): el is HTMLElement {
 
 function inertBackground(overlay: HTMLElement): () => void {
   const blocked: HTMLElement[] = [];
+  const mark = (el: HTMLElement | null) => {
+    if (!el || el === overlay || el.contains(overlay) || overlay.contains(el) || el.inert) {
+      return;
+    }
+    el.inert = true;
+    blocked.push(el);
+  };
   for (const child of Array.from(document.body.children)) {
-    if (child === overlay) continue;
-    if (!(child instanceof HTMLElement)) continue;
-    if (child.contains(overlay)) continue;
-    if (child.inert) continue;
-    child.inert = true;
-    blocked.push(child);
+    if (child instanceof HTMLElement) mark(child);
   }
+  const main = document.getElementById("main-content");
+  if (main instanceof HTMLElement) mark(main);
   return () => {
     for (const el of blocked) {
       el.inert = false;

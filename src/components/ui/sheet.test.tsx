@@ -173,6 +173,28 @@ describe("ModalSheet", () => {
     main.remove();
   });
 
+  it("marks nested main-content inert when it is not a body child", async () => {
+    const wrapper = document.createElement("div");
+    const main = document.createElement("main");
+    main.id = "main-content";
+    wrapper.append(main);
+    document.body.append(wrapper);
+
+    await render(
+      <ModalSheet
+        open
+        onClose={() => undefined}
+        layer="gate"
+        titleId="nested-title"
+        testId="nestedGate"
+      >
+        <h2 id="nested-title">Leave?</h2>
+      </ModalSheet>,
+    );
+    expect(main.inert).toBe(true);
+    wrapper.remove();
+  });
+
   it("applies the same inert treatment when the gate is the only overlay", async () => {
     const main = document.createElement("main");
     main.id = "main-content";

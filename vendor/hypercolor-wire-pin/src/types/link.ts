@@ -78,13 +78,25 @@ export const CHAT_MESSAGE_KIND = 'chat.message.v0';
  */
 export const PUBKY_APP_DM_KIND = 'pubky_app.dm.v0';
 
-/** Reserved kind for delivery/read receipts. No receipt logic exists yet. */
 export const CHAT_RECEIPT_KIND = 'chat.receipt.v0';
+export const CHAT_TAG_KIND = 'chat.tag.v0';
+export const CHAT_TYPING_KIND = 'chat.typing.v0';
+export const CHAT_EDIT_KIND = 'chat.edit.v0';
+export const CHAT_DELETE_KIND = 'chat.delete.v0';
+export const CHAT_PIN_KIND = 'chat.pin.v0';
 
-/** Reserved kind for message reactions. No reaction logic exists yet. */
+/** Decode alias only: inbound DM reaction ≡ `chat.tag.v0` add. */
 export const CHAT_REACTION_KIND = 'chat.reaction.v0';
 
-export type LinkWireKind = typeof CHAT_MESSAGE_KIND | typeof PUBKY_APP_DM_KIND;
+export type LinkWireKind =
+  | typeof CHAT_MESSAGE_KIND
+  | typeof PUBKY_APP_DM_KIND
+  | typeof CHAT_RECEIPT_KIND
+  | typeof CHAT_TAG_KIND
+  | typeof CHAT_TYPING_KIND
+  | typeof CHAT_EDIT_KIND
+  | typeof CHAT_DELETE_KIND
+  | typeof CHAT_PIN_KIND;
 
 // ─── Chat message envelope ──────────────────────────────────────────────────
 
@@ -175,6 +187,10 @@ export function buildChatMessageEnvelope(input: {
  * or an ISO-8601 datetime string. Returns `null` when neither matches.
  */
 const ISO_DATETIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export function isLinkSentAtUnixMs(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
 
 export function parseLinkSentAt(value: unknown): number | null {
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
@@ -281,7 +297,10 @@ export interface LinkConversationSummary {
   lastMessage: string;
   lastMessageAt: number;
   lastKind: string;
+  lastDeliveryState: LinkDeliveryState | null;
+  linkStatus: StoredLinkStatus | null;
   unreadCount: number;
+  receiverRole?: ReceiverRole | null;
 }
 
 /** Splits a `dm:{counterpartyPubky}` conversation id; `null` when the shape does not match. */
@@ -325,13 +344,20 @@ export type LinkStatus =
   | 'handshaking-initiator'
   | 'handshaking-responder'
   | 'ready'
+  | 'restoring'
+  | 'reconnect_required'
   | 'message-request'
   | 'error';
 
 export type LinkRole = 'initiator' | 'responder';
 
-/** Persisted link lifecycle — in-progress handshakes and established links. */
-export type StoredLinkStatus = 'handshaking' | 'established';
+/** This device's published-inbox role. Standby must not auto-PUT the marker. */
+export type ReceiverRole = 'active' | 'standby';
+
+/** Persisted link lifecycle — in-progress, live, or archived-after-rekey. */
+export type StoredLinkStatus = 'handshaking' | 'established' | 'reconnect_required' | 'superseded';
+
+export type LinkErrorCategory = 'network' | 'protocol' | 'application' | 'unknown';
 
 export type LinkMessageDirection = 'sent' | 'received';
 
@@ -341,7 +367,7 @@ export type LinkMessageDirection = 'sent' | 'received';
  * ships; received messages persist as `delivered` on arrival. `failed` is
  * set when the retry queue permanently drops an outbound item.
  */
-export type LinkDeliveryState = 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
+export type LinkDeliveryState = 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unsent';
 
 // ─── Storage row shapes ─────────────────────────────────────────────────────
 
@@ -354,10 +380,15 @@ export interface LinkReceiver {
   receiverAlias: string;
   receiverPath: string;
   markerPublished: boolean;
+  receiverRole: ReceiverRole;
+  lastSeenOwnMarkerPk: string | null;
   updatedAt: number;
 }
 
-export type LinkReceiverInput = Omit<LinkReceiver, 'updatedAt'>;
+export type LinkReceiverInput = Omit<LinkReceiver, 'updatedAt' | 'receiverRole' | 'lastSeenOwnMarkerPk'> & {
+  receiverRole?: ReceiverRole;
+  lastSeenOwnMarkerPk?: string | null;
+};
 
 /**
  * One Encrypted Link (or in-progress handshake) per (owner, counterparty).
@@ -374,10 +405,37 @@ export interface LinkRecord {
   localReceiverPath: string;
   remoteReceiverPath: string;
   consecutiveFailures: number;
+  lastSeenPeerMarkerPk: string | null;
+  /** Peer's advertised `chat_kinds_v` from receiver.json. Absent/0 = pre-v1. */
+  chatKindsV?: number;
+  reconnectErrorCategory?: LinkErrorCategory | null;
+  reconnectRequiredAt?: number | null;
   updatedAt: number;
 }
 
-export type LinkRecordInput = Omit<LinkRecord, 'updatedAt'>;
+export interface HandshakeBudget {
+  ownerPubky: PubkyKey;
+  peerPubky: PubkyKey;
+  pendingAdvances: number;
+  nextAdvanceAt: number;
+  exhaustedAt: number | null;
+  updatedAt: number;
+}
+
+export type HandshakeBudgetInput = Omit<HandshakeBudget, 'updatedAt'>;
+
+export type LinkRecordInput = Omit<LinkRecord, 'updatedAt' | 'lastSeenPeerMarkerPk'> & {
+  lastSeenPeerMarkerPk?: string | null;
+};
+
+export interface LinkReceiverRetry {
+  ownerPubky: PubkyKey;
+  sessionAlias: string;
+  noisePublicKey: string;
+  stage: "marker" | "capability";
+  nextRetryAt: number;
+  attempts: number;
+}
 
 /**
  * Device-local message history (plaintext bodies — never log them). Dedup
@@ -399,6 +457,8 @@ export interface LinkMessage {
   /** Local arrival time (Unix ms); `null` for sent messages. */
   receivedAt: number | null;
   deliveryState: LinkDeliveryState;
+  /** Present when a delete kind has tombstoned the row. */
+  deleted?: boolean;
 }
 
 /**
@@ -413,6 +473,7 @@ export interface LinkStreamItem {
   rawJson: string;
   receivedAt: number;
   processed: boolean;
+  processingErrorCategory?: LinkErrorCategory | null;
 }
 
 export type LinkStreamItemInput = Omit<LinkStreamItem, 'processed'>;

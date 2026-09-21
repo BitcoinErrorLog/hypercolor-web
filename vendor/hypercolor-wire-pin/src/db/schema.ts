@@ -1,4 +1,194 @@
 /**
+ * Schema v17 — chat kinds v1 device prefs, tags, pins, pending invites,
+ * and additive `links.chat_kinds_v` for R7 emit-gating.
+ * Additive only. Frozen v1–v16 SQL is not rewritten.
+ */
+export const SCHEMA_V17_STATEMENTS: readonly string[] = [
+  `ALTER TABLE links ADD COLUMN chat_kinds_v INTEGER NOT NULL DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS chat_device_prefs (
+    owner_pubky TEXT NOT NULL PRIMARY KEY,
+    receipts_enabled INTEGER NOT NULL DEFAULT 1,
+    typing_enabled INTEGER NOT NULL DEFAULT 1,
+    upgrade_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_tags (
+    owner_pubky TEXT NOT NULL,
+    conversation_id TEXT,
+    channel_id TEXT,
+    scope_key TEXT NOT NULL,
+    target_event_id TEXT NOT NULL,
+    target_author_pubky TEXT NOT NULL,
+    tagger_pubky TEXT NOT NULL,
+    label TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    CHECK ((channel_id IS NULL) != (conversation_id IS NULL)),
+    PRIMARY KEY (owner_pubky, scope_key, target_author_pubky, target_event_id, tagger_pubky, label)
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_pins (
+    owner_pubky TEXT NOT NULL,
+    conversation_id TEXT,
+    channel_id TEXT,
+    scope_key TEXT NOT NULL,
+    target_event_id TEXT NOT NULL,
+    target_author_pubky TEXT NOT NULL,
+    pinned_by TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    CHECK ((channel_id IS NULL) != (conversation_id IS NULL)),
+    PRIMARY KEY (owner_pubky, scope_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS chat_group_invites (
+    owner_pubky TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    invite_id TEXT NOT NULL,
+    sender_pubky TEXT NOT NULL,
+    name TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY (owner_pubky, invite_id)
+  )`,
+];
+
+/** Schema v18 — owner-bound receiver marker/capability publish retry state. */
+export const SCHEMA_V18_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS link_receiver_retries (
+    owner_pubky       TEXT NOT NULL PRIMARY KEY,
+    session_alias     TEXT NOT NULL,
+    noise_public_key  TEXT NOT NULL,
+    next_retry_at     INTEGER NOT NULL,
+    attempts          INTEGER NOT NULL DEFAULT 0
+  )`,
+];
+
+/** Schema v19 — distinguish unconfirmed marker and capability publication. */
+export const SCHEMA_V19_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_receiver_retries
+     ADD COLUMN stage TEXT NOT NULL DEFAULT 'marker'
+     CHECK (stage IN ('marker', 'capability'))`,
+];
+
+/** Schema v20 — durable fail-closed established-link reconnect state. */
+export const SCHEMA_V20_STATEMENTS: readonly string[] = [
+  `ALTER TABLE links ADD COLUMN reconnect_error_category TEXT`,
+  `ALTER TABLE links ADD COLUMN reconnect_required_at INTEGER`,
+];
+
+/** Schema v21 — redacted per-item inbound routing failure category. */
+export const SCHEMA_V21_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_stream_items ADD COLUMN processing_error_category TEXT`,
+];
+
+/** Schema v22 — bounded deferred DM tag replay. */
+export const SCHEMA_V22_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS chat_pending_tags (
+    owner_pubky          TEXT NOT NULL,
+    peer_pubky           TEXT NOT NULL,
+    sender_pubky         TEXT NOT NULL,
+    event_id             TEXT NOT NULL,
+    target_event_id      TEXT NOT NULL,
+    target_author_pubky  TEXT NOT NULL,
+    label                TEXT NOT NULL,
+    op                   TEXT NOT NULL,
+    channel_id           TEXT,
+    sent_at              INTEGER NOT NULL,
+    received_at          INTEGER NOT NULL,
+    expires_at            INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky, sender_pubky, event_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chat_pending_tags_replay
+    ON chat_pending_tags(owner_pubky, peer_pubky, target_event_id, expires_at)`,
+];
+
+/** Schema v23 — DM unsend tombstone state. */
+export const SCHEMA_V23_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0`,
+];
+
+/**
+ * Schema v16 — local-only chat UX prefs (nicknames, mute/archive) and a
+ * decrypted message search index. No wire kinds. FTS5 is created when the
+ * engine supports it; LIKE + body_norm index is the always-on path.
+ */
+export const SCHEMA_V16_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS contact_nicknames (
+    owner_pubky TEXT NOT NULL,
+    peer_pubky  TEXT NOT NULL,
+    nickname    TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+  `CREATE TABLE IF NOT EXISTS thread_local_state (
+    owner_pubky TEXT NOT NULL,
+    thread_key  TEXT NOT NULL,
+    muted       INTEGER NOT NULL DEFAULT 0,
+    archived    INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, thread_key)
+  )`,
+  `CREATE TABLE IF NOT EXISTS message_search (
+    owner_pubky  TEXT NOT NULL,
+    thread_key   TEXT NOT NULL,
+    event_id     TEXT NOT NULL,
+    sender_pubky TEXT NOT NULL,
+    body_norm    TEXT NOT NULL,
+    sent_at      INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, thread_key, event_id)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_message_search_norm
+    ON message_search(owner_pubky, body_norm)`,
+  `CREATE INDEX IF NOT EXISTS idx_message_search_sent
+    ON message_search(owner_pubky, sent_at DESC)`,
+];
+
+/**
+ * Schema v14 — W1e single-active receiver + durable handshake budget.
+ *
+ * `link_receivers.receiver_role` is this device's inbox role (`active` |
+ * `standby`). `last_seen_own_marker_pk` is the last successfully GETed own
+ * `receiver.json` pk. `links.last_seen_peer_marker_pk` is the last GETed
+ * peer marker pk for that conversation. `link_handshake_budgets` survives
+ * unestablished wipes so a flapping peer cannot reset the charge counter.
+ */
+export const SCHEMA_V14_STATEMENTS: readonly string[] = [
+  `ALTER TABLE link_receivers ADD COLUMN receiver_role TEXT NOT NULL DEFAULT 'active'`,
+  `ALTER TABLE link_receivers ADD COLUMN last_seen_own_marker_pk TEXT`,
+  `ALTER TABLE links ADD COLUMN last_seen_peer_marker_pk TEXT`,
+  `CREATE TABLE IF NOT EXISTS link_handshake_budgets (
+    owner_pubky      TEXT NOT NULL,
+    peer_pubky       TEXT NOT NULL,
+    pending_advances INTEGER NOT NULL DEFAULT 0,
+    next_advance_at  INTEGER NOT NULL DEFAULT 0,
+    exhausted_at     INTEGER,
+    updated_at       INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+];
+
+/**
+ * Schema v15 — durable predecessor snapshot for two-phase established re-key.
+ * The live `links` row stays established until the new handshake completes;
+ * the old snapshot is written here only at that commit so fallback remains
+ * possible while the adopt is pending (the live row is still the old link).
+ */
+export const SCHEMA_V15_STATEMENTS: readonly string[] = [
+  `CREATE TABLE IF NOT EXISTS links_archive (
+    owner_pubky              TEXT    NOT NULL,
+    peer_pubky               TEXT    NOT NULL,
+    role                     TEXT    NOT NULL,
+    status                   TEXT    NOT NULL,
+    snapshot                 TEXT    NOT NULL,
+    remote_noise_public_key  TEXT    NOT NULL DEFAULT '',
+    local_receiver_path      TEXT    NOT NULL DEFAULT '',
+    remote_receiver_path     TEXT    NOT NULL DEFAULT '',
+    consecutive_failures     INTEGER NOT NULL DEFAULT 0,
+    last_seen_peer_marker_pk TEXT,
+    archived_at              INTEGER NOT NULL,
+    PRIMARY KEY (owner_pubky, peer_pubky)
+  )`,
+];
+
+/**
  * Schema v13 — retire research-era DM/channel tables; keep the live
  * Encrypted-Link retry queue (`delivery_queue`). Add author scoping on
  * group-message replies (`reply_to_author_pubky`).
@@ -624,7 +814,7 @@ export const SCHEMA_V4_STATEMENTS: readonly string[] = [
     body            TEXT    NOT NULL,
     sent_at         INTEGER NOT NULL,
     received_at     INTEGER,
-    delivery_state  TEXT    NOT NULL,              -- 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
+    delivery_state  TEXT    NOT NULL,              -- 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'unsent'
     created_at      INTEGER NOT NULL,
     updated_at      INTEGER NOT NULL,
     PRIMARY KEY (owner_pubky, sender_pubky, kind, event_id)

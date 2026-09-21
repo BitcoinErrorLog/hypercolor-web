@@ -99,8 +99,8 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Production build
         run: npm run build
@@ -114,3 +114,14 @@ jobs:
 
       - name: Static e2e suite
         run: npm run test:e2e:static
+
+      - name: Upload e2e artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-hooks-e2e
+          path: |
+            test-results/
+            playwright-report/
+            ux-vrt-report/
+          if-no-files-found: ignore

@@ -58,7 +58,7 @@ describe("DmMessageBubble unsend action", () => {
     expect(host.textContent).toContain("Unsend");
 
     await act(async () => {
-      (host.querySelector("button:last-of-type") as HTMLButtonElement).click();
+      (host.querySelector('[data-testid="messageUnsend-00000000-0000-4000-8000-000000000001"]') as HTMLButtonElement).click();
     });
     expect(document.querySelector("[data-testid=unsendDialog]")?.textContent).toContain(
       "Unsend message",

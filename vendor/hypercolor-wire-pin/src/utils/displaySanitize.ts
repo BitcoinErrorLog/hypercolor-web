@@ -13,7 +13,8 @@ const POP_DIRECTIONAL_ISOLATE = '\u2069';
 export const PAYMENT_DISPLAY_MAX_CHARS = 64;
 export const TIP_IDENTIFIER_DISPLAY_MAX_CHARS = 48;
 
-function isStrippedDisplayCodePoint(code: number): boolean {
+/** Shared with tag-label validation (`normalizeChatTagLabel`). */
+export function isInvisibleOrControlCodePoint(code: number): boolean {
   if (code < 0x20) return true;
   if (code >= 0x7f && code <= 0x9f) return true;
   if (code === 0x200b || code === 0x200c || code === 0x200d) return true;
@@ -29,7 +30,7 @@ export function stripBidiAndC1(value: string): string {
   let out = '';
   for (const ch of value) {
     const code = ch.codePointAt(0);
-    if (code === undefined || isStrippedDisplayCodePoint(code)) continue;
+    if (code === undefined || isInvisibleOrControlCodePoint(code)) continue;
     out += ch;
   }
   return out;

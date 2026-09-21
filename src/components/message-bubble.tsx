@@ -93,6 +93,7 @@ export function DmMessageBubble({
             <button
               type="button"
               className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+              data-testid={`messageCopy-${message.eventId}`}
               onClick={onCopy}
             >
               Copy
@@ -102,6 +103,8 @@ export function DmMessageBubble({
             <button
               type="button"
               className="inline-flex min-h-11 items-center text-sm underline"
+              data-testid={`messageUnsend-${message.eventId}`}
+              aria-label="Unsend this message"
               onClick={() => {
                 setUnsendError(false);
                 setUnsendOpen(true);
@@ -302,6 +305,7 @@ export function GroupMessageBubble({
               <button
                 type="button"
                 className="inline-flex min-h-11 items-center text-sm underline opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100"
+                data-testid={`messageCopy-${message.eventId}`}
                 onClick={onCopy}
               >
                 Copy
