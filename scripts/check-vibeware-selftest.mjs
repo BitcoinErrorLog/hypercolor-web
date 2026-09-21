@@ -283,6 +283,15 @@ try {
 try {
   const imports = checkWritableImports();
   assert(imports.ok, `writable-import check failed: ${JSON.stringify(imports.findings)}`);
+  const extraProvision = scanWritableFile(
+    `import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";\n`,
+    "src/components/composer.tsx",
+    ["src/services/link/provisionReceiver.ts"],
+  );
+  assert(
+    extraProvision.some((item) => item.reason === "forbidden_import"),
+    "composer provisionReceiver import must still be forbidden_import",
+  );
   console.log("ok writable-import check");
 } catch (error) {
   failed += 1;

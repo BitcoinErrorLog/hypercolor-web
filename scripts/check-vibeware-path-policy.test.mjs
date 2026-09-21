@@ -20,7 +20,7 @@ import {
   validateEvidencePayload,
 } from "./check-vibeware-path-policy.mjs";
 import { evaluatePullRequest, isCandidateBranchName, parseCandidateSurface } from "./check-vibeware-pr.mjs";
-import { resolveSpecifier, scanWritableFile } from "./check-vibeware-writable-imports.mjs";
+import { resolveSpecifier, scanWritableFile, checkWritableImports } from "./check-vibeware-writable-imports.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MANIFEST = path.join(ROOT, "vibeware.yaml");
@@ -458,6 +458,23 @@ describe("writable import scan", () => {
       ["src/services/contacts/addManualContact.ts"],
     );
     expect(findings.some((item) => item.reason === "forbidden_import")).toBe(true);
+  });
+
+  it("waives only the two pre-existing writable-surface couplings", () => {
+    const result = checkWritableImports();
+    expect(result.ok, JSON.stringify(result.findings)).toBe(true);
+    const extra = scanWritableFile(
+      `import { STANDBY_PRIMARY } from "@/services/link/provisionReceiver";\n`,
+      "src/components/composer.tsx",
+      ["src/services/link/provisionReceiver.ts"],
+    );
+    expect(extra.some((item) => item.reason === "forbidden_import")).toBe(true);
+    const session = scanWritableFile(
+      `import { signOut } from "@/services/link/session";\n`,
+      "src/components/thread-view.tsx",
+      ["src/services/link/session.ts"],
+    );
+    expect(session.some((item) => item.reason === "forbidden_import")).toBe(true);
   });
 
   it("keeps chats-page free of inbox orchestration", () => {

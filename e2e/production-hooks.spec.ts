@@ -5,7 +5,14 @@ import { expect, test } from "@playwright/test";
 
 const REPO_ROOT = join(__dirname, "..");
 const OUT = join(REPO_ROOT, "out");
+const NEXT_STATIC = join(REPO_ROOT, ".next", "static");
 const SCANNER = join(REPO_ROOT, "scripts", "e2e-harness-symbols.mjs");
+
+function productionClientRoot(): string | null {
+  if (existsSync(OUT)) return OUT;
+  if (existsSync(NEXT_STATIC)) return NEXT_STATIC;
+  return null;
+}
 
 type ScanHit = {
   file: string;
@@ -14,18 +21,22 @@ type ScanHit = {
   gated: boolean;
 };
 
-test("production out/ contains no live __hypercolor hook registration", () => {
-  if (!existsSync(OUT)) {
+test("production client output contains no live __hypercolor hook registration", () => {
+  const root = productionClientRoot();
+  if (!root) {
     if (process.env.HYPERCOLOR_ASSERT_PRODUCTION_OUT === "1") {
       throw new Error(
-        "production out/ is missing — run npm run build before this assertion",
+        "production client output is missing — run npm run build before this assertion",
       );
     }
-    test.skip(true, "run npm run build to produce production out/");
+    test.skip(true, "run npm run build to produce production client output");
+    return;
   }
-  expect(existsSync(join(OUT, ".e2e-harness"))).toBe(false);
+  if (root === OUT) {
+    expect(existsSync(join(OUT, ".e2e-harness"))).toBe(false);
+  }
   const report = JSON.parse(
-    execFileSync(process.execPath, [SCANNER, "scan", OUT], { encoding: "utf8" }),
+    execFileSync(process.execPath, [SCANNER, "scan", root], { encoding: "utf8" }),
   ) as { symbols: string[]; hits: ScanHit[] };
   expect(report.symbols.length).toBeGreaterThan(0);
   const live = report.hits.filter((hit) => hit.kind === "live");

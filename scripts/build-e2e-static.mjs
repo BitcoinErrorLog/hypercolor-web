@@ -350,6 +350,7 @@ function defaultRunBuild(buildRoot, onSpawn) {
       env: {
         ...process.env,
         NEXT_PUBLIC_E2E_HARNESS: "1",
+        HC_STATIC_EXPORT: "1",
       },
     });
     onSpawn?.(child);
