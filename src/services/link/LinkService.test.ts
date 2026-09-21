@@ -182,7 +182,9 @@ vi.mock("./provisionReceiver", () => ({
 import { RetryQueue, isRetired } from "@/services/RetryQueue";
 import { StorageService } from "@/services/StorageService";
 import { reconstructAttachmentWireJson } from "../attachments/redaction";
+import { PaykitLinkWeb } from "./PaykitLinkWeb";
 import {
+  LINK_CONTROL_PAYLOAD_TYPE,
   LINK_GROUP_FANOUT_PAYLOAD_TYPE,
   LINK_RETRY_PAYLOAD_TYPE,
   ESTABLISHED_REKEY_PARK_LIMIT,
@@ -515,6 +517,230 @@ describe("LinkService persist-then-send", () => {
     );
     expect(StorageService.tombstoneLinkMessage).not.toHaveBeenCalled();
     expect(sendPrivate).not.toHaveBeenCalled();
+  });
+
+  it("defers a protocol-failed delete PAM and resends it after the link is ready", async () => {
+    const deleteEventId = "00000000-0000-4000-8000-0000000000de";
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: deleteEventId,
+      sent_at: NOW,
+      target_event_id: EVENT_ID,
+    });
+    const controlItem = {
+      id: QUEUE_ID,
+      messageId: deleteEventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_CONTROL_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_DELETE_KIND,
+        eventId: deleteEventId,
+        rawJson,
+      }),
+      attempts: 0,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(crypto.randomUUID)
+      .mockReset()
+      .mockReturnValueOnce(deleteEventId)
+      .mockReturnValueOnce(QUEUE_ID);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(controlItem);
+    sendPrivate.mockRejectedValueOnce({ code: "protocol", message: "protocol error" });
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(StorageService.tombstoneLinkMessage).toHaveBeenCalled();
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(RetryQueue.park).not.toHaveBeenCalled();
+    expect(RetryQueue.defer).toHaveBeenCalledWith(QUEUE_ID, 0);
+    expect(StorageService.markLinkReconnectRequired).not.toHaveBeenCalled();
+    expect(PaykitLinkWeb.closeLink).toHaveBeenCalled();
+    expect(PaykitLinkWeb.deletePublic).not.toHaveBeenCalled();
+
+    sendPrivate.mockResolvedValue({ snapshot: "est-restored" });
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([controlItem]);
+    vi.mocked(RetryQueue.defer).mockClear();
+    vi.mocked(PaykitLinkWeb.closeLink as ReturnType<typeof vi.fn>).mockClear();
+
+    await LinkService.drainRetries();
+
+    expect(sendPrivate).toHaveBeenCalledTimes(2);
+    expect(StorageService.finalizeControlSend).toHaveBeenCalledWith(
+      expect.objectContaining({ queueId: QUEUE_ID, ownerPubky: OWNER, peerPubky: PEER }),
+    );
+    expect(RetryQueue.recordSuccess).toHaveBeenCalledWith(QUEUE_ID);
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(RetryQueue.defer).not.toHaveBeenCalled();
+  });
+
+  it("holds a delete PAM through reconnect_required and sends it once the link is ready", async () => {
+    const deleteEventId = "00000000-0000-4000-8000-0000000000de";
+    const rawJson = JSON.stringify({
+      version: 1,
+      kind: CHAT_DELETE_KIND,
+      event_id: deleteEventId,
+      sent_at: NOW,
+      target_event_id: EVENT_ID,
+    });
+    const controlItem = {
+      id: QUEUE_ID,
+      messageId: deleteEventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_CONTROL_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_DELETE_KIND,
+        eventId: deleteEventId,
+        rawJson,
+      }),
+      attempts: 3,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(crypto.randomUUID)
+      .mockReset()
+      .mockReturnValueOnce(deleteEventId)
+      .mockReturnValueOnce(QUEUE_ID);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(controlItem);
+    getLink.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "reconnect_required",
+      snapshot: "est-dead",
+      remoteNoisePublicKey: "peer-noise",
+      localReceiverPath: LINK_RECEIVER_PATH,
+      remoteReceiverPath: LINK_RECEIVER_PATH,
+      consecutiveFailures: 0,
+      updatedAt: NOW,
+    });
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(sendPrivate).not.toHaveBeenCalled();
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+    expect(RetryQueue.defer).toHaveBeenCalledWith(QUEUE_ID, 3);
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(PaykitLinkWeb.deletePublic).not.toHaveBeenCalled();
+
+    getLink.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "initiator",
+      status: "established",
+      snapshot: "HC1.opaque",
+      remoteNoisePublicKey: "peer-noise",
+      localReceiverPath: LINK_RECEIVER_PATH,
+      remoteReceiverPath: LINK_RECEIVER_PATH,
+      consecutiveFailures: 0,
+      updatedAt: NOW,
+    });
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([controlItem]);
+    vi.mocked(RetryQueue.defer).mockClear();
+
+    await LinkService.drainRetries();
+
+    expect(sendPrivate).toHaveBeenCalledTimes(1);
+    expect(StorageService.finalizeControlSend).toHaveBeenCalledWith(
+      expect.objectContaining({ queueId: QUEUE_ID }),
+    );
+    expect(RetryQueue.recordSuccess).toHaveBeenCalledWith(QUEUE_ID);
+  });
+
+  it("does not park a retired control PAM and skips send after the owner changes", async () => {
+    const deleteEventId = "00000000-0000-4000-8000-0000000000de";
+    const controlItem = {
+      id: QUEUE_ID,
+      messageId: deleteEventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_CONTROL_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_DELETE_KIND,
+        eventId: deleteEventId,
+        rawJson: "{}",
+      }),
+      attempts: 10,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    vi.mocked(isRetired).mockReturnValue(true);
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([controlItem]);
+    sendPrivate.mockRejectedValueOnce({ code: "protocol", message: "protocol error" });
+
+    await LinkService.drainRetries();
+
+    expect(RetryQueue.park).not.toHaveBeenCalled();
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(RetryQueue.defer).toHaveBeenCalledWith(QUEUE_ID, 10);
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+
+    getPubky.mockResolvedValue("b".repeat(52));
+    vi.mocked(RetryQueue.getDue).mockResolvedValueOnce([
+      {
+        ...controlItem,
+        payload: JSON.stringify({
+          type: LINK_CONTROL_PAYLOAD_TYPE,
+          ownerPubky: "b".repeat(52),
+          peerPubky: PEER,
+          senderPubky: "b".repeat(52),
+          kind: CHAT_DELETE_KIND,
+          eventId: deleteEventId,
+          rawJson: "{}",
+        }),
+      },
+    ]);
+    sendPrivate.mockClear();
+    vi.mocked(RetryQueue.defer).mockClear();
+
+    await LinkService.drainRetries();
+
+    expect(sendPrivate).not.toHaveBeenCalled();
+    expect(RetryQueue.defer).not.toHaveBeenCalled();
+    expect(RetryQueue.recordSuccess).not.toHaveBeenCalled();
   });
 
   it("leaves the queued rawJson for retry when send fails", async () => {

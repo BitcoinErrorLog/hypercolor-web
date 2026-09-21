@@ -2853,10 +2853,9 @@ async function deliverQueuedPayloadLocked(
       return "failed";
     }
   } else if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
-    if (isRetired(item)) {
-      await parkRetiredItem(item);
-      return "failed";
-    }
+    // Control PAMs stay owed until a successful send. Never park, fail, or
+    // drop them — a retired row would otherwise block same-peer encrypts
+    // forever and the delete/receipt would never leave the device.
   } else {
     const row = await StorageService.getGroupMessage(
       payload.ownerPubky,
@@ -2885,6 +2884,9 @@ async function deliverQueuedPayloadLocked(
   try {
     outcome = await ensureLinkLocked(payload.peerPubky, true, false, "auto");
   } catch (err) {
+    if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
+      return await holdControlPam(item, payload.ownerPubky, payload.peerPubky, err);
+    }
     if (isTransientLinkError(err)) {
       await RetryQueue.defer(item.id, item.attempts);
       return "deferred";
@@ -2895,6 +2897,9 @@ async function deliverQueuedPayloadLocked(
   }
 
   if (outcome !== "ready") {
+    if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
+      return await holdControlPam(item, payload.ownerPubky, payload.peerPubky, outcome);
+    }
     await RetryQueue.defer(item.id, item.attempts);
     return "deferred";
   }
@@ -2974,6 +2979,9 @@ async function deliverQueuedPayloadLocked(
     await RetryQueue.recordSuccess(item.id);
     return "sent";
   } catch (err) {
+    if (payload.type === LINK_CONTROL_PAYLOAD_TYPE) {
+      return await holdControlPam(item, payload.ownerPubky, payload.peerPubky, err);
+    }
     if (isTransientLinkError(err)) {
       await RetryQueue.defer(item.id, item.attempts);
       return "deferred";
@@ -3539,16 +3547,20 @@ async function dispatchPersistedControlPam(
 ): Promise<void> {
   if ((await KeyStore.getPubky()) !== ownerPubky) return;
   // Must not call withQueue: syncPeerLocked already holds the per-peer mutex.
+  const item = await StorageService.getDeliveryQueueItem(queueId);
+  if (!item) return;
+  const payload = parseRetryPayload(item.payload);
+  if (!payload || payload.type !== LINK_CONTROL_PAYLOAD_TYPE) return;
   try {
-    const item = await StorageService.getDeliveryQueueItem(queueId);
-    if (!item) return;
-    const payload = parseRetryPayload(item.payload);
-    if (!payload || payload.type !== LINK_CONTROL_PAYLOAD_TYPE) return;
     const outcome = await ensureLinkLocked(peerPubky, true, false, "auto");
-    if (outcome !== "ready") return;
+    if (outcome !== "ready") {
+      await holdControlPam(item, ownerPubky, peerPubky, outcome);
+      return;
+    }
     if ((await KeyStore.getPubky()) !== ownerPubky) return;
     const handle = requireEstablishedHandle(ownerPubky, peerPubky);
     const { snapshot } = await PaykitLinkWeb.sendPrivateMessageJson(handle, payload.rawJson);
+    if ((await KeyStore.getPubky()) !== ownerPubky) return;
     await StorageService.finalizeControlSend({
       ownerPubky,
       peerPubky,
@@ -3556,7 +3568,7 @@ async function dispatchPersistedControlPam(
       queueId: item.id,
     });
   } catch (err) {
-    console.warn(`[LinkService] Control PAM send deferred for ${peerPubky}:`, errorMessage(err));
+    await holdControlPam(item, ownerPubky, peerPubky, err);
   }
 }
 
@@ -3794,6 +3806,29 @@ async function closeQuietly(linkId: string): Promise<void> {
   } catch (err) {
     if (isLinkNativeError(err) && err.code === "unavailable") throw err;
   }
+}
+
+async function dropLiveHandleQuietly(ownerPubky: PubkyKey, peerPubky: PubkyKey): Promise<void> {
+  const key = linkKey(ownerPubky, peerPubky);
+  const live = liveHandles.get(key);
+  if (!live) return;
+  liveHandles.delete(key);
+  await closeQuietly(live.linkId);
+}
+
+async function holdControlPam(
+  item: DeliveryQueueItem,
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  reason: unknown,
+): Promise<"deferred"> {
+  const detail = typeof reason === "string" ? reason : errorMessage(reason);
+  console.warn(`[LinkService] Control PAM send deferred for ${peerPubky}:`, detail);
+  if (isLinkNativeError(reason) && reason.code === "protocol") {
+    await dropLiveHandleQuietly(ownerPubky, peerPubky);
+  }
+  await RetryQueue.defer(item.id, item.attempts);
+  return "deferred";
 }
 
 export function ownerDocumentPath(url: string): string {
