@@ -12,6 +12,9 @@ import { AppShell } from "@/components/shell/app-shell";
 import { FilterHeader, FilterRoot } from "@/components/ui/filter";
 import { Toaster } from "@/components/ui/toast";
 import { APP_NAME } from "@/lib/app-meta";
+import { installPubkyPrivateFetchGuard } from "@/lib/homeserver-fetch";
+
+installPubkyPrivateFetchGuard();
 
 function shellTitle(pathname: string): string {
   if (pathname.startsWith("/chats")) return "Chats";

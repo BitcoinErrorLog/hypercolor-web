@@ -237,6 +237,70 @@ describe("PaykitLinkWeb Encrypted Links adapter", () => {
     }
   });
 
+  it("fresh pair: first responder probe is none, second persists msg2 after initiator write", async () => {
+    const miss = new Uint8Array([10, 10, 10]);
+    const afterMsg2 = new Uint8Array([11, 11, 11]);
+    accept
+      .mockReturnValueOnce({
+        snapshot: () => new Uint8Array(miss),
+        advance: vi.fn(async () => ({ status: "pending" as const })),
+        free: vi.fn(),
+        setMaxRecoveryAttempts: vi.fn(),
+      })
+      .mockReturnValueOnce(
+        handshake({ before: miss, after: afterMsg2, status: "pending" }),
+      );
+    const first = await PaykitLinkWeb.probeInboundLink(
+      sessionHandle() as never,
+      RECEIVER_ALIAS,
+      PEER,
+      "peer-noise",
+      "hypercolor/wallet",
+      "hypercolor/wallet",
+    );
+    expect(first).toEqual({ result: "none" });
+    const second = await PaykitLinkWeb.probeInboundLink(
+      sessionHandle() as never,
+      RECEIVER_ALIAS,
+      PEER,
+      "peer-noise",
+      "hypercolor/wallet",
+      "hypercolor/wallet",
+    );
+    expect(second.result).toBe("pending");
+    if (second.result !== "pending") throw new Error("expected pending");
+    expect(await KeyStore.unwrapLinkSnapshot(second.snapshot)).toEqual(afterMsg2);
+  });
+
+  it("logs a coarse advance-error and returns none instead of swallowing silently", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      accept.mockReturnValue({
+        snapshot: () => new Uint8Array([1]),
+        advance: vi.fn(async () => {
+          throw new Error("failed to fetch");
+        }),
+        free: vi.fn(),
+        setMaxRecoveryAttempts: vi.fn(),
+      });
+      await expect(
+        PaykitLinkWeb.probeInboundLink(
+          sessionHandle() as never,
+          RECEIVER_ALIAS,
+          PEER,
+          "peer-noise",
+          "hypercolor/wallet",
+          "hypercolor/wallet",
+        ),
+      ).resolves.toEqual({ result: "none" });
+      expect(warn).toHaveBeenCalledWith(
+        "[PaykitLinkWeb] inbound-probe advance-error code=network",
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("restoreLink unwraps the snapshot and passes Uint8Array to wasm", async () => {
     const inner = new Uint8Array([7, 8, 9]);
     const wrapped = await KeyStore.wrapLinkSnapshot(`${OWNER}:${PEER}`, inner);

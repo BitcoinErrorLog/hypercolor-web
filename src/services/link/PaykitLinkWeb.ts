@@ -602,7 +602,11 @@ export const PaykitLinkWeb = {
               status?: string;
               link?: EncryptedLinkHandle;
             };
-          } catch {
+          } catch (err) {
+            const mapped = toLinkNativeError(err);
+            console.warn(
+              `[PaykitLinkWeb] inbound-probe advance-error code=${mapped.code}`,
+            );
             freeQuietly(handle);
             return { result: "none" };
           }

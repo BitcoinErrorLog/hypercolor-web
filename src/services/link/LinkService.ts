@@ -1815,6 +1815,7 @@ async function probeInbound(
   localPath: string,
 ): Promise<Extract<LinkProbeResult, { result: "pending" | "established" }> | null> {
   try {
+    const startedAt = Date.now();
     console.warn(
       `[LinkService] inbound-probe begin peer=${pkPrefix8(peerPubky)} probePk=${pkPrefix8(marker.noisePublicKey)} slotFrom=fetched-marker`,
     );
@@ -1826,9 +1827,22 @@ async function probeInbound(
       localPath,
       LINK_RECEIVER_PATH,
     );
-    if (probed.result === "none") return null;
+    const durationMs = Date.now() - startedAt;
+    if (probed.result === "none") {
+      console.warn(
+        `[LinkService] inbound-probe result=none durationMs=${durationMs} peer=${pkPrefix8(peerPubky)}`,
+      );
+      return null;
+    }
+    console.warn(
+      `[LinkService] inbound-probe result=${probed.result} durationMs=${durationMs} peer=${pkPrefix8(peerPubky)}`,
+    );
     return probed;
   } catch (err) {
+    console.warn(
+      `[LinkService] inbound-probe-failed peer=${pkPrefix8(peerPubky)}:`,
+      errorMessage(err),
+    );
     if (isLinkNativeError(err) && err.code === "protocol") throw err;
     return null;
   }

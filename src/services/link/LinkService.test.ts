@@ -2234,6 +2234,23 @@ describe("LinkService established re-key marker compare", () => {
       LINK_RECEIVER_PATH,
     );
   });
+
+  it("logs inbound-probe result=none so a poisoned GET is visible in the web console", async () => {
+    getLink.mockResolvedValue({
+      ...establishedLink,
+      remoteNoisePublicKey: "old-peer-pk",
+      lastSeenPeerMarkerPk: "stale-last-seen-pk",
+    });
+    getMarker.mockResolvedValue({
+      noisePublicKey: "new-peer-pk",
+    });
+    probeInbound.mockResolvedValue({ result: "none" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+    expect(
+      warn.mock.calls.some((call) => String(call[0]).includes("inbound-probe result=none")),
+    ).toBe(true);
+  });
 });
 
 describe("LinkService parked established re-key on ensureLink", () => {

@@ -1,3 +1,5 @@
+import { installPubkyPrivateFetchGuard } from "@/lib/homeserver-fetch";
+
 export type PaykitWasmModule = typeof import("paykit-wasm");
 
 let wasmModulePromise: Promise<PaykitWasmModule> | null = null;
@@ -11,6 +13,8 @@ export async function loadPaykitWasm(): Promise<PaykitWasmModule> {
   if (typeof window === "undefined") {
     throw new Error("paykit-wasm can only be initialized in a browser");
   }
+
+  installPubkyPrivateFetchGuard();
 
   wasmModulePromise ??= (async () => {
     const sdk = await import("paykit-wasm");
