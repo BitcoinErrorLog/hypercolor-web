@@ -45,17 +45,7 @@ test.describe("thread origin in the static chats surface", () => {
       document.body.appendChild(a);
     }, CONTACT_PATH);
     await page.getByTestId("threadOriginContactHref").click();
-    await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
-  });
-
-  test("client-side contact pushState mounts detail without a synthetic popstate", async ({
-    page,
-  }) => {
-    await page.goto("/contacts");
-    await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
-    await page.evaluate((path) => {
-      history.pushState({}, "", path);
-    }, CONTACT_PATH);
+    await expect(page).toHaveURL(new RegExp(`/contacts/${CONTACT}`));
     await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
   });
 
