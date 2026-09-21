@@ -126,3 +126,41 @@ jobs:
             playwright-report/
             ux-vrt-report/
           if-no-files-found: ignore
+
+  # Native jammy/amd64 snapshot regen. Docker Desktop qemu-user writes uniform
+  # black 1280-wide Chromium PNGs; this job is the raster source of truth.
+  vrt-update:
+    if: >
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[vrt-update]')) ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[vrt-update]'))
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-jammy
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_IN_DOCKER: "1"
+      COPYFILE_DISABLE: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout hypercolor-web
+        uses: actions/checkout@v4
+
+      - name: Native module build tools
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 make g++
+
+      - name: Install
+        run: npm ci
+
+      - name: Regenerate VRT baselines
+        run: npm run vrt:update:native
+
+      - name: Upload jammy VRT baselines
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrt-baselines
+          path: e2e/vrt-baselines
+          if-no-files-found: error
+          retention-days: 7

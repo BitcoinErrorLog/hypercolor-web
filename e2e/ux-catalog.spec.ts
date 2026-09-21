@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { UX_CATALOG_SCENES } from "@/components/ux-catalog/scenes";
-import { findNearDuplicatePngs, IDENTITY_ALLOWLIST, listPngs } from "../scripts/ux-vrt-integrity.mjs";
+import { findBlankPngs, findNearDuplicatePngs, IDENTITY_ALLOWLIST, listPngs } from "../scripts/ux-vrt-integrity.mjs";
 
 test.describe.configure({ mode: "serial", timeout: 60_000 });
 
@@ -14,6 +14,7 @@ test.afterAll(async ({}, testInfo) => {
   const dir = snapshotDir(testInfo.project.name);
   const files = listPngs(dir);
   expect(files).toHaveLength(UX_CATALOG_SCENES.length);
+  expect(await findBlankPngs(files)).toEqual([]);
   const failures = await findNearDuplicatePngs(files);
   expect(failures).toEqual([]);
   const waivers = [...IDENTITY_ALLOWLIST.entries()].map(([pair, rationale]) => `${pair}: ${rationale}`);

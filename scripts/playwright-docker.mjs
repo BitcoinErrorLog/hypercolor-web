@@ -163,6 +163,7 @@ chown -R ${uid}:${gid} e2e/vrt-baselines test-results playwright-report ux-vrt-r
     "COPYFILE_DISABLE=1",
     "-e",
     "CI=1",
+    "--shm-size=2g",
     "-v",
     `${REPO_ROOT}:/work`,
     "-v",

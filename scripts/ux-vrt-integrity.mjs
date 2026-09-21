@@ -33,6 +33,36 @@ export const IDENTITY_ALLOWLIST = new Map([
   ["thread-payment-proof::thread-payment-unverified", "Both capture the same production read-only payment bubble; the reviewed difference is payment proof versus unverified status copy."],
 ]);
 
+/** Uniform captures (qemu black frames) compress tiny and have almost no colors. */
+export const MIN_BASELINE_BYTES = 800;
+export const MIN_DISTINCT_COLORS = 4;
+
+export function distinctColors(image, limit = MIN_DISTINCT_COLORS) {
+  const seen = new Set();
+  for (let i = 0; i < image.data.length; i += 4) {
+    seen.add((image.data[i] << 16) | (image.data[i + 1] << 8) | image.data[i + 2]);
+    if (seen.size >= limit) return seen.size;
+  }
+  return seen.size;
+}
+
+export async function findBlankPngs(files) {
+  const failures = [];
+  for (const file of files) {
+    const bytes = readFileSync(file).byteLength;
+    if (bytes < MIN_BASELINE_BYTES) {
+      failures.push(`${basename(file)} is ${bytes} bytes (blank-frame floor is ${MIN_BASELINE_BYTES})`);
+      continue;
+    }
+    const image = await readPng(file);
+    const colors = distinctColors(image);
+    if (colors < MIN_DISTINCT_COLORS) {
+      failures.push(`${basename(file)} has ${colors} distinct colors (blank-frame floor is ${MIN_DISTINCT_COLORS})`);
+    }
+  }
+  return failures;
+}
+
 export function listPngs(dir) {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)

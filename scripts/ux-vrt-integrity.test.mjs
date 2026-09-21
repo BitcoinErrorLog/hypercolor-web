@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterEach, describe, expect, it } from "vitest";
-import { compareImages, findNearDuplicatePngs, listPngs } from "./ux-vrt-integrity.mjs";
+import { compareImages, findBlankPngs, findNearDuplicatePngs, listPngs } from "./ux-vrt-integrity.mjs";
 
 let tempDirs = [];
 
@@ -47,6 +47,16 @@ describe("ux VRT integrity gate", () => {
     expect(result.identity).toBeCloseTo(0.8, 4);
   });
 
+  it("fails a uniform black capture as a blank frame", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "hc-vrt-blank-"));
+    tempDirs.push(dir);
+    const blank = join(dir, "chrome-nav-no-identity.png");
+    await png(blank, 16, 16, { r: 11, g: 11, b: 11, alpha: 1 });
+    await expect(findBlankPngs([blank])).resolves.toEqual([
+      expect.stringMatching(/chrome-nav-no-identity\.png is \d+ bytes \(blank-frame floor is 800\)/),
+    ]);
+  });
+
   it("keeps committed catalog baselines free of unwaived near-duplicates", async () => {
     const root = new URL("..", import.meta.url).pathname;
     const projects = ["chromium-mobile-pixel", "chromium-desktop-pixel"];
@@ -56,6 +66,12 @@ describe("ux VRT integrity gate", () => {
       ))
     ).flat();
     expect(failures).toEqual([]);
+    const blanks = (
+      await Promise.all(projects.map((project) =>
+        findBlankPngs(listPngs(join(root, "e2e/vrt-baselines", project, "ux-catalog.spec.ts"))),
+      ))
+    ).flat();
+    expect(blanks).toEqual([]);
     // Pairwise identity over 86+86 catalog PNGs measured 366s on this machine (2026-09-05).
   }, 600_000);
 });
