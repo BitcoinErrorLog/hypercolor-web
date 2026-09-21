@@ -7,6 +7,11 @@ const devUrl = "http://localhost:3000";
 /**
  * Browser e2e against `next dev` (default) or the rewrite-aware static export.
  *
+ * VRT and the CI static suite run inside
+ * `mcr.microsoft.com/playwright:<lockfile-version>-jammy` on linux/amd64
+ * (`npm run test:e2e:static` / `npm run vrt:update`). Do not capture or
+ * compare catalog baselines on macOS.
+ *
  * Production preview (no harness hooks):
  *
  *   npm run build

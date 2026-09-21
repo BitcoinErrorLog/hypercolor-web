@@ -124,6 +124,7 @@ export function BackupLeaveGuard() {
       onClose={stay}
       role="alertdialog"
       layer="gate"
+      closeOnBackdrop={false}
       titleId="backup-leave-title"
       descriptionId="backup-leave-body"
       initialFocusRef={stayRef}

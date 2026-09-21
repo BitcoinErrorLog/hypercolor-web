@@ -84,23 +84,24 @@ jobs:
 
   production-hooks:
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-jammy
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_IN_DOCKER: "1"
+      COPYFILE_DISABLE: "1"
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
     permissions:
       contents: read
     steps:
       - name: Checkout hypercolor-web
         uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
+      - name: Native module build tools
+        run: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 make g++
 
       - name: Install
         run: npm ci
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Production build
         run: npm run build

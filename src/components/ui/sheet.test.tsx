@@ -147,6 +147,27 @@ describe("ModalSheet", () => {
     fallback.remove();
   });
 
+  it("does not treat overlay mousedown as close when closeOnBackdrop is false", async () => {
+    const onClose = vi.fn();
+    await render(
+      <ModalSheet
+        open
+        onClose={onClose}
+        closeOnBackdrop={false}
+        layer="gate"
+        titleId="gate-title"
+        testId="backupLeaveDialog"
+      >
+        <h2 id="gate-title">Leave?</h2>
+        <button type="button">Leave anyway</button>
+      </ModalSheet>,
+    );
+    const overlay = document.querySelector("[data-testid=backupLeaveDialog]");
+    expect(overlay).not.toBeNull();
+    overlay?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("marks background inert while a gate is open and releases it on close", async () => {
     const main = document.createElement("main");
     main.id = "main-content";

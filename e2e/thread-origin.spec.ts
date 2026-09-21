@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 const CONTACT = "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq";
+const CONTACT_PATH = `/contacts/${encodeURIComponent(CONTACT)}`;
 
 test.describe("thread origin in the static chats surface", () => {
   test("stored chats origin does not crash /chats", async ({ page }) => {
@@ -24,18 +25,24 @@ test.describe("thread origin in the static chats surface", () => {
     page.on("pageerror", (error) => {
       errors.push(error.message);
     });
-    await page.goto("/contacts");
-    await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
-    await page.evaluate((pubky) => {
-      history.pushState({}, "", `/contacts/${encodeURIComponent(pubky)}`);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }, CONTACT);
+    await page.goto(CONTACT_PATH);
     await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
     await page.getByRole("link", { name: "Message" }).click();
     await expect(page.getByTestId("threadScreen")).toBeVisible();
     await expect(page.getByTestId("detailBack")).toHaveAccessibleName("Back to Contact");
     await expect(page.getByText("This page couldn't load")).toHaveCount(0);
     expect(errors.join("\n")).not.toMatch(/Maximum update depth|Minified React error #185/);
+  });
+
+  test("client-side contact pushState mounts detail without a synthetic popstate", async ({
+    page,
+  }) => {
+    await page.goto("/contacts");
+    await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
+    await page.evaluate((path) => {
+      history.pushState({}, "", path);
+    }, CONTACT_PATH);
+    await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
   });
 
   test("detail heading hydrates without a mismatch on desktop and mobile", async ({ page }) => {
@@ -48,12 +55,7 @@ test.describe("thread origin in the static chats surface", () => {
     });
     for (const width of [1280, 390] as const) {
       await page.setViewportSize({ width, height: 800 });
-      await page.goto("/contacts");
-      await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
-      await page.evaluate((pubky) => {
-        history.pushState({}, "", `/contacts/${encodeURIComponent(pubky)}`);
-        window.dispatchEvent(new PopStateEvent("popstate"));
-      }, CONTACT);
+      await page.goto(CONTACT_PATH);
       await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
       const heading = page.locator("[data-testid=contactDetail]").locator("h1, h2").first();
       await expect(heading).toBeVisible();

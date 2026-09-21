@@ -1,0 +1,55 @@
+/** @vitest-environment jsdom */
+
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  subscribeHistoryPath,
+  readWindowPathname,
+  resetHistoryPathForTests,
+} from "./history-path";
+
+describe("history-path", () => {
+  afterEach(() => {
+    resetHistoryPathForTests();
+    window.history.replaceState({}, "", "/");
+  });
+
+  it("notifies on pushState without a popstate", () => {
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    window.history.pushState({}, "", "/contacts/abc");
+    expect(calls).toEqual(["/contacts/abc"]);
+    expect(readWindowPathname()).toBe("/contacts/abc");
+    stop();
+  });
+
+  it("notifies on replaceState", () => {
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    window.history.replaceState({}, "", "/chats/dm%3A1");
+    expect(calls).toEqual(["/chats/dm%3A1"]);
+    stop();
+  });
+
+  it("notifies on popstate", () => {
+    window.history.replaceState({}, "", "/contacts");
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(calls.at(-1)).toBe("/contacts");
+    stop();
+  });
+
+  it("restores native history methods after the last subscriber leaves", () => {
+    const nativePush = window.history.pushState;
+    const stop = subscribeHistoryPath(() => undefined);
+    expect(window.history.pushState).not.toBe(nativePush);
+    stop();
+    expect(window.history.pushState).toBe(nativePush);
+  });
+});

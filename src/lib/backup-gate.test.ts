@@ -125,10 +125,15 @@ function trapEntries(entries: HistoryEntry[]): HistoryEntry[] {
   return entries.filter((entry) => Boolean((entry.state as TrapState | null)?.backupGate));
 }
 
-function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
+function installFakeHistory(
+  initialUrl = "https://hypercolor.app/settings",
+  options: { asyncGo?: boolean } = {},
+) {
   const entries: HistoryEntry[] = [{ state: null, url: initialUrl }];
   let index = 0;
   const popListeners = new Set<() => void>();
+  const queuedPops: Array<() => void> = [];
+  const delayedTimers: Array<() => void> = [];
   const location = {
     href: initialUrl,
     get pathname() {
@@ -137,6 +142,11 @@ function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
   };
   const emitPop = () => {
     for (const listener of [...popListeners]) listener();
+  };
+  const applyGo = (next: number) => {
+    index = next;
+    location.href = entries[index].url;
+    emitPop();
   };
   const historyStub = {
     get state() {
@@ -154,6 +164,11 @@ function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
     },
     back() {
       if (index === 0) return;
+      if (options.asyncGo) {
+        const next = index - 1;
+        queuedPops.push(() => applyGo(next));
+        return;
+      }
       index -= 1;
       location.href = entries[index].url;
       emitPop();
@@ -161,9 +176,11 @@ function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
     go(delta: number) {
       const next = Math.max(0, Math.min(entries.length - 1, index + delta));
       if (next === index) return;
-      index = next;
-      location.href = entries[index].url;
-      emitPop();
+      if (options.asyncGo) {
+        queuedPops.push(() => applyGo(next));
+        return;
+      }
+      applyGo(next);
     },
     replaceState(state: unknown, _title: string, url?: string) {
       const current = entries[index];
@@ -182,8 +199,12 @@ function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
     removeEventListener(type: string, listener: () => void) {
       if (type === "popstate") popListeners.delete(listener);
     },
-    setTimeout(fn: () => void) {
-      fn();
+    setTimeout(fn: () => void, ms?: number) {
+      if (!options.asyncGo || !ms) {
+        fn();
+        return 0;
+      }
+      delayedTimers.push(fn);
       return 0;
     },
   };
@@ -195,7 +216,23 @@ function installFakeHistory(initialUrl = "https://hypercolor.app/settings") {
     configurable: true,
     value: historyStub,
   });
-  return { historyStub, entries, get index() { return index; } };
+  return {
+    historyStub,
+    entries,
+    flushPops() {
+      while (queuedPops.length > 0) {
+        queuedPops.shift()?.();
+      }
+    },
+    flushWatchdog() {
+      while (delayedTimers.length > 0) {
+        delayedTimers.shift()?.();
+      }
+    },
+    get index() {
+      return index;
+    },
+  };
 }
 
 function uninstallFakeHistory() {
@@ -252,6 +289,30 @@ describe("backup-gate history trap", () => {
     confirmPendingBackupLeave();
     expect(ran).toBe(true);
     expect(isBackupLeaveBlocked()).toBe(false);
+  });
+
+  it("does not run Leave-anyway intent while a history.go popstate is still in flight", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile", { asyncGo: true });
+    hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    let ran = false;
+    requestGuardedNavigation(() => {
+      ran = true;
+      hist.historyStub.pushState({ page: "chats" }, "", "https://hypercolor.app/chats");
+    });
+    confirmPendingBackupLeave();
+    expect(ran).toBe(false);
+    hist.flushWatchdog();
+    expect(ran).toBe(false);
+    for (let i = 0; i < 8 && !ran; i += 1) {
+      hist.flushPops();
+    }
+    expect(ran).toBe(true);
+    expect(window.location.href).toBe("https://hypercolor.app/chats");
+    hist.flushWatchdog();
+    hist.flushPops();
+    expect(window.location.href).toBe("https://hypercolor.app/chats");
+    expect((history.state as TrapState)?.backupGate).toBeFalsy();
   });
 
   it("Leave anyway consumes trap entries so a single Back is the previous real route", () => {

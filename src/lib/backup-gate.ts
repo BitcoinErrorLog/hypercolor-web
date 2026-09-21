@@ -144,14 +144,20 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
   }
   trapPushed = 0;
   let finished = false;
+  let awaitingPop = false;
   const finish = () => {
     if (finished) return;
     finished = true;
+    awaitingPop = false;
     consumingTrap = false;
     if (typeof window.removeEventListener === "function") {
       window.removeEventListener("popstate", onPop);
     }
     done();
+  };
+  const goBackOne = () => {
+    awaitingPop = true;
+    history.go(-1);
   };
   const drainStep = () => {
     if (finished) return;
@@ -161,7 +167,7 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
         return;
       }
       scrubBackupGateFromCurrentEntry();
-      history.go(-1);
+      goBackOne();
       return;
     }
     if (currentPathname() !== "/settings") {
@@ -175,10 +181,11 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
       return;
     }
     scrubBackupGateFromCurrentEntry();
-    history.go(-1);
+    goBackOne();
   };
   const onPop = () => {
     if (finished) return;
+    awaitingPop = false;
     if (typeof window.setTimeout === "function") {
       window.setTimeout(drainStep, 0);
       return;
@@ -198,10 +205,12 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
   window.addEventListener("popstate", onPop);
   drainStep();
   if (typeof window.setTimeout === "function") {
+    // Finish only when no history.go is in flight. Firefox delivers that
+    // popstate late; calling done()/router.push first lets the pop yank
+    // Settings back over the destination.
     window.setTimeout(() => {
-      if (finished) return;
-      drainStep();
-      window.setTimeout(finish, 250);
+      if (finished || awaitingPop) return;
+      finish();
     }, 250);
   }
 }
