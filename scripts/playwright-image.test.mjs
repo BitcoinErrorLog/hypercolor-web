@@ -19,6 +19,7 @@ describe("playwright docker pin", () => {
     expect(docker).toContain("restoreHostNodeModulesLink");
     expect(docker).toContain("extraGitMounts");
     expect(docker).toContain("commondir");
+    expect(docker).toContain("safe.directory");
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     expect(pkg.scripts["test:e2e:static"]).toContain("playwright-docker.mjs");
     expect(pkg.scripts["vrt:update"]).toContain("playwright-docker.mjs");

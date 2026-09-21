@@ -130,6 +130,8 @@ export HOME=/tmp/pw-home
 export npm_config_cache=/tmp/npm-cache
 export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 mkdir -p "\$HOME" "\$npm_config_cache"
+git config --global --add safe.directory /work
+git config --global --add safe.directory '*'
 if ! command -v python3 >/dev/null || ! command -v g++ >/dev/null; then
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 make g++
