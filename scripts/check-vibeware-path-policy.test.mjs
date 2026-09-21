@@ -347,6 +347,7 @@ describe("candidate detection", () => {
     expect(isCandidateBranchName("vibeware/hc-chats-ui")).toBe(true);
     expect(isCandidateBranchName("candidate/foo")).toBe(true);
     expect(isCandidateBranchName("main")).toBe(false);
+    expect(isCandidateBranchName("p0/web-ci-green")).toBe(false);
     expect(isCandidateBranchName("feat/vibeware-docs")).toBe(false);
   });
 

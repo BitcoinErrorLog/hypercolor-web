@@ -3,11 +3,12 @@
  * Evaluate a real PR (or local --base/--head range) against the BASE
  * vibeware.yaml. Candidate PRs cannot rewrite the evaluator.
  *
- * Candidate iff:
- *   - head branch matches vibeware/** or candidate/**
- *   - OR HEAD contains .vibeware/candidate with `surface: <id>`
+ * Candidate iff the head branch matches vibeware/** or candidate/**
+ * AND HEAD contains .vibeware/candidate with `surface: <id>`.
  *
  * A vibeware/** or candidate/** branch without the marker FAILS.
+ * A leftover marker on a human branch is ignored (main shipped one after
+ * the empty-state candidate merge and that made every PR a candidate).
  * Non-candidates skip writable-path denial (human PRs may edit session.ts).
  *
  * When --base and --head are passed, always evaluate candidate status.
@@ -146,19 +147,19 @@ export function evaluatePullRequest({
       rejected: [],
     };
   }
-  if (branchCandidate && !surface) {
-    return {
-      ok: false,
-      candidate: true,
-      message: `branch ${headRef} is a candidate but ${CANDIDATE_MARKER} is missing`,
-      rejected: [],
-    };
-  }
-  if (!branchCandidate && !surface) {
+  if (!branchCandidate) {
     return {
       ok: true,
       candidate: false,
       message: "not a vibeware candidate; skipping writable-path denial",
+      rejected: [],
+    };
+  }
+  if (!surface) {
+    return {
+      ok: false,
+      candidate: true,
+      message: `branch ${headRef} is a candidate but ${CANDIDATE_MARKER} is missing`,
       rejected: [],
     };
   }
