@@ -82,16 +82,53 @@ function rawErrorCode(err: unknown): string {
 }
 
 const TRANSIENT_FFI_CODES = new Set(["in_flight", "parked_result_conflict"]);
+const TRANSIENT_FFI_RE = /in[_]?flight|parked[_]?result[_]?conflict/i;
+
+function thrownText(err: unknown): string {
+  if (typeof err === "string") return err;
+  const name = errorName(err);
+  const message = rawErrorMessage(err);
+  const code = rawErrorCode(err);
+  let asString = "";
+  try {
+    asString = String(err);
+  } catch {
+    asString = "";
+  }
+  let causeText = "";
+  if (typeof err === "object" && err !== null && "cause" in err) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause !== undefined && cause !== err) {
+      if (typeof cause === "string") causeText = cause;
+      else causeText = `${errorName(cause)} ${rawErrorMessage(cause)} ${rawErrorCode(cause)}`;
+    }
+  }
+  return `${name} ${message} ${code} ${asString} ${causeText}`;
+}
+
+function describeThrown(err: unknown): string {
+  const kind = typeof err;
+  const ctor =
+    err !== null && typeof err === "object"
+      ? ((err as { constructor?: { name?: string } }).constructor?.name ?? "")
+      : "";
+  const keys =
+    err !== null && typeof err === "object" && !Array.isArray(err)
+      ? Object.keys(err as object).sort().join(",")
+      : "";
+  return `typeof=${kind} ctor=${ctor} keys=${keys} name=${errorName(err)} msgLen=${rawErrorMessage(err).length}`;
+}
 
 export function toLinkNativeError(err: unknown): LinkNativeError {
   if (isLinkNativeError(err)) return err;
   const name = errorName(err);
   const message = rawErrorMessage(err);
   const code = rawErrorCode(err);
+  const blob = thrownText(err);
   if (
     TRANSIENT_FFI_CODES.has(code) ||
     TRANSIENT_FFI_CODES.has(name) ||
-    /in_flight|parked_result_conflict/i.test(`${name} ${message} ${code}`)
+    TRANSIENT_FFI_RE.test(blob)
   ) {
     return { code: "unavailable", message: COARSE_NATIVE_MESSAGES.unavailable };
   }
@@ -172,6 +209,19 @@ type LiveWasmHandle =
   | { kind: "established"; handle: EncryptedLinkHandle; alias: string };
 
 const liveWasmHandles = new Map<string, LiveWasmHandle>();
+const linkOps = new Map<string, Promise<unknown>>();
+
+async function withLinkOp<T>(linkId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = linkOps.get(linkId) ?? Promise.resolve();
+  const next = previous.then(operation, operation);
+  const tracked = next.catch(() => undefined);
+  linkOps.set(linkId, tracked);
+  try {
+    return await next;
+  } finally {
+    if (linkOps.get(linkId) === tracked) linkOps.delete(linkId);
+  }
+}
 
 type PaykitWasmSurface = Awaited<ReturnType<typeof loadPaykitWasm>>;
 
@@ -195,6 +245,7 @@ export function resetPaykitLinkHandlesForTests(): void {
     }
   }
   liveWasmHandles.clear();
+  linkOps.clear();
 }
 
 async function wasmModule(): Promise<PaykitWasmSurface> {
@@ -775,45 +826,51 @@ export const PaykitLinkWeb = {
     linkId: string,
     rawJson: string,
   ): Promise<LinkSendResult> {
-    return invoke(async () => {
-      const entry = requireEstablished(linkId);
-      await entry.handle.sendPrivateApplicationMessageJson(rawJson);
-      const snapshot = await persistHandleSnapshot(
-        entry.handle.snapshot(),
-        entry.alias,
-      );
-      return { snapshot };
-    });
+    return invoke(() =>
+      withLinkOp(linkId, async () => {
+        const entry = requireEstablished(linkId);
+        await entry.handle.sendPrivateApplicationMessageJson(rawJson);
+        const snapshot = await persistHandleSnapshot(
+          entry.handle.snapshot(),
+          entry.alias,
+        );
+        return { snapshot };
+      }),
+    );
   },
 
   async sendPrivatePaymentList(
     linkId: string,
     endpoints: PaymentEndpointMap,
   ): Promise<LinkSendResult> {
-    return invoke(async () => {
-      const entry = requireEstablished(linkId);
-      await entry.handle.sendPrivatePaymentList(endpoints);
-      const snapshot = await persistHandleSnapshot(
-        entry.handle.snapshot(),
-        entry.alias,
-      );
-      return { snapshot };
-    });
+    return invoke(() =>
+      withLinkOp(linkId, async () => {
+        const entry = requireEstablished(linkId);
+        await entry.handle.sendPrivatePaymentList(endpoints);
+        const snapshot = await persistHandleSnapshot(
+          entry.handle.snapshot(),
+          entry.alias,
+        );
+        return { snapshot };
+      }),
+    );
   },
 
   async receivePrivateMessages(linkId: string): Promise<LinkReceiveResult> {
-    return invoke(async () => {
-      const entry = requireEstablished(linkId);
-      const raw = (await entry.handle.receivePrivateApplicationMessages()) as
-        | unknown[]
-        | undefined;
-      const messages = parseInboundMessages(raw);
-      const snapshot = await persistHandleSnapshot(
-        entry.handle.snapshot(),
-        entry.alias,
-      );
-      return { messages, snapshot };
-    });
+    return invoke(() =>
+      withLinkOp(linkId, async () => {
+        const entry = requireEstablished(linkId);
+        const raw = (await entry.handle.receivePrivateApplicationMessages()) as
+          | unknown[]
+          | undefined;
+        const messages = parseInboundMessages(raw);
+        const snapshot = await persistHandleSnapshot(
+          entry.handle.snapshot(),
+          entry.alias,
+        );
+        return { messages, snapshot };
+      }),
+    );
   },
 
   async clearLinkOutbox(
@@ -844,19 +901,21 @@ export const PaykitLinkWeb = {
   },
 
   async closeLink(linkId: string): Promise<void> {
-    return invoke(async () => {
-      const entry = liveWasmHandles.get(linkId);
-      if (!entry) return;
-      liveWasmHandles.delete(linkId);
-      if (entry.kind === "established") {
-        try {
-          await entry.handle.close();
-        } catch {
-          // already closed
+    return invoke(() =>
+      withLinkOp(linkId, async () => {
+        const entry = liveWasmHandles.get(linkId);
+        if (!entry) return;
+        liveWasmHandles.delete(linkId);
+        if (entry.kind === "established") {
+          try {
+            await entry.handle.close();
+          } catch {
+            // already closed
+          }
         }
-      }
-      freeQuietly(entry.handle);
-    });
+        freeQuietly(entry.handle);
+      }),
+    );
   },
 
   async clearAllNativeSecrets(): Promise<void> {
@@ -869,7 +928,11 @@ async function invoke<T>(fn: () => Promise<T>): Promise<T> {
     return await fn();
   } catch (err) {
     if (isLinkNativeError(err)) throw err;
-    throw toLinkNativeError(err);
+    const mapped = toLinkNativeError(err);
+    if (mapped.code === "protocol") {
+      console.warn(`[PaykitLinkWeb] unmapped wasm error ${describeThrown(err)}`);
+    }
+    throw mapped;
   }
 }
 

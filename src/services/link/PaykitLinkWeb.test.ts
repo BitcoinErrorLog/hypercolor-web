@@ -590,6 +590,20 @@ describe("toLinkNativeError EncryptedLink concurrency", () => {
       code: "unavailable",
       message: "unavailable",
     });
+    expect(toLinkNativeError("protocol/in_flight")).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
+    expect(toLinkNativeError(new Error("ParkedResultConflict"))).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
+    const nested = new Error("wasm rejected");
+    (nested as Error & { cause: string }).cause = "protocol/parked_result_conflict";
+    expect(toLinkNativeError(nested)).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
   });
 
   it("still coarsens unknown wasm text to protocol", async () => {
@@ -598,5 +612,77 @@ describe("toLinkNativeError EncryptedLink concurrency", () => {
       code: "protocol",
       message: "protocol error",
     });
+  });
+});
+
+describe("PaykitLinkWeb EncryptedLink op serialization", () => {
+  const restoreLink = vi.fn();
+
+  beforeAll(async () => {
+    await KeyStore.initKeyStore();
+  });
+
+  beforeEach(async () => {
+    await KeyStore.clear();
+    await KeyStore.setPubky(OWNER);
+    await KeyStore.setReceiverNoiseSecret(RECEIVER_ALIAS, SECRET);
+    resetPaykitLinkHandlesForTests();
+    resetPaykitClientForTests();
+    restoreLink.mockReset();
+    setPaykitWasmForTests(
+      {
+        restoreEncryptedLink: (...args: unknown[]) => restoreLink(...args),
+        PubkyClient: class {},
+      } as never,
+      {} as never,
+    );
+  });
+
+  afterEach(() => {
+    resetPaykitLinkHandlesForTests();
+    setPaykitWasmForTests(null, null);
+    resetPaykitClientForTests();
+  });
+
+  it("runs send only after an in-flight receive on the same link settles", async () => {
+    let releaseReceive!: () => void;
+    const receiveGate = new Promise<void>((resolve) => {
+      releaseReceive = resolve;
+    });
+    const order: string[] = [];
+    const established = {
+      snapshot: () => new Uint8Array([1]),
+      close: vi.fn(async () => undefined),
+      free: vi.fn(),
+      sendPrivateApplicationMessageJson: vi.fn(async () => {
+        order.push("send");
+      }),
+      receivePrivateApplicationMessages: vi.fn(async () => {
+        order.push("receive-start");
+        await receiveGate;
+        order.push("receive-end");
+        return [];
+      }),
+    };
+    restoreLink.mockResolvedValue(established);
+    const inner = new Uint8Array([7, 8, 9]);
+    const wrapped = await KeyStore.wrapLinkSnapshot(`${OWNER}:${PEER}`, inner);
+    const restored = await PaykitLinkWeb.restoreLink(
+      sessionHandle() as never,
+      RECEIVER_ALIAS,
+      PEER,
+      "peer-noise",
+      "hypercolor/wallet",
+      "hypercolor/wallet",
+      wrapped,
+    );
+    const receiving = PaykitLinkWeb.receivePrivateMessages(restored.linkId);
+    await vi.waitFor(() => expect(order).toContain("receive-start"));
+    const sending = PaykitLinkWeb.sendPrivateMessageJson(restored.linkId, '{"kind":"chat.delete.v0"}');
+    await Promise.resolve();
+    expect(order).toEqual(["receive-start"]);
+    releaseReceive();
+    await Promise.all([receiving, sending]);
+    expect(order).toEqual(["receive-start", "receive-end", "send"]);
   });
 });
