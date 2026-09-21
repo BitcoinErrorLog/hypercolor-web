@@ -127,12 +127,32 @@ jobs:
             ux-vrt-report/
           if-no-files-found: ignore
 
+  vrt-update-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - name: Gate on [vrt-update] in HEAD
+        id: gate
+        run: |
+          if git log -1 --format=%B | grep -Fq '[vrt-update]'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Native jammy/amd64 snapshot regen. Docker Desktop qemu-user writes uniform
   # black 1280-wide Chromium PNGs; this job is the raster source of truth.
   vrt-update:
-    if: >
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.title, '[vrt-update]')) ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[vrt-update]'))
+    needs: vrt-update-gate
+    if: needs.vrt-update-gate.outputs.run == 'true'
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.62.1-jammy
