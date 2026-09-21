@@ -447,7 +447,11 @@ export async function runBuildE2eStatic(options = {}) {
     if (existsSync(localBase)) {
       const names = readdirSync(localBase).filter((name) => !name.startsWith("._"));
       if (names.length === 0) {
-        rmSync(localBase, { recursive: true, force: true });
+        try {
+          rmSync(localBase, { recursive: true, force: true });
+        } catch {
+          // Named Docker volume mount for .e2e-build cannot be unlinked.
+        }
       }
     }
   };
