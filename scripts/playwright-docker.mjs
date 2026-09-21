@@ -179,4 +179,7 @@ chown -R ${uid}:${gid} e2e/vrt-baselines test-results playwright-report ux-vrt-r
   process.exit(status);
 }
 
-main();
+const invokedDirectly = fileURLToPath(import.meta.url) === path.resolve(process.argv[1] ?? "");
+if (invokedDirectly) {
+  main();
+}
