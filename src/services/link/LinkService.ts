@@ -1057,6 +1057,8 @@ async function ensureLinkLocked(
     marker = undefined;
   }
 
+  if (!(await isCurrentOwner(ownerPubky))) return "error";
+
   if (marker) {
     let inbound: Extract<LinkProbeResult, { result: "pending" | "established" }> | null = null;
     try {
@@ -1149,6 +1151,7 @@ async function ensureLinkLocked(
   if (restoreFailed) return "reconnect_required";
   if (!marker) return allowInitiate ? "not-enrolled" : "idle";
   if (!allowInitiate) return "idle";
+  if (!(await isCurrentOwner(ownerPubky))) return "error";
 
   return initiateHandshake(
     activeSession,
@@ -1672,6 +1675,7 @@ async function initiateHandshake(
   allowInitiate: boolean,
   intent: HandshakeIntent,
 ): Promise<EnsureOutcome> {
+  if (!(await isCurrentOwner(ownerPubky))) return "error";
   if (receiver.receiverRole === "standby") return "standby-blocked";
   const remotePath = LINK_RECEIVER_PATH;
   const initiated = await PaykitLinkWeb.initiateLink(

@@ -219,6 +219,23 @@ type HarnessLinkRow = Omit<ReturnType<typeof handshaking>, "status"> & {
   status: "handshaking" | "established" | "reconnect_required";
 };
 
+function loadPeerOutboxFixtureSlots() {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("../../../fixtures/link-reconnect/live-homeserver-shape.json", import.meta.url),
+      "utf8",
+    ),
+  ) as { peer: { slots: Record<string, number> } };
+  const slots = new Map(Object.entries(fixture.peer.slots));
+  const originalSlots = new Map(slots);
+  const mutateSlots = async () => {
+    slots.clear();
+  };
+  clearOutbox.mockImplementation(mutateSlots);
+  deletePublic.mockImplementation(mutateSlots);
+  return { slots, originalSlots };
+}
+
 describe("W1e marker multi-device + handshake recovery", () => {
   beforeEach(async () => {
     resetLinkServiceHarnessState();
@@ -247,6 +264,8 @@ describe("W1e marker multi-device + handshake recovery", () => {
     });
     restoreLink.mockReset().mockResolvedValue({ linkId: "est-1" });
     getLink.mockReset();
+    vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.listDeliveryQueue).mockReset().mockResolvedValue([]);
     vi.mocked(takeoverReceiver).mockReset();
     vi.mocked(StorageService.getMessageRequest).mockReset().mockResolvedValue(null);
     vi.mocked(StorageService.getAllLinks).mockReset().mockResolvedValue([]);
@@ -833,14 +852,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
   });
 
   it("fails closed when established restore is unavailable", async () => {
-    const fixture = JSON.parse(
-      readFileSync(
-        new URL("../../../fixtures/link-reconnect/live-homeserver-shape.json", import.meta.url),
-        "utf8",
-      ),
-    ) as { peer: { slots: Record<string, number> } };
-    const slots = new Map(Object.entries(fixture.peer.slots));
-    const originalSlots = new Map(slots);
+    const { slots, originalSlots } = loadPeerOutboxFixtureSlots();
     getLink.mockResolvedValue({
       ...handshaking("old-pk"),
       status: "established",
@@ -868,14 +880,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
   it("reconnect_required + rotated peer marker retires locally and starts a fresh handshake", async () => {
     // Captured 2026-09-15 from gate-final/REPORT.md:51-145: peer outbox slots
     // stay 404/200/404. Adoption must not DELETE those homeserver paths.
-    const fixture = JSON.parse(
-      readFileSync(
-        new URL("../../../fixtures/link-reconnect/live-homeserver-shape.json", import.meta.url),
-        "utf8",
-      ),
-    ) as { peer: { slots: Record<string, number> } };
-    const slots = new Map(Object.entries(fixture.peer.slots));
-    const originalSlots = new Map(slots);
+    const { slots, originalSlots } = loadPeerOutboxFixtureSlots();
 
     let stored: HarnessLinkRow | null = {
       ...handshaking("old-pk"),
@@ -921,6 +926,66 @@ describe("W1e marker multi-device + handshake recovery", () => {
     expect(deletePublic).not.toHaveBeenCalled();
     expect(StorageService.abandonOwedLinkMessagesForPeer).not.toHaveBeenCalled();
     expect(slots).toEqual(originalSlots);
+  });
+
+  it("reconnect_required + rotated marker aborts initiate after an owner switch", async () => {
+    const OTHER = "b".repeat(52);
+    let stored: HarnessLinkRow | null = {
+      ...handshaking("old-pk"),
+      status: "reconnect_required",
+      snapshot: "stale-est-snap",
+    };
+    getLink.mockImplementation(async () => stored);
+    deleteLink.mockImplementation(async () => {
+      stored = null;
+    });
+    upsertLink.mockImplementation(async (row: Record<string, unknown>) => {
+      stored = {
+        ...handshaking(String(row.remoteNoisePublicKey ?? "new-pk")),
+        ...row,
+        status: "handshaking",
+        snapshot: String(row.snapshot ?? "init-rotated-snap"),
+        updatedAt: NOW,
+      };
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
+    probeInbound.mockImplementation(async () => {
+      getPubky.mockResolvedValue(OTHER);
+      await LinkService.adoptHarnessSession({ pubky: () => OTHER, free: vi.fn() } as never);
+      return { result: "none" };
+    });
+    initiateLink.mockResolvedValue({ linkId: "init-stolen", snapshot: "stolen-snap" });
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("error");
+
+    expect(deleteLink).toHaveBeenCalledWith(OWNER, PEER);
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(upsertLink).not.toHaveBeenCalled();
+    expect(stored).toBeNull();
+    expect(clearOutbox).not.toHaveBeenCalled();
+    expect(deletePublic).not.toHaveBeenCalled();
+  });
+
+  it("inbox tick probes a rotated reconnect_required peer without initiating", async () => {
+    let stored: HarnessLinkRow | null = {
+      ...handshaking("old-pk"),
+      status: "reconnect_required",
+      snapshot: "stale-est-snap",
+    };
+    getLink.mockImplementation(async () => stored);
+    deleteLink.mockImplementation(async () => {
+      stored = null;
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
+    probeInbound.mockResolvedValue({ result: "none" });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(deleteLink).toHaveBeenCalledWith(OWNER, PEER);
+    expect(probeInbound).toHaveBeenCalled();
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(clearOutbox).not.toHaveBeenCalled();
+    expect(deletePublic).not.toHaveBeenCalled();
   });
 
   it("reconnect_required + unchanged peer marker stays fail-closed", async () => {
