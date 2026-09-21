@@ -169,6 +169,8 @@ chown -R ${uid}:${gid} e2e/vrt-baselines test-results playwright-report ux-vrt-r
     `${NM_VOLUME}:/work/node_modules`,
     "-v",
     `${NPM_VOLUME}:/tmp/npm-cache`,
+    "-v",
+    `hypercolor-web-e2e-build:/work/.e2e-build`,
   ];
   for (const mount of gitMounts) {
     dockerArgs.push("-v", mount);

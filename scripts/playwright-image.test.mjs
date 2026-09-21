@@ -20,6 +20,7 @@ describe("playwright docker pin", () => {
     expect(docker).toContain("extraGitMounts");
     expect(docker).toContain("commondir");
     expect(docker).toContain("safe.directory");
+    expect(docker).toContain("hypercolor-web-e2e-build");
     expect(docker).toContain("._*");
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     expect(pkg.scripts["test:e2e:static"]).toContain("playwright-docker.mjs");

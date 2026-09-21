@@ -31,6 +31,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -564,15 +565,15 @@ export async function runBuildE2eStatic(options = {}) {
       renameSync(isolatedOut, tmpPublish);
     } catch (err) {
       const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
-      if (code === "EXDEV") {
-        return {
-          status: 1,
-          error:
-            "build:e2e:static: isolated out/ is on a different filesystem from the project; " +
-            `use ${E2E_BUILD_DIR}/ so the publish rename is atomic`,
-        };
-      }
-      throw err;
+      if (code !== "EXDEV") throw err;
+      // Docker: isolated tree lives on a Linux volume; publish onto the bind mount.
+      cpSync(isolatedOut, tmpPublish, {
+        recursive: true,
+        filter: (src) => {
+          const base = path.basename(src);
+          return !base.startsWith("._") && base !== ".DS_Store";
+        },
+      });
     }
     swapPublish(tmpPublish, outE2e, oldPublish);
     console.log(`build:e2e:static: wrote ${outE2e} with ${MARKER}`);
