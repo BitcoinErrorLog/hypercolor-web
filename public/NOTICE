@@ -1,0 +1,22 @@
+Third-party component: sqlite3.wasm
+
+Copied at `npm` postinstall / prebuild from `@sqlite.org/sqlite-wasm` into `public/sqlite3.wasm` (gitignored). This NOTICE covers that generated artifact.
+
+- npm package: `@sqlite.org/sqlite-wasm` 3.53.0-build1 (this repo's `package.json`)
+- Source repository: https://github.com/sqlite/sqlite-wasm
+- npm registry license field: Apache-2.0 (SPDX: Apache-2.0)
+- Verified 2026-09-21 from:
+  - https://registry.npmjs.org/@sqlite.org/sqlite-wasm/3.53.0-build1 (`license: Apache-2.0`)
+  - https://github.com/sqlite/sqlite-wasm/blob/main/package.json (`"license": "Apache-2.0"`)
+  - The GitHub repo has no LICENSE file; SPDX is taken from package.json.
+- SQLite engine inside the wasm: public domain (SPDX: blessing), verified from https://www.sqlite.org/copyright.html
+
+Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0
+
+SQLite public-domain dedication (https://www.sqlite.org/copyright.html):
+
+All of the code and documentation in SQLite has been dedicated to the public
+domain by the authors. Anyone is free to copy, modify, publish, use, compile,
+sell, or distribute the original SQLite code, either in source code form or
+as a compiled binary, for any purpose, commercial or non-commercial, and by
+any means.
