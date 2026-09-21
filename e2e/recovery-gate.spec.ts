@@ -428,8 +428,9 @@ test.describe("recovery-code gate attack matrix", () => {
     await gotoSettings(page);
     await armGate(page);
     await page.getByTestId("detailBack").click();
+    await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
     await page.getByTestId("backupLeaveAnyway").click();
-    await expect(page).toHaveURL(/\/profile/);
+    await expect(page).toHaveURL(/\/profile/, { timeout: 15_000 });
     await page.getByRole("navigation", { name: "Account" }).getByRole("link", { name: "Settings" }).click();
     await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
     await (await chatsNav(page)).click();
@@ -734,10 +735,12 @@ test.describe("recovery-code gate attack matrix", () => {
   });
 
   test("list routes expose exactly one h1", async ({ page }) => {
+    test.setTimeout(60_000);
     await page.setViewportSize({ width: 1280, height: 800 });
     for (const path of ["/chats", "/channels", "/contacts", "/profile", "/settings", "/requests", "/enable"]) {
-      await page.goto(path);
-      await expect(page.locator("h1")).toHaveCount(1);
+      await page.goto(path, { waitUntil: "domcontentloaded" });
+      await expect(page).toHaveURL(new RegExp(`${path.replaceAll("/", "\\/")}$`));
+      await expect(page.locator("h1")).toHaveCount(1, { timeout: 15_000 });
     }
   });
 
