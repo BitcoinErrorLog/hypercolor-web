@@ -1144,7 +1144,38 @@ async function ensureLinkLocked(
 
   if (!(await isCurrentOwner(ownerPubky))) return "error";
 
-  if (marker) {
+  // A responder that already wrote Noise msg2 must advance that same
+  // handshake to read initiator msg3. `probeInboundLink` is accept+one
+  // advance: calling it again starts a new XX, rewrites msg2, and the
+  // initiator (already established after the first msg2) never re-sends
+  // msg3. Inbox poll / open-thread sync then loop `result=pending`.
+  const responderHandshaking =
+    (live?.status === "handshaking" && live.role === "responder") ||
+    (stored?.status === "handshaking" && stored.role === "responder");
+
+  // Peer re-enrolled (new noise pk on receiver.json) while we still hold
+  // msg2: advance() only reads the msg3 slot. Wipe and accept the fresh
+  // msg1. Same-pk restarts stay on the pre-existing non-ready age-out
+  // ({@link HANDSHAKE_STALE_MS}) so a late msg3 is not wiped sooner.
+  if (
+    responderHandshaking &&
+    marker &&
+    stored?.remoteNoisePublicKey &&
+    marker.noisePublicKey !== stored.remoteNoisePublicKey
+  ) {
+    return restartResponderFromFreshMsg1(
+      activeSession,
+      receiver,
+      ownerPubky,
+      peerPubky,
+      stored,
+      marker,
+      localPath,
+      alreadyRecovered,
+    );
+  }
+
+  if (marker && !responderHandshaking) {
     let inbound: Extract<LinkProbeResult, { result: "pending" | "established" }> | null = null;
     try {
       inbound = await probeInbound(activeSession, receiver, ownerPubky, peerPubky, marker, localPath);
@@ -1176,7 +1207,7 @@ async function ensureLinkLocked(
         liveHandles.delete(key);
       }
       return adoptInboundHandshake(ownerPubky, peerPubky, marker, localPath, inbound);
-      }
+    }
   }
 
   live = liveHandles.get(key);
@@ -2137,6 +2168,66 @@ async function maybeAdoptReconnectRequiredMarkerRotation(
   await retireLocalLinkState(stored, { failQueued: false });
   const leftover = await StorageService.getLink(ownerPubky, peerPubky);
   return leftover === null;
+}
+
+/**
+ * Wipe a pending responder handshake and accept the current msg1. Charges
+ * the durable handshake budget so a flapping marker cannot loop for free.
+ * Completing XX later still clears the budget.
+ */
+async function restartResponderFromFreshMsg1(
+  activeSession: ActiveSession,
+  receiver: LinkReceiver,
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  stored: LinkRecord,
+  marker: ReceiverMarker | null | undefined,
+  localPath: string,
+  alreadyRecovered: boolean,
+): Promise<EnsureOutcome> {
+  if (!(await isCurrentOwner(ownerPubky))) return "error";
+  const budget = await chargeHandshakeBudget(ownerPubky, peerPubky, { throttle: false });
+  if (budget.exhausted) return abandonUnestablishedLink(stored);
+
+  await retireLocalLinkState(stored, { failQueued: false });
+  if (alreadyRecovered) return "error";
+
+  let nextMarker = marker && marker.noisePublicKey ? marker : null;
+  if (!nextMarker) {
+    try {
+      nextMarker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, localPath);
+    } catch {
+      return "idle";
+    }
+  }
+  if (!nextMarker) return "idle";
+  if (!(await isCurrentOwner(ownerPubky))) return "error";
+
+  let inbound: Extract<LinkProbeResult, { result: "pending" | "established" }> | null;
+  try {
+    inbound = await probeInbound(
+      activeSession,
+      receiver,
+      ownerPubky,
+      peerPubky,
+      nextMarker,
+      localPath,
+    );
+  } catch (err) {
+    if (isLinkNativeError(err) && err.code === "protocol") {
+      return "idle";
+    }
+    throw err;
+  }
+  if (inbound === null) {
+    await StorageService.abandonOwedLinkMessagesForPeer(ownerPubky, peerPubky);
+    return "idle";
+  }
+  if (!(await isCurrentOwner(ownerPubky))) {
+    await closeQuietly(inbound.linkId);
+    return "error";
+  }
+  return adoptInboundHandshake(ownerPubky, peerPubky, nextMarker, localPath, inbound);
 }
 
 async function retireLocalLinkState(

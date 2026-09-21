@@ -5,6 +5,7 @@ const restoreLink = vi.fn();
 const initiateLink = vi.fn();
 const probeInbound = vi.fn();
 const advanceHandshake = vi.fn();
+const restoreHandshake = vi.fn();
 const getMarker = vi.fn();
 const persistIntent = vi.fn();
 const finalizeSend = vi.fn();
@@ -37,7 +38,7 @@ vi.mock("./PaykitLinkWeb", async () => {
       initiateLink: (...args: unknown[]) => initiateLink(...args),
       probeInboundLink: (...args: unknown[]) => probeInbound(...args),
       advanceHandshake: (...args: unknown[]) => advanceHandshake(...args),
-      restoreHandshake: vi.fn(),
+      restoreHandshake: (...args: unknown[]) => restoreHandshake(...args),
       restoreLink: (...args: unknown[]) => restoreLink(...args),
       sendPrivateMessageJson: (...args: unknown[]) => sendPrivate(...args),
       receivePrivateMessages: (...args: unknown[]) => receivePrivate(...args),
@@ -2250,6 +2251,139 @@ describe("LinkService established re-key marker compare", () => {
     expect(
       warn.mock.calls.some((call) => String(call[0]).includes("inbound-probe result=none")),
     ).toBe(true);
+  });
+});
+
+describe("LinkService holds responder msg2 instead of re-accepting", () => {
+  beforeEach(async () => {
+    resetLinkServiceHarnessState();
+    receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "recv-1" });
+    restoreLink.mockReset().mockResolvedValue({ linkId: "est-resp" });
+    restoreHandshake.mockReset();
+    initiateLink.mockReset();
+    probeInbound.mockReset().mockResolvedValue({
+      result: "pending",
+      linkId: "resp-1",
+      snapshot: "resp-msg2",
+    });
+    advanceHandshake.mockReset().mockResolvedValue({
+      status: "established",
+      snapshot: "resp-msg3",
+    });
+    getMarker.mockReset().mockResolvedValue({ noisePublicKey: "peer-noise" });
+    getMessageRequest.mockReset().mockResolvedValue(null);
+    getPubky.mockReset().mockResolvedValue(OWNER);
+    getReceiver.mockReset().mockResolvedValue({
+      ownerPubky: OWNER,
+      receiverAlias: "recv",
+      receiverPath: LINK_RECEIVER_PATH,
+      markerPublished: true,
+    });
+    getLink.mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.getHandshakeBudget).mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.getContact).mockReset().mockResolvedValue(null);
+    vi.mocked(StorageService.getUnprocessedLinkStreamItems).mockReset().mockResolvedValue([]);
+    vi.mocked(StorageService.countLinkMessagesForPeer).mockReset().mockResolvedValue(0);
+    vi.mocked(StorageService.upsertMessageRequest).mockReset();
+    vi.mocked(StorageService.deleteLink).mockReset();
+    vi.mocked(StorageService.upsertLink).mockReset();
+    vi.mocked(RetryQueue.getDue).mockReset().mockResolvedValue([]);
+    vi.spyOn(Date, "now").mockReturnValue(NOW);
+    await LinkService.adoptHarnessSession(handle() as never);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetLinkServiceHarnessState();
+  });
+
+  it("advances a pending responder handshake instead of accepting again", async () => {
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-responder");
+    probeInbound.mockClear();
+    getLink.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "responder",
+      status: "handshaking",
+      snapshot: "resp-msg2",
+      remoteNoisePublicKey: "peer-noise",
+      localReceiverPath: LINK_RECEIVER_PATH,
+      remoteReceiverPath: LINK_RECEIVER_PATH,
+      consecutiveFailures: 0,
+      lastSeenPeerMarkerPk: "peer-noise",
+      updatedAt: NOW,
+    });
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("ready");
+
+    expect(probeInbound).not.toHaveBeenCalled();
+    expect(advanceHandshake).toHaveBeenCalledWith("resp-1");
+    expect(initiateLink).not.toHaveBeenCalled();
+  });
+
+  it("does not re-accept a young stored responder handshake on inbox poll", async () => {
+    getLink.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "responder",
+      status: "handshaking",
+      snapshot: "old-channel",
+      remoteNoisePublicKey: "peer-noise",
+      localReceiverPath: LINK_RECEIVER_PATH,
+      remoteReceiverPath: LINK_RECEIVER_PATH,
+      consecutiveFailures: 0,
+      lastSeenPeerMarkerPk: "peer-noise",
+      updatedAt: NOW,
+    });
+    restoreHandshake.mockResolvedValue({ linkId: "hs-old", status: "pending" });
+    probeInbound.mockResolvedValue({
+      result: "pending",
+      linkId: "fresh-hs",
+      snapshot: "new-channel",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(probeInbound).not.toHaveBeenCalled();
+    expect(restoreHandshake).toHaveBeenCalled();
+    expect(advanceHandshake).toHaveBeenCalledWith("hs-old");
+    expect(StorageService.deleteLink).not.toHaveBeenCalled();
+  });
+
+  it("wipes and re-accepts when the peer re-enrolls a new marker pk while responder-pending", async () => {
+    getLink.mockResolvedValue({
+      ownerPubky: OWNER,
+      peerPubky: PEER,
+      role: "responder",
+      status: "handshaking",
+      snapshot: "resp-msg2",
+      remoteNoisePublicKey: "peer-noise",
+      localReceiverPath: LINK_RECEIVER_PATH,
+      remoteReceiverPath: LINK_RECEIVER_PATH,
+      consecutiveFailures: 0,
+      lastSeenPeerMarkerPk: "peer-noise",
+      updatedAt: NOW,
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "re-enrolled-noise-pk" });
+    probeInbound.mockResolvedValue({
+      result: "established",
+      linkId: "fresh-est",
+      snapshot: "est-rekey",
+    });
+
+    await expect(LinkService.syncInbox([PEER])).resolves.toEqual([]);
+
+    expect(StorageService.deleteLink).toHaveBeenCalledWith(OWNER, PEER);
+    expect(probeInbound).toHaveBeenCalled();
+    expect(advanceHandshake).not.toHaveBeenCalled();
+    expect(StorageService.upsertLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "responder",
+        status: "established",
+        remoteNoisePublicKey: "re-enrolled-noise-pk",
+        snapshot: "est-rekey",
+      }),
+    );
   });
 });
 
