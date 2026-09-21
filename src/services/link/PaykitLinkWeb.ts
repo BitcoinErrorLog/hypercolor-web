@@ -73,10 +73,28 @@ function rawErrorMessage(err: unknown): string {
   return "";
 }
 
+function rawErrorCode(err: unknown): string {
+  if (typeof err === "object" && err !== null && "code" in err) {
+    const code = (err as { code?: unknown }).code;
+    return typeof code === "string" ? code : "";
+  }
+  return "";
+}
+
+const TRANSIENT_FFI_CODES = new Set(["in_flight", "parked_result_conflict"]);
+
 export function toLinkNativeError(err: unknown): LinkNativeError {
   if (isLinkNativeError(err)) return err;
   const name = errorName(err);
   const message = rawErrorMessage(err);
+  const code = rawErrorCode(err);
+  if (
+    TRANSIENT_FFI_CODES.has(code) ||
+    TRANSIENT_FFI_CODES.has(name) ||
+    /in_flight|parked_result_conflict/i.test(`${name} ${message} ${code}`)
+  ) {
+    return { code: "unavailable", message: COARSE_NATIVE_MESSAGES.unavailable };
+  }
   if (
     name === "SessionResumeUnauthorized" ||
     name === "SessionResumePubkyMismatch" ||

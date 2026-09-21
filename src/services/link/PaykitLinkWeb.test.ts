@@ -572,3 +572,31 @@ describe("PaykitLinkWeb startAuthFlow client isolation", () => {
     expect(startAuthFlow).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("toLinkNativeError EncryptedLink concurrency", () => {
+  it("maps in_flight and parked_result_conflict to unavailable", async () => {
+    const { toLinkNativeError } = await import("./PaykitLinkWeb");
+    expect(toLinkNativeError({ code: "in_flight", message: "send already in flight" })).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
+    expect(toLinkNativeError({ code: "parked_result_conflict", name: "ProtocolError" })).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
+    expect(
+      toLinkNativeError(Object.assign(new Error("parked_result_conflict"), { name: "in_flight" })),
+    ).toEqual({
+      code: "unavailable",
+      message: "unavailable",
+    });
+  });
+
+  it("still coarsens unknown wasm text to protocol", async () => {
+    const { toLinkNativeError } = await import("./PaykitLinkWeb");
+    expect(toLinkNativeError(new Error("sqlite full at /tmp/x.db"))).toEqual({
+      code: "protocol",
+      message: "protocol error",
+    });
+  });
+});

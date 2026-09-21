@@ -596,6 +596,63 @@ describe("LinkService persist-then-send", () => {
     expect(RetryQueue.defer).not.toHaveBeenCalled();
   });
 
+  it("defers in_flight control without dropping the live handle", async () => {
+    const deleteEventId = "00000000-0000-4000-8000-0000000000de";
+    const controlItem = {
+      id: QUEUE_ID,
+      messageId: deleteEventId,
+      recipientPubky: PEER,
+      payload: JSON.stringify({
+        type: LINK_CONTROL_PAYLOAD_TYPE,
+        ownerPubky: OWNER,
+        peerPubky: PEER,
+        senderPubky: OWNER,
+        kind: CHAT_DELETE_KIND,
+        eventId: deleteEventId,
+        rawJson: JSON.stringify({
+          version: 1,
+          kind: CHAT_DELETE_KIND,
+          event_id: deleteEventId,
+          sent_at: NOW,
+          target_event_id: EVENT_ID,
+        }),
+      }),
+      attempts: 0,
+      nextRetryAt: NOW,
+      createdAt: NOW,
+    };
+    const target = {
+      ownerPubky: OWNER,
+      eventId: EVENT_ID,
+      conversationId: `dm:${PEER}`,
+      peerPubky: PEER,
+      senderPubky: OWNER,
+      direction: "sent" as const,
+      kind: CHAT_MESSAGE_KIND,
+      rawJson: "{}",
+      body: "secret",
+      sentAt: NOW,
+      receivedAt: null,
+      deliveryState: "sent" as const,
+      deleted: false,
+    };
+    vi.mocked(StorageService.getLinkMessageByEventId).mockResolvedValue(target);
+    vi.mocked(crypto.randomUUID)
+      .mockReset()
+      .mockReturnValueOnce(deleteEventId)
+      .mockReturnValueOnce(QUEUE_ID);
+    vi.mocked(StorageService.getDeliveryQueueItem).mockResolvedValue(controlItem);
+    sendPrivate.mockRejectedValueOnce({ code: "unavailable", message: "unavailable" });
+
+    await LinkService.unsendDm(PEER, EVENT_ID);
+
+    expect(RetryQueue.defer).toHaveBeenCalledWith(QUEUE_ID, 0);
+    expect(RetryQueue.recordFailure).not.toHaveBeenCalled();
+    expect(PaykitLinkWeb.closeLink).not.toHaveBeenCalled();
+    expect(StorageService.finalizeControlSend).not.toHaveBeenCalled();
+    expect(PaykitLinkWeb.deletePublic).not.toHaveBeenCalled();
+  });
+
   it("holds a delete PAM through reconnect_required and sends it once the link is ready", async () => {
     const deleteEventId = "00000000-0000-4000-8000-0000000000de";
     const rawJson = JSON.stringify({
