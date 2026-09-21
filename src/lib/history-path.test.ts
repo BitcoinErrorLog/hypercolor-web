@@ -45,11 +45,23 @@ describe("history-path", () => {
     stop();
   });
 
-  it("restores native history methods after the last subscriber leaves", () => {
-    const nativePush = window.history.pushState;
-    const stop = subscribeHistoryPath(() => undefined);
-    expect(window.history.pushState).not.toBe(nativePush);
+  it("notifies when History.prototype.pushState is invoked without a popstate", () => {
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    History.prototype.pushState.call(window.history, {}, "", "/contacts/proto");
+    expect(calls).toEqual(["/contacts/proto"]);
+    expect(readWindowPathname()).toBe("/contacts/proto");
     stop();
+  });
+
+  it("restores History.prototype methods after the last subscriber leaves", () => {
+    const nativePush = History.prototype.pushState;
+    const stop = subscribeHistoryPath(() => undefined);
+    expect(History.prototype.pushState).not.toBe(nativePush);
+    stop();
+    expect(History.prototype.pushState).toBe(nativePush);
     expect(window.history.pushState).toBe(nativePush);
   });
 });

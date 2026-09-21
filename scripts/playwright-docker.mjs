@@ -67,6 +67,16 @@ function alreadyInPinnedContainer() {
   return existsSync("/.dockerenv") && existsSync("/ms-playwright");
 }
 
+/** Firefox Nightly as root refuses a HOME owned by another uid (GHA /github/home). */
+function firefoxSafeEnv(env) {
+  const next = { ...env, PLAYWRIGHT_IN_DOCKER: "1" };
+  const uid = typeof process.getuid === "function" ? process.getuid() : null;
+  if (uid === 0 && next.HOME && next.HOME !== "/root") {
+    next.HOME = "/root";
+  }
+  return next;
+}
+
 function ensureGitSafeDirectory() {
   spawnSync("git", ["config", "--global", "--add", "safe.directory", "*"], { stdio: "ignore" });
   spawnSync("git", ["config", "--global", "--add", "safe.directory", REPO_ROOT], { stdio: "ignore" });
@@ -120,7 +130,7 @@ function main() {
   const command = parseCommand(process.argv.slice(2));
   if (alreadyInPinnedContainer()) {
     ensureGitSafeDirectory();
-    process.exit(run(command, { env: { ...process.env, PLAYWRIGHT_IN_DOCKER: "1" } }));
+    process.exit(run(command, { env: firefoxSafeEnv(process.env) }));
   }
 
   const image = playwrightDockerImage(REPO_ROOT);

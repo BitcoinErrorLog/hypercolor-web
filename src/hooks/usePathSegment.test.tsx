@@ -64,4 +64,20 @@ describe("usePathSegment", () => {
       "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
     );
   });
+
+  it("updates when History.prototype.pushState is invoked without popstate", async () => {
+    await render(<Probe />);
+    expect(host.querySelector("[data-testid=segment]")?.textContent).toBe("none");
+    await act(async () => {
+      History.prototype.pushState.call(
+        window.history,
+        {},
+        "",
+        "/contacts/o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+      );
+    });
+    expect(host.querySelector("[data-testid=segment]")?.textContent).toBe(
+      "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+    );
+  });
 });

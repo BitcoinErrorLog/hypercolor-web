@@ -40,7 +40,8 @@ test.describe("thread origin in the static chats surface", () => {
     await page.goto("/contacts");
     await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
     await page.evaluate((path) => {
-      history.pushState({}, "", path);
+      // Linux WebKit looks up pushState on History.prototype, not the instance.
+      History.prototype.pushState.call(history, {}, "", path);
     }, CONTACT_PATH);
     await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
   });

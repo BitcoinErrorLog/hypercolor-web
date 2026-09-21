@@ -91,6 +91,9 @@ jobs:
       PLAYWRIGHT_IN_DOCKER: "1"
       COPYFILE_DISABLE: "1"
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      # GHA sets HOME=/github/home owned by uid 1001; the container is root.
+      # Firefox Nightly refuses to launch unless HOME is owned by the process.
+      HOME: /root
     permissions:
       contents: read
     steps:
@@ -166,6 +169,7 @@ jobs:
       PLAYWRIGHT_IN_DOCKER: "1"
       COPYFILE_DISABLE: "1"
       PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      HOME: /root
     permissions:
       contents: read
     steps:
