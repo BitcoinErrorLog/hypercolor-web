@@ -7,7 +7,10 @@
  * host objects: wrapping `History.prototype` is a no-op for the engine's own
  * calls. Observe `window.location.pathname` itself: wrap when the engine
  * honours it, Navigation API, and same-origin `<a>` clicks so React still
- * follows native `pushState`. Static-export rewrites leave
+ * follows native `pushState`. When the prototype looks wrapped but the
+ * engine still calls the host method (Linux WebKit), a short path poll
+ * reads `window.location.pathname`. The poll is skipped in jsdom, where
+ * the wrap is live. Static-export rewrites leave
  * `window.location.pathname` as the real URL.
  */
 
@@ -80,16 +83,12 @@ function navigationHost(): NavigationHost | null {
   return nav;
 }
 
-function methodStillNative(method: HistoryMethod): boolean {
-  try {
-    return Function.prototype.toString.call(History.prototype[method]).includes("[native code]");
-  } catch {
-    return true;
-  }
+function isJsdom(): boolean {
+  return typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
 }
 
 function armPathWatch(): void {
-  if (pathWatchTimer) return;
+  if (pathWatchTimer || isJsdom()) return;
   pathWatchTimer = setInterval(notifyIfPathChanged, 50);
 }
 
@@ -158,9 +157,7 @@ function ensurePatched(): void {
   const nav = navigationHost();
   nav?.addEventListener("currententrychange", onCurrentEntryChange);
   nav?.addEventListener("navigate", onCurrentEntryChange);
-  if (methodStillNative("pushState") || methodStillNative("replaceState")) {
-    armPathWatch();
-  }
+  armPathWatch();
   patched = true;
 }
 
