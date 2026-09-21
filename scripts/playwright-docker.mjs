@@ -93,6 +93,24 @@ function bashQuote(args) {
   return args.map((arg) => JSON.stringify(arg)).join(" ");
 }
 
+/** Bind-mount a worktree's common .git so `git ls-files` works in Docker. */
+function extraGitMounts() {
+  const gitPath = path.join(REPO_ROOT, ".git");
+  try {
+    if (!lstatSync(gitPath).isFile()) return [];
+    const text = readFileSync(gitPath, "utf8");
+    const match = text.match(/^gitdir:\s*(.+)$/m);
+    if (!match) return [];
+    const gitdir = match[1].trim();
+    const commonRel = readFileSync(path.join(gitdir, "commondir"), "utf8").trim();
+    const common = path.resolve(gitdir, commonRel);
+    if (!existsSync(common)) return [];
+    return [`${common}:${common}`];
+  } catch {
+    return [];
+  }
+}
+
 function main() {
   const command = parseCommand(process.argv.slice(2));
   if (alreadyInPinnedContainer()) {
@@ -126,35 +144,35 @@ chown -R ${uid}:${gid} e2e/vrt-baselines test-results playwright-report ux-vrt-r
 
   console.log(`playwright-docker: ${image} platform=${PLAYWRIGHT_DOCKER_PLATFORM}`);
   const hostLink = readHostNodeModulesLink();
+  const gitMounts = extraGitMounts();
+  const dockerArgs = [
+    "docker",
+    "run",
+    "--rm",
+    "--platform",
+    PLAYWRIGHT_DOCKER_PLATFORM,
+    "--ipc=host",
+    "--init",
+    "-e",
+    "PLAYWRIGHT_IN_DOCKER=1",
+    "-e",
+    "COPYFILE_DISABLE=1",
+    "-e",
+    "CI=1",
+    "-v",
+    `${REPO_ROOT}:/work`,
+    "-v",
+    `${NM_VOLUME}:/work/node_modules`,
+    "-v",
+    `${NPM_VOLUME}:/tmp/npm-cache`,
+  ];
+  for (const mount of gitMounts) {
+    dockerArgs.push("-v", mount);
+  }
+  dockerArgs.push("-w", "/work", image, "bash", "-lc", inner);
   let status = 1;
   try {
-    status = run([
-      "docker",
-      "run",
-      "--rm",
-      "--platform",
-      PLAYWRIGHT_DOCKER_PLATFORM,
-      "--ipc=host",
-      "--init",
-      "-e",
-      "PLAYWRIGHT_IN_DOCKER=1",
-      "-e",
-      "COPYFILE_DISABLE=1",
-      "-e",
-      "CI=1",
-      "-v",
-      `${REPO_ROOT}:/work`,
-      "-v",
-      `${NM_VOLUME}:/work/node_modules`,
-      "-v",
-      `${NPM_VOLUME}:/tmp/npm-cache`,
-      "-w",
-      "/work",
-      image,
-      "bash",
-      "-lc",
-      inner,
-    ]);
+    status = run(dockerArgs);
   } finally {
     restoreHostNodeModulesLink(hostLink);
   }

@@ -17,6 +17,8 @@ describe("playwright docker pin", () => {
     const docker = readFileSync(join(root, "scripts/playwright-docker.mjs"), "utf8");
     expect(docker).toContain("linux/amd64");
     expect(docker).toContain("restoreHostNodeModulesLink");
+    expect(docker).toContain("extraGitMounts");
+    expect(docker).toContain("commondir");
     const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
     expect(pkg.scripts["test:e2e:static"]).toContain("playwright-docker.mjs");
     expect(pkg.scripts["vrt:update"]).toContain("playwright-docker.mjs");
