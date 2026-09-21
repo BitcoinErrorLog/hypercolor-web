@@ -197,6 +197,7 @@ describe("shouldExcludeFromE2eCopy", () => {
     expect(shouldExcludeFromE2eCopy("src/server/gif-proxy.test.ts")).toBe(true);
     expect(shouldExcludeFromE2eCopy("src/components/thread-view.test.tsx")).toBe(true);
     expect(shouldExcludeFromE2eCopy("e2e/production-hooks.spec.ts")).toBe(true);
+    expect(shouldExcludeFromE2eCopy("public/._sqlite3.wasm")).toBe(true);
     expect(shouldExcludeFromE2eCopy("src/server/gif-proxy.ts")).toBe(false);
     expect(shouldExcludeFromE2eCopy("src/components/thread-view.tsx")).toBe(false);
   });

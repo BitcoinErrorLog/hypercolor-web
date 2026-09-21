@@ -132,6 +132,8 @@ export PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 mkdir -p "\$HOME" "\$npm_config_cache"
 git config --global --add safe.directory /work
 git config --global --add safe.directory '*'
+# ExFAT AppleDouble sidecars break Next's public/ copy inside Linux.
+find /work \\( -name '._*' -o -name '.DS_Store' \\) -not -path '/work/.git/*' -delete 2>/dev/null || true
 if ! command -v python3 >/dev/null || ! command -v g++ >/dev/null; then
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 make g++

@@ -94,6 +94,7 @@ export function shouldExcludeFromE2eCopy(rel) {
   }
   if (normalized.startsWith("app/api/")) return true;
   if (/\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)$/.test(normalized)) return true;
+  if (normalized.split("/").some((part) => part.startsWith("._"))) return true;
   if (isDotEnvFile(rel)) return true;
   return false;
 }
@@ -351,6 +352,7 @@ function defaultRunBuild(buildRoot, onSpawn) {
       detached: true,
       env: {
         ...process.env,
+        COPYFILE_DISABLE: "1",
         NEXT_PUBLIC_E2E_HARNESS: "1",
         HC_STATIC_EXPORT: "1",
       },
