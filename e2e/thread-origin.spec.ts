@@ -34,14 +34,27 @@ test.describe("thread origin in the static chats surface", () => {
     expect(errors.join("\n")).not.toMatch(/Maximum update depth|Minified React error #185/);
   });
 
+  test("client-side contact href mounts detail without a synthetic popstate", async ({ page }) => {
+    await page.goto("/contacts");
+    await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
+    await page.evaluate((path) => {
+      const a = document.createElement("a");
+      a.setAttribute("href", path);
+      a.setAttribute("data-testid", "threadOriginContactHref");
+      a.textContent = "Open contact";
+      document.body.appendChild(a);
+    }, CONTACT_PATH);
+    await page.getByTestId("threadOriginContactHref").click();
+    await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
+  });
+
   test("client-side contact pushState mounts detail without a synthetic popstate", async ({
     page,
   }) => {
     await page.goto("/contacts");
     await expect(page.getByRole("heading", { name: "Contacts" })).toBeVisible({ timeout: 30_000 });
     await page.evaluate((path) => {
-      // Linux WebKit looks up pushState on History.prototype, not the instance.
-      History.prototype.pushState.call(history, {}, "", path);
+      history.pushState({}, "", path);
     }, CONTACT_PATH);
     await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
   });

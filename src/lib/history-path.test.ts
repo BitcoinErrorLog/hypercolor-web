@@ -64,4 +64,30 @@ describe("history-path", () => {
     expect(History.prototype.pushState).toBe(nativePush);
     expect(window.history.pushState).toBe(nativePush);
   });
+
+  it("notifies when a same-origin click follows a native pushState the wrap missed", async () => {
+    const nativePush = History.prototype.pushState;
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    Object.defineProperty(History.prototype, "pushState", {
+      configurable: true,
+      writable: true,
+      value: nativePush,
+    });
+    nativePush.call(window.history, {}, "", "/contacts/native");
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "/contacts/native");
+    document.body.append(anchor);
+    anchor.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+    expect(calls.at(-1)).toBe("/contacts/native");
+    expect(readWindowPathname()).toBe("/contacts/native");
+    anchor.remove();
+    stop();
+  });
 });

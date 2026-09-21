@@ -1,11 +1,15 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type ReactElement } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { usePathSegment } from "@/hooks/usePathSegment";
 import { resetHistoryPathForTests } from "@/lib/history-path";
+
+vi.mock("next/navigation", () => ({
+  usePathname: () => (typeof window === "undefined" ? "/contacts" : window.location.pathname),
+}));
 
 function Probe() {
   const id = usePathSegment("contacts");

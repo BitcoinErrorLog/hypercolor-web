@@ -3,28 +3,99 @@
  *
  * `popstate` only fires for Back/Forward. `history.pushState` / `replaceState`
  * (Next.js `<Link>` and `router.push`) do not. Linux WebKit also drops
- * untrusted synthetic `PopStateEvent`s, and `history.pushState` on that
- * engine is the prototype method — an instance wrap is a no-op. Patch
- * `History.prototype` (and the instance if it still diverges) so
- * `usePathSegment` sees `page.evaluate` and Next client navigations.
- * Static-export rewrites leave `window.location.pathname` as the real URL.
+ * untrusted synthetic `PopStateEvent`s, and its native History methods are
+ * host objects: wrapping `History.prototype` is a no-op for the engine's own
+ * calls. Observe `window.location.pathname` itself: wrap when the engine
+ * honours it, Navigation API, and same-origin `<a>` clicks so React still
+ * follows native `pushState`. Static-export rewrites leave
+ * `window.location.pathname` as the real URL.
  */
 
 type HistoryMethod = "pushState" | "replaceState";
 
+type NavigationHost = {
+  addEventListener: (type: string, listener: () => void) => void;
+  removeEventListener: (type: string, listener: () => void) => void;
+};
+
 const listeners = new Set<() => void>();
 let patched = false;
+let lastObservedPath = "";
+let pathWatchTimer: ReturnType<typeof setInterval> | 0 = 0;
 const originals: { pushState: History["pushState"] | null; replaceState: History["replaceState"] | null } = {
   pushState: null,
   replaceState: null,
 };
 
 function notify(): void {
+  lastObservedPath = readWindowPathname();
   for (const listener of listeners) listener();
+}
+
+function notifyIfPathChanged(): void {
+  const next = readWindowPathname();
+  if (next === lastObservedPath) return;
+  notify();
 }
 
 function onPopState(): void {
   notify();
+}
+
+function onCurrentEntryChange(): void {
+  notifyIfPathChanged();
+}
+
+function isSameOriginAppLink(anchor: HTMLAnchorElement): boolean {
+  if (anchor.hasAttribute("download")) return false;
+  const target = anchor.getAttribute("target");
+  if (target && target !== "" && target !== "_self") return false;
+  const href = anchor.getAttribute("href");
+  if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("javascript:")) {
+    return false;
+  }
+  try {
+    const url = new URL(anchor.href, window.location.href);
+    return url.origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function onDocumentClick(event: Event): void {
+  const eventTarget = event.target;
+  if (!(eventTarget instanceof Element)) return;
+  const anchor = eventTarget.closest("a");
+  if (!(anchor instanceof HTMLAnchorElement) || !isSameOriginAppLink(anchor)) return;
+  queueMicrotask(notifyIfPathChanged);
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(notifyIfPathChanged);
+  }
+}
+
+function navigationHost(): NavigationHost | null {
+  if (typeof window === "undefined") return null;
+  const nav = (window as Window & { navigation?: NavigationHost }).navigation;
+  if (!nav || typeof nav.addEventListener !== "function") return null;
+  return nav;
+}
+
+function methodStillNative(method: HistoryMethod): boolean {
+  try {
+    return Function.prototype.toString.call(History.prototype[method]).includes("[native code]");
+  } catch {
+    return true;
+  }
+}
+
+function armPathWatch(): void {
+  if (pathWatchTimer) return;
+  pathWatchTimer = setInterval(notifyIfPathChanged, 50);
+}
+
+function disarmPathWatch(): void {
+  if (pathWatchTimer) clearInterval(pathWatchTimer);
+  pathWatchTimer = 0;
 }
 
 function installMethod(
@@ -79,14 +150,23 @@ function ensurePatched(): void {
   if (patched) return;
   if (typeof window === "undefined" || typeof history === "undefined") return;
   if (typeof History === "undefined" || typeof History.prototype === "undefined") return;
+  lastObservedPath = readWindowPathname();
   wrap("pushState");
   wrap("replaceState");
   window.addEventListener("popstate", onPopState);
+  document.addEventListener("click", onDocumentClick, true);
+  const nav = navigationHost();
+  nav?.addEventListener("currententrychange", onCurrentEntryChange);
+  nav?.addEventListener("navigate", onCurrentEntryChange);
+  if (methodStillNative("pushState") || methodStillNative("replaceState")) {
+    armPathWatch();
+  }
   patched = true;
 }
 
 function restore(): void {
   if (!patched) return;
+  disarmPathWatch();
   if (originals.pushState) {
     restoreMethod(History.prototype, "pushState", originals.pushState);
     if (typeof history !== "undefined") {
@@ -102,6 +182,10 @@ function restore(): void {
   originals.pushState = null;
   originals.replaceState = null;
   window.removeEventListener("popstate", onPopState);
+  document.removeEventListener("click", onDocumentClick, true);
+  const nav = navigationHost();
+  nav?.removeEventListener("currententrychange", onCurrentEntryChange);
+  nav?.removeEventListener("navigate", onCurrentEntryChange);
   patched = false;
 }
 
