@@ -14,5 +14,9 @@ const dest = join(destDir, "sqlite3.wasm");
 
 mkdirSync(destDir, { recursive: true });
 copyFileSync(src, dest);
-rmSync(join(destDir, "._sqlite3.wasm"), { force: true });
+try {
+  rmSync(join(destDir, "._sqlite3.wasm"), { force: true });
+} catch {
+  // Linux cannot lstat/unlink macOS ExFAT AppleDouble files on a bind mount.
+}
 console.log(`copied sqlite3.wasm → ${dest}`);
