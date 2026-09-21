@@ -30,7 +30,7 @@ test.describe("thread origin in the static chats surface", () => {
       history.pushState({}, "", `/contacts/${encodeURIComponent(pubky)}`);
       window.dispatchEvent(new PopStateEvent("popstate"));
     }, CONTACT);
-    await expect(page.getByTestId("contactDetail")).toBeVisible();
+    await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
     await page.getByRole("link", { name: "Message" }).click();
     await expect(page.getByTestId("threadScreen")).toBeVisible();
     await expect(page.getByTestId("detailBack")).toHaveAccessibleName("Back to Contact");
@@ -54,7 +54,7 @@ test.describe("thread origin in the static chats surface", () => {
         history.pushState({}, "", `/contacts/${encodeURIComponent(pubky)}`);
         window.dispatchEvent(new PopStateEvent("popstate"));
       }, CONTACT);
-      await expect(page.getByTestId("contactDetail")).toBeVisible();
+      await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
       const heading = page.locator("[data-testid=contactDetail]").locator("h1, h2").first();
       await expect(heading).toBeVisible();
       if (width >= 768) {

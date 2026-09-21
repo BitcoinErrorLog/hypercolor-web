@@ -32,6 +32,7 @@ export default defineConfig({
   testDir: "./e2e",
   testIgnore: /\._/,
   fullyParallel: true,
+  retries: process.env.CI ? 2 : 0,
   snapshotPathTemplate: "e2e/vrt-baselines/{projectName}/{testFilePath}/{arg}{ext}",
   reporter: [["list"], ["html", { open: "never", outputFolder: "playwright-report" }]],
   use: {

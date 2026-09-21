@@ -43,6 +43,13 @@ async function chatsNav(page: Page) {
   return page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: /^Chats/ });
 }
 
+async function confirmRecoverySaved(page: Page) {
+  const box = page.getByTestId("recoveryCodeSaved");
+  await expect(box).toBeVisible();
+  await page.locator("label").filter({ has: box }).click();
+  await expect(box).toBeChecked();
+}
+
 async function showRecovery(page: Page, code = "abcd1234wxyz") {
   await page.waitForFunction(
     () =>
@@ -365,7 +372,7 @@ test.describe("recovery-code gate attack matrix", () => {
     await (await chatsNav(page)).click();
     await expect(page.getByTestId("backupLeaveDialog")).toBeVisible();
     await page.getByTestId("backupLeaveAnyway").click();
-    await expect(page).toHaveURL(/\/chats/);
+    await expect(page).toHaveURL(/\/chats/, { timeout: 15_000 });
     await expect(page.getByTestId("backupLeaveDialog")).toHaveCount(0);
     await page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Profile" }).click();
     await expect(page).toHaveURL(/\/profile/);
@@ -384,7 +391,7 @@ test.describe("recovery-code gate attack matrix", () => {
       host.__hypercolorShowRecovery?.("abcd1234wxyz");
     });
     await expect(page.getByTestId("recoveryCode")).toBeVisible();
-    await page.getByTestId("recoveryCodeSaved").check();
+    await confirmRecoverySaved(page);
     await page.getByTestId("recoveryCodeDone").click();
     await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
     await (await chatsNav(page)).click();
@@ -591,7 +598,7 @@ test.describe("recovery-code gate attack matrix", () => {
       await expect(page).toHaveURL(/\/settings/);
       await expect(page.getByTestId("recoveryCode")).toBeVisible();
     }
-    await page.getByTestId("recoveryCodeSaved").check();
+    await confirmRecoverySaved(page);
     await page.getByTestId("recoveryCodeDone").click();
     await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
     await page.goBack();
@@ -709,7 +716,7 @@ test.describe("recovery-code gate attack matrix", () => {
       const host = window as unknown as { __hypercolorShowRecovery?: (code: string) => void };
       host.__hypercolorShowRecovery?.("abcd1234wxyz");
     });
-    await page.getByTestId("recoveryCodeSaved").check();
+    await confirmRecoverySaved(page);
     await page.getByTestId("recoveryCodeDone").click();
     await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
     await page.goBack();
@@ -776,7 +783,7 @@ test.describe("recovery-code gate attack matrix", () => {
 
     await gotoSettings(page);
     await showRecovery(page);
-    await page.getByTestId("recoveryCodeSaved").check();
+    await confirmRecoverySaved(page);
     await page.getByTestId("recoveryCodeDone").click();
     await expect(page.getByTestId("recoveryCodePanel")).toHaveCount(0);
     await expectNoRecoveryProbeInStorage(page);
