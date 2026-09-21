@@ -973,7 +973,19 @@ async function ensureLinkLocked(
   }
 
   if (stored?.status === "reconnect_required") {
-    restoreFailed = true;
+    const rotated = await maybeAdoptReconnectRequiredMarkerRotation(
+      stored,
+      ownerPubky,
+      peerPubky,
+      localPath,
+      intent,
+    );
+    if (rotated) {
+      stored = await StorageService.getLink(ownerPubky, peerPubky);
+      live = liveHandles.get(key);
+    } else {
+      restoreFailed = true;
+    }
   }
 
   if (live?.status === "established" || stored?.status === "established") {
@@ -1989,6 +2001,39 @@ async function maybeRecoverInitiatorMarkerRotation(
     allowInitiate,
     intent,
   );
+}
+
+/**
+ * A reconnect_required row is fail-closed against the stored remote static.
+ * If the peer re-enrolled (new Noise public key in its receiver marker), the
+ * stale local record cannot restore; retire it locally and let ensure fall
+ * through to a fresh handshake. Never remotely delete outbox history.
+ */
+async function maybeAdoptReconnectRequiredMarkerRotation(
+  stored: LinkRecord,
+  ownerPubky: PubkyKey,
+  peerPubky: PubkyKey,
+  localPath: string,
+  intent: HandshakeIntent,
+): Promise<boolean> {
+  if (!peerMarkerRefreshDue(ownerPubky, peerPubky) && intent !== "user") {
+    return false;
+  }
+  if (!(await isCurrentOwner(ownerPubky))) return false;
+  markPeerMarkerRefreshed(ownerPubky, peerPubky);
+  let marker: ReceiverMarker | null;
+  try {
+    marker = await fetchPeerReceiverMarker(ownerPubky, peerPubky, localPath);
+  } catch {
+    return false;
+  }
+  if (!marker) return false;
+  if (!(await isCurrentOwner(ownerPubky))) return false;
+  const storedPk = stored.remoteNoisePublicKey || "";
+  if (storedPk === "" || marker.noisePublicKey === storedPk) return false;
+  await retireLocalLinkState(stored, { failQueued: false });
+  const leftover = await StorageService.getLink(ownerPubky, peerPubky);
+  return leftover === null;
 }
 
 async function retireLocalLinkState(

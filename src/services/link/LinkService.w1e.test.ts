@@ -17,6 +17,7 @@ const deleteLink = vi.fn();
 const upsertLink = vi.fn();
 const closeLink = vi.fn();
 const clearOutbox = vi.fn();
+const deletePublic = vi.fn();
 const receivePrivate = vi.fn(
   async (): Promise<{ messages: { kind: string | null; rawJson: string }[]; snapshot: string }> => ({
     messages: [],
@@ -43,6 +44,7 @@ vi.mock("./PaykitLinkWeb", async () => {
       sendPrivateMessageJson: vi.fn(),
       receivePrivateMessages: () => receivePrivate(),
       clearLinkOutbox: (...args: unknown[]) => clearOutbox(...args),
+      deletePublic: (...args: unknown[]) => deletePublic(...args),
       closeLink: (...args: unknown[]) => closeLink(...args),
     },
   };
@@ -213,6 +215,10 @@ function handshaking(remote = "old-pk") {
   };
 }
 
+type HarnessLinkRow = Omit<ReturnType<typeof handshaking>, "status"> & {
+  status: "handshaking" | "established" | "reconnect_required";
+};
+
 describe("W1e marker multi-device + handshake recovery", () => {
   beforeEach(async () => {
     resetLinkServiceHarnessState();
@@ -226,6 +232,7 @@ describe("W1e marker multi-device + handshake recovery", () => {
     upsertLink.mockReset().mockResolvedValue(undefined);
     closeLink.mockReset().mockResolvedValue(undefined);
     clearOutbox.mockReset().mockResolvedValue(undefined);
+    deletePublic.mockReset().mockResolvedValue(undefined);
     receivePrivate.mockReset().mockResolvedValue({ messages: [], snapshot: "est" });
     upsertArchivedLink.mockReset().mockResolvedValue(undefined);
     getArchivedLink.mockReset().mockResolvedValue(null);
@@ -856,6 +863,113 @@ describe("W1e marker multi-device + handshake recovery", () => {
       "network",
     );
     expect(slots).toEqual(originalSlots);
+  });
+
+  it("reconnect_required + rotated peer marker retires locally and starts a fresh handshake", async () => {
+    // Captured 2026-09-15 from gate-final/REPORT.md:51-145: peer outbox slots
+    // stay 404/200/404. Adoption must not DELETE those homeserver paths.
+    const fixture = JSON.parse(
+      readFileSync(
+        new URL("../../../fixtures/link-reconnect/live-homeserver-shape.json", import.meta.url),
+        "utf8",
+      ),
+    ) as { peer: { slots: Record<string, number> } };
+    const slots = new Map(Object.entries(fixture.peer.slots));
+    const originalSlots = new Map(slots);
+
+    let stored: HarnessLinkRow | null = {
+      ...handshaking("old-pk"),
+      status: "reconnect_required",
+      snapshot: "stale-est-snap",
+    };
+    getLink.mockImplementation(async () => stored);
+    deleteLink.mockImplementation(async () => {
+      stored = null;
+    });
+    upsertLink.mockImplementation(async (row: Record<string, unknown>) => {
+      stored = {
+        ...handshaking(String(row.remoteNoisePublicKey ?? "new-pk")),
+        ...row,
+        status: "handshaking",
+        snapshot: String(row.snapshot ?? "init-rotated-snap"),
+        updatedAt: NOW,
+      };
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "new-pk" });
+    initiateLink.mockResolvedValue({ linkId: "init-rotated", snapshot: "init-rotated-snap" });
+    advanceHandshake.mockResolvedValue({ status: "pending", snapshot: "init-rotated-snap" });
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("handshaking-initiator");
+
+    expect(upsertArchivedLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "reconnect_required",
+        remoteNoisePublicKey: "old-pk",
+        snapshot: "stale-est-snap",
+      }),
+    );
+    expect(deleteLink).toHaveBeenCalledWith(OWNER, PEER);
+    expect(initiateLink).toHaveBeenCalledWith(
+      expect.anything(),
+      "recv",
+      PEER,
+      "new-pk",
+      LINK_RECEIVER_PATH,
+      LINK_RECEIVER_PATH,
+    );
+    expect(clearOutbox).not.toHaveBeenCalled();
+    expect(deletePublic).not.toHaveBeenCalled();
+    expect(StorageService.abandonOwedLinkMessagesForPeer).not.toHaveBeenCalled();
+    expect(slots).toEqual(originalSlots);
+  });
+
+  it("reconnect_required + unchanged peer marker stays fail-closed", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "reconnect_required" as const,
+      snapshot: "stale-est-snap",
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk" });
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("reconnect_required");
+
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(deleteLink).not.toHaveBeenCalled();
+    expect(clearOutbox).not.toHaveBeenCalled();
+    expect(deletePublic).not.toHaveBeenCalled();
+  });
+
+  it("reconnect_required + marker fetch failure stays fail-closed", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "reconnect_required" as const,
+      snapshot: "stale-est-snap",
+    });
+    getMarker.mockRejectedValue(new Error("homeserver unreachable"));
+
+    await expect(LinkService.ensureLinkWith(PEER)).resolves.toBe("reconnect_required");
+
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(deleteLink).not.toHaveBeenCalled();
+    expect(clearOutbox).not.toHaveBeenCalled();
+    expect(deletePublic).not.toHaveBeenCalled();
+  });
+
+  it("inbox tick does not initiate reconnect_required except after a marker rotation check", async () => {
+    getLink.mockResolvedValue({
+      ...handshaking("old-pk"),
+      status: "reconnect_required" as const,
+      snapshot: "stale-est-snap",
+    });
+    getMarker.mockResolvedValue({ noisePublicKey: "old-pk" });
+
+    await LinkService.syncInbox([PEER]);
+    await LinkService.syncInbox([PEER]);
+
+    expect(initiateLink).not.toHaveBeenCalled();
+    expect(deleteLink).not.toHaveBeenCalled();
+    expect(getMarker).toHaveBeenCalledTimes(1);
+    expect(clearOutbox).not.toHaveBeenCalled();
   });
 
   it("keeps the LinkService source free of remote outbox deletion calls", () => {
