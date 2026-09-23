@@ -7,7 +7,6 @@ import { ErrorDetails } from "@/components/error-details";
 import { TruncatedPubky } from "@/components/truncated-pubky";
 import { CUSTODY_LINE } from "@/lib/session-ui";
 import { resolveWelcomePhase, type WelcomePhase } from "@/components/welcome-phase";
-import { formatRingVerificationCode } from "@/lib/ring-verification-code";
 
 export type { WelcomePhase };
 export { resolveWelcomePhase };
@@ -25,7 +24,6 @@ export function WelcomePage({
   linkLive,
   finishing = false,
   phase: phaseProp,
-  ch = "",
   onGenerateLink,
   onConfirmAdoption,
   onCancelAdoption,
@@ -47,7 +45,6 @@ export function WelcomePage({
   linkLive: boolean;
   finishing?: boolean;
   phase?: WelcomePhase;
-  ch?: string;
   onGenerateLink: () => void;
   onConfirmAdoption: () => void;
   onCancelAdoption: () => void;
@@ -67,7 +64,6 @@ export function WelcomePage({
   });
   const showQr = phase === "waiting";
   const retry = onTryAgain ?? onGenerateLink;
-  const verificationCode = ch ? formatRingVerificationCode(ch) : "";
 
   return (
     <article className="space-y-6" data-surface="welcome-page">
@@ -100,13 +96,13 @@ export function WelcomePage({
       ) : null}
 
       {phase === "idle" && isLoading ? (
-        <p className="text-sm text-muted-foreground">Preparing paykit-connect…</p>
+        <p className="text-sm text-muted-foreground">Preparing authorization…</p>
       ) : null}
 
       {phase === "expired" ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            This paykit-connect link expired. Generate a new one.
+            This authorization is only valid for five minutes.
           </p>
           <div className="flex flex-wrap gap-2">
             {onShowQrAgain ? (
@@ -130,23 +126,6 @@ export function WelcomePage({
       ) : null}
 
       {showQr ? authPanel : null}
-
-      {showQr && verificationCode ? (
-        <div className="space-y-1" data-testid="welcomeVerification">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Verification code
-          </p>
-          <p
-            className="text-4xl font-bold tracking-wide hc-brand-2-text"
-            data-testid="welcomeVerificationCode"
-          >
-            {verificationCode}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            Pubky Ring shows the same code before you approve.
-          </p>
-        </div>
-      ) : null}
 
       {phase === "waiting" ? (
         <div className="space-y-3">
@@ -222,23 +201,6 @@ export function WelcomePage({
               Cancel
             </Button>
           </div>
-        </div>
-      ) : null}
-
-      {phase === "legacy" ? (
-        <div className="space-y-3" data-testid="welcomeLegacy">
-          <p className="text-sm text-muted-foreground">
-            Update Pubky Ring, or approve once more
-          </p>
-          {authPanel}
-          <Button
-            type="button"
-            variant="outline"
-            data-testid="welcomeCancel"
-            onClick={onCancelWaiting}
-          >
-            Cancel
-          </Button>
         </div>
       ) : null}
 

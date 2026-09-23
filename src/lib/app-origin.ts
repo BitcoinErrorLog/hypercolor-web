@@ -8,8 +8,3 @@ export function getAppOrigin(): string {
   }
   return DEFAULT_APP_ORIGIN;
 }
-
-export function getRingCallbackUrl(ch: string): string {
-  const origin = getAppOrigin();
-  return `${origin}/ring-callback?ch=${encodeURIComponent(ch)}`;
-}

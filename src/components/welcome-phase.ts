@@ -5,7 +5,6 @@ export type WelcomePhase =
   | "ready"
   | "failed"
   | "expired"
-  | "legacy"
   | "retry-publish";
 
 export function resolveWelcomePhase(input: {
@@ -15,16 +14,14 @@ export function resolveWelcomePhase(input: {
   linkLive: boolean;
   finishing?: boolean;
   phase?: WelcomePhase;
-  legacyRecovery?: boolean;
   retryPublish?: boolean;
 }): WelcomePhase {
   if (input.phase) return input.phase;
   if (input.retryPublish) return "retry-publish";
-  if (input.legacyRecovery) return "legacy";
   if (input.isExpired) return "expired";
+  if (input.error) return "failed";
   if (input.pendingPubky) return "ready";
   if (input.finishing) return "finishing";
-  if (input.error) return "failed";
   if (input.linkLive) return "waiting";
   return "idle";
 }

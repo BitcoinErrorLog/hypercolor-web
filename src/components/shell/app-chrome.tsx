@@ -25,7 +25,6 @@ function shellTitle(pathname: string): string {
   if (pathname.startsWith("/profile")) return "Profile";
   if (pathname.startsWith("/discover")) return "Discover";
   if (pathname.startsWith("/enable")) return "Enable";
-  if (pathname.startsWith("/ring-callback")) return "Ring callback";
   return APP_NAME;
 }
 
@@ -35,8 +34,7 @@ export function AppChrome({ children }: { children: ReactNode }) {
   const hideChrome =
     e2e ||
     pathname === "/" ||
-    pathname.startsWith("/enable") ||
-    pathname.startsWith("/ring-callback");
+    pathname.startsWith("/enable");
   const fillViewport =
     pathname.startsWith("/chats") ||
     pathname.startsWith("/contacts") ||

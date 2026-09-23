@@ -61,10 +61,6 @@ vi.mock("@/db/openWebSqlite", async (importOriginal) => {
   };
 });
 
-vi.mock("@/services/paykitConnectLive", () => ({
-  resetPaykitConnectLive: vi.fn(),
-}));
-
 type LockInfo = { name: string; mode: "exclusive" | "shared" } | null;
 
 class FakeLockManager {

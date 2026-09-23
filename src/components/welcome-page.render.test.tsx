@@ -40,7 +40,6 @@ function pageProps(overrides: Partial<Parameters<typeof WelcomePage>[0]> = {}) {
     authPanel: qr,
     linkLive: true,
     finishing: false,
-    ch: "8eOwP5zDIW4PwXitMsHu3RdUDCF60o3DTwI-firPVT8",
     onGenerateLink: noop,
     onConfirmAdoption: noop,
     onCancelAdoption: noop,
@@ -68,7 +67,7 @@ describe("WelcomePage QR visibility", () => {
   it("unmounts the QR when finishing, and keeps it unmounted after finishing→failed", async () => {
     await render(<WelcomePage {...pageProps()} />);
     expect(getByTestId("welcomeQr")).toBeTruthy();
-    expect(getByTestId("welcomeVerificationCode").textContent).toBe("8eO-wP5");
+    expect(queryByTestId("welcomeVerificationCode")).toBeNull();
 
     await render(<WelcomePage {...pageProps({ finishing: true, linkLive: true })} />);
     expect(queryByTestId("welcomeQr")).toBeNull();

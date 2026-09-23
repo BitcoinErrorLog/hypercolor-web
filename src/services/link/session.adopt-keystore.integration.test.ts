@@ -17,10 +17,6 @@ vi.mock("@/services/StorageService", () => ({
   },
 }));
 
-vi.mock("@/services/paykitConnectLive", () => ({
-  resetPaykitConnectLive: vi.fn(),
-}));
-
 type LockInfo = { name: string; mode: "exclusive" | "shared" } | null;
 
 class FakeLockManager {

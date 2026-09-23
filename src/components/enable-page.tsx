@@ -131,7 +131,7 @@ export function EnablePage({
       {isExpired ? (
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            The paykit-connect link is only valid for five minutes.
+            This authorization is only valid for five minutes.
           </p>
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={onRegenerate}>

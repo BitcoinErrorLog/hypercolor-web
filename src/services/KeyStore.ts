@@ -11,8 +11,9 @@ import { base64urlnopad } from "@scure/base";
  * `{ ownerPubky, purpose, alias }`, so ciphertext cannot be replayed under a
  * different owner, purpose, or alias.
  *
- * Non-secret metadata (pubky, homeserver, exported session / link_session
- * string, receiver path) is stored in IndexedDB plaintext.
+ * Non-secret metadata (pubky, homeserver, link_session alias, receiver path)
+ * is stored in IndexedDB plaintext. Session export bytes are AES-GCM wrapped
+ * under purpose `session-export`.
  */
 
 const DB_NAME = "hypercolor-keystore";
@@ -31,64 +32,26 @@ const KEY_LINK_SESSION = "link_session";
 
 const ATTACHMENT_INDEX_PREFIX = "attachment-index:";
 
-const PURPOSE_APP_KEY = "app-key";
-const PURPOSE_INBOX = "inbox";
-const PURPOSE_TRANSPORT = "transport";
-const PURPOSE_APP_CERT = "app-cert";
-const PURPOSE_PENDING_RING_HANDOFF = "pending-ring-handoff";
+const PURPOSE_SESSION_EXPORT = "session-export";
+const SESSION_EXPORT_ALIAS = "current";
 const PURPOSE_RECEIVER_NOISE = "receiver-noise";
-const PURPOSE_NOISE_SEED = "noise-seed";
 const PURPOSE_ATTACHMENT = "attachment";
 const PURPOSE_LINK_SNAPSHOT = "link-snapshot";
 
+const LEGACY_SECRET_PREFIXES = [
+  "app-key:",
+  "inbox:",
+  "transport:",
+  "app-cert:",
+  "noise-seed:",
+  "pending-ring-handoff:",
+] as const;
+
+const PENDING_LOCATOR_KEY = "hc.pendingHandoffLocator";
+
 const LINK_SNAPSHOT_PREFIX = "HC1.";
 
-/**
- * Pending paykit-connect SK is wrapped before any identity exists. AAD
- * always binds this purpose to this sentinel, never the later owner pubky,
- * so Welcome can persist the SK and `/ring-callback` can unwrap it after
- * `setPubky` runs.
- */
-export const PENDING_HANDOFF_AAD_OWNER = "pending";
-
-const KEY_PENDING_RING_PK = "pending-ring-handoff-pk";
-const KEY_PENDING_RING_INDEX = "pending-ring-handoff-index";
-
-function pendingRingMetaKey(ch: string): string {
-  return `pending-ring-handoff-pk:${ch}`;
-}
-
-interface PendingRingHandoffMeta {
-  publicKey?: string;
-  deadlineMs: number;
-}
-
 const WRAP_VERSION = 1;
-
-export interface AppKeyPair {
-  /** Delegated Ed25519 secret key hex (NOT the root key — never stored here) */
-  secretKey: string;
-  /** Delegated Ed25519 public key hex */
-  publicKey: string;
-}
-
-export interface InboxKeypair {
-  secretKey: string; // hex-encoded X25519 secret key (32 bytes)
-  publicKey: string; // hex-encoded X25519 public key (32 bytes)
-}
-
-export interface TransportKeypair {
-  secretKey: string; // hex-encoded X25519 secret key (32 bytes)
-  publicKey: string; // hex-encoded X25519 public key (32 bytes)
-}
-
-export interface AppCert {
-  certBodyHex: string;
-  sigHex: string;
-  certIdHex: string;
-  /** Unix seconds when the cert expires (optional — undefined means no expiry) */
-  expiresAt?: number | undefined;
-}
 
 export interface AttachmentSecretMaterial {
   key: string;
@@ -253,10 +216,7 @@ function buildAad(ownerPubky: string, purpose: string, alias: string): Uint8Arra
   return new TextEncoder().encode(JSON.stringify(binding));
 }
 
-function aadOwnerForPurpose(purpose: string, currentOwner: string | null): string | null {
-  if (purpose === PURPOSE_PENDING_RING_HANDOFF) {
-    return PENDING_HANDOFF_AAD_OWNER;
-  }
+function aadOwnerForPurpose(_purpose: string, currentOwner: string | null): string | null {
   return currentOwner;
 }
 
@@ -367,6 +327,7 @@ export async function initKeyStore(): Promise<void> {
       const key = await getOrCreateWrappingKey(db);
       _db = db;
       _wrappingKey = key;
+      await wipeLegacyRingMaterial();
     } catch (error) {
       _initPromise = null;
       throw error;
@@ -375,78 +336,66 @@ export async function initKeyStore(): Promise<void> {
   return _initPromise;
 }
 
-// ─── App Keypair (delegated Ed25519, from pubky-ring handoff) ─────────────────
-
-export async function setAppKeypair(keypair: AppKeyPair): Promise<void> {
-  const plaintext = new TextEncoder().encode(JSON.stringify(keypair));
-  await wrapSecret(PURPOSE_APP_KEY, PURPOSE_APP_KEY, plaintext);
+async function listStoreKeys(storeName: string): Promise<IDBValidKey[]> {
+  const db = ensureInitialized();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, "readonly");
+    const req = tx.objectStore(storeName).getAllKeys();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () =>
+      reject(req.error ?? new Error(`KeyStore: failed to list ${storeName}`));
+  });
 }
 
-export async function getAppKeypair(): Promise<AppKeyPair | null> {
-  const plaintext = await unwrapSecret(PURPOSE_APP_KEY, PURPOSE_APP_KEY);
-  if (!plaintext) return null;
+async function deleteSecretKey(key: string): Promise<void> {
+  const db = ensureInitialized();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_SECRETS, "readwrite");
+    const req = tx.objectStore(STORE_SECRETS).delete(key);
+    req.onsuccess = () => resolve();
+    req.onerror = () =>
+      reject(req.error ?? new Error(`KeyStore: failed to delete secret ${key}`));
+  });
+}
+
+/** Drop fork handoff and delegated-key material. Does not touch session-export. */
+export async function wipeLegacyRingMaterial(): Promise<void> {
+  for (const key of await listStoreKeys(STORE_SECRETS)) {
+    if (typeof key !== "string") continue;
+    if (LEGACY_SECRET_PREFIXES.some((prefix) => key.startsWith(prefix))) {
+      await deleteSecretKey(key);
+    }
+  }
+  for (const key of await listStoreKeys(STORE_METADATA)) {
+    if (typeof key === "string" && key.startsWith("pending-ring-handoff")) {
+      await deleteMetadata(key);
+    }
+  }
   try {
-    return JSON.parse(new TextDecoder().decode(plaintext)) as AppKeyPair;
+    globalThis.sessionStorage?.removeItem(PENDING_LOCATOR_KEY);
+    globalThis.localStorage?.removeItem(PENDING_LOCATOR_KEY);
   } catch {
-    return null;
+    // Storage can be unavailable in non-browser tests.
   }
 }
 
-export async function deleteAppKeypair(): Promise<void> {
-  await deleteSecret(PURPOSE_APP_KEY, PURPOSE_APP_KEY);
+export async function setSessionExport(exported: string): Promise<void> {
+  await wrapSecret(
+    PURPOSE_SESSION_EXPORT,
+    SESSION_EXPORT_ALIAS,
+    new TextEncoder().encode(exported),
+  );
 }
 
-// ─── Inbox keypair (X25519, for SB2 DM decryption) ────────────────────────────
-
-export async function setInboxKeypair(keypair: InboxKeypair): Promise<void> {
-  const plaintext = new TextEncoder().encode(JSON.stringify(keypair));
-  await wrapSecret(PURPOSE_INBOX, PURPOSE_INBOX, plaintext);
-}
-
-export async function getInboxKeypair(): Promise<InboxKeypair | null> {
-  const plaintext = await unwrapSecret(PURPOSE_INBOX, PURPOSE_INBOX);
+export async function getSessionExport(): Promise<string | null> {
+  const plaintext = await unwrapSecret(PURPOSE_SESSION_EXPORT, SESSION_EXPORT_ALIAS);
   if (!plaintext) return null;
-  try {
-    return JSON.parse(new TextDecoder().decode(plaintext)) as InboxKeypair;
-  } catch {
-    return null;
-  }
+  const value = new TextDecoder().decode(plaintext);
+  return value.length > 0 ? value : null;
 }
 
-// ─── Transport keypair (X25519, for Noise BLE sessions) ───────────────────────
-
-export async function setTransportKeypair(
-  keypair: TransportKeypair,
-): Promise<void> {
-  const plaintext = new TextEncoder().encode(JSON.stringify(keypair));
-  await wrapSecret(PURPOSE_TRANSPORT, PURPOSE_TRANSPORT, plaintext);
-}
-
-export async function getTransportKeypair(): Promise<TransportKeypair | null> {
-  const plaintext = await unwrapSecret(PURPOSE_TRANSPORT, PURPOSE_TRANSPORT);
-  if (!plaintext) return null;
-  try {
-    return JSON.parse(new TextDecoder().decode(plaintext)) as TransportKeypair;
-  } catch {
-    return null;
-  }
-}
-
-// ─── AppCert (delegation proof from pubky-ring) ───────────────────────────────
-
-export async function setAppCert(cert: AppCert): Promise<void> {
-  const plaintext = new TextEncoder().encode(JSON.stringify(cert));
-  await wrapSecret(PURPOSE_APP_CERT, PURPOSE_APP_CERT, plaintext);
-}
-
-export async function getAppCert(): Promise<AppCert | null> {
-  const plaintext = await unwrapSecret(PURPOSE_APP_CERT, PURPOSE_APP_CERT);
-  if (!plaintext) return null;
-  try {
-    return JSON.parse(new TextDecoder().decode(plaintext)) as AppCert;
-  } catch {
-    return null;
-  }
+export async function deleteSessionExport(): Promise<void> {
+  await deleteSecret(PURPOSE_SESSION_EXPORT, SESSION_EXPORT_ALIAS);
 }
 
 // ─── Pubky public key (plaintext metadata — not sensitive) ────────────────────
@@ -525,141 +474,6 @@ export async function getLinkSession(): Promise<string | null> {
 
 export async function deleteLinkSession(): Promise<void> {
   await deleteMetadata(KEY_LINK_SESSION);
-}
-
-// ─── Pending Ring handoff (wrapped ephemeral X25519 secret, keyed by ch) ──────
-
-export async function readPendingRingIndex(): Promise<string[]> {
-  try {
-    const raw = await getMetadata(KEY_PENDING_RING_INDEX);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string" && item.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-async function writePendingRingIndex(channels: readonly string[]): Promise<void> {
-  await setMetadata(KEY_PENDING_RING_INDEX, JSON.stringify([...new Set(channels)]));
-}
-
-async function sweepExpiredPendingRingHandoffs(keepCh?: string): Promise<void> {
-  const channels = await readPendingRingIndex();
-  const keep: string[] = [];
-  let changed = false;
-  for (const id of channels) {
-    if (id === keepCh || (await pendingRingHandoffIsLive(id))) {
-      keep.push(id);
-      continue;
-    }
-    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, id);
-    await deleteMetadata(pendingRingMetaKey(id));
-    changed = true;
-  }
-  if (changed) {
-    await writePendingRingIndex(keep);
-  }
-}
-
-async function rememberPendingRingChannel(ch: string): Promise<void> {
-  await sweepExpiredPendingRingHandoffs(ch);
-  const current = await readPendingRingIndex();
-  if (current.includes(ch)) return;
-  await writePendingRingIndex([...current, ch]);
-}
-
-async function forgetPendingRingChannel(ch: string): Promise<void> {
-  await writePendingRingIndex(
-    (await readPendingRingIndex()).filter((item) => item !== ch),
-  );
-}
-
-async function readPendingRingMeta(ch: string): Promise<PendingRingHandoffMeta | null> {
-  const raw = await getMetadata(pendingRingMetaKey(ch));
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as PendingRingHandoffMeta;
-    if (typeof parsed !== "object" || parsed === null) return null;
-    if (typeof parsed.deadlineMs !== "number" || !Number.isFinite(parsed.deadlineMs)) {
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-async function pendingRingHandoffIsLive(ch: string): Promise<boolean> {
-  const meta = await readPendingRingMeta(ch);
-  if (!meta) return false;
-  return meta.deadlineMs > Date.now();
-}
-
-export async function setPendingRingHandoff(
-  ephemeralSkHex: string,
-  ephemeralPkHex: string | undefined,
-  ch: string,
-  deadlineMs: number,
-): Promise<void> {
-  if (!ch) {
-    throw new Error("KeyStore: pending ring handoff requires a channel id");
-  }
-  if (!Number.isFinite(deadlineMs)) {
-    throw new Error("KeyStore: pending ring handoff requires a finite deadline");
-  }
-  const plaintext = new TextEncoder().encode(ephemeralSkHex);
-  await wrapSecret(PURPOSE_PENDING_RING_HANDOFF, ch, plaintext);
-  const meta: PendingRingHandoffMeta = { deadlineMs };
-  if (typeof ephemeralPkHex === "string" && ephemeralPkHex.length > 0) {
-    meta.publicKey = ephemeralPkHex;
-  }
-  await setMetadata(pendingRingMetaKey(ch), JSON.stringify(meta));
-  await rememberPendingRingChannel(ch);
-  await sweepExpiredPendingRingHandoffs(ch);
-}
-
-export async function getPendingRingHandoff(ch: string): Promise<string | null> {
-  if (!ch) return null;
-  if (!(await pendingRingHandoffIsLive(ch))) {
-    await clearPendingRingHandoff(ch);
-    return null;
-  }
-  const plaintext = await unwrapSecret(PURPOSE_PENDING_RING_HANDOFF, ch);
-  if (!plaintext) return null;
-  const hex = new TextDecoder().decode(plaintext);
-  return hex.length > 0 ? hex : null;
-}
-
-export async function getPendingRingHandoffPublicKey(
-  ch: string,
-): Promise<string | null> {
-  if (!ch) return null;
-  if (!(await pendingRingHandoffIsLive(ch))) {
-    await clearPendingRingHandoff(ch);
-    return null;
-  }
-  const meta = await readPendingRingMeta(ch);
-  const pk = meta?.publicKey;
-  return typeof pk === "string" && pk.length > 0 ? pk : null;
-}
-
-export async function clearPendingRingHandoff(ch?: string): Promise<void> {
-  if (ch) {
-    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, ch);
-    await deleteMetadata(pendingRingMetaKey(ch));
-    await forgetPendingRingChannel(ch);
-    return;
-  }
-  const channels = await readPendingRingIndex();
-  for (const id of channels) {
-    await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, id);
-    await deleteMetadata(pendingRingMetaKey(id));
-  }
-  await deleteMetadata(KEY_PENDING_RING_INDEX);
-  await deleteSecret(PURPOSE_PENDING_RING_HANDOFF, "pending");
-  await deleteMetadata(KEY_PENDING_RING_PK);
 }
 
 export async function setReceiverNoiseSecret(
@@ -788,18 +602,6 @@ export async function deleteLinkSnapshot(wrapped: string): Promise<void> {
 
 export function isWrappedLinkSnapshot(value: string): boolean {
   return value.startsWith(LINK_SNAPSHOT_PREFIX);
-}
-
-export async function setNoiseSeed(seedHex: string): Promise<void> {
-  const plaintext = new TextEncoder().encode(seedHex);
-  await wrapSecret(PURPOSE_NOISE_SEED, PURPOSE_NOISE_SEED, plaintext);
-}
-
-export async function getNoiseSeed(): Promise<string | null> {
-  const plaintext = await unwrapSecret(PURPOSE_NOISE_SEED, PURPOSE_NOISE_SEED);
-  if (!plaintext) return null;
-  const value = new TextDecoder().decode(plaintext);
-  return value.length > 0 ? value : null;
 }
 
 // ─── Attachment AEAD material (wrapped, keyed by owner + sender + event) ──────
@@ -945,20 +747,8 @@ export async function clearAttachmentSecretsForOwner(
 // ─── Session / cert validity ──────────────────────────────────────────────────
 
 export async function hasPersistedSession(): Promise<boolean> {
-  const appKey = await getAppKeypair();
   const pubky = await getPubky();
-  return appKey !== null && pubky !== null;
-}
-
-/**
- * Returns true if the AppCert has not expired.
- * If the cert has no `expiresAt` field, it is assumed to be perpetual.
- */
-export async function isAppCertValid(): Promise<boolean> {
-  const cert = await getAppCert();
-  if (!cert) return false;
-  if (cert.expiresAt == null) return true;
-  return Math.floor(Date.now() / 1000) < cert.expiresAt;
+  return pubky !== null && pubky.length > 0;
 }
 
 // ─── Clear all ────────────────────────────────────────────────────────────────
@@ -995,27 +785,14 @@ export async function clear(): Promise<void> {
 // ─── Exported object (method names match mobile KeyStore) ─────────────────────
 
 export const KeyStore = {
-  // Initialization
   initKeyStore,
-  // App keypair (delegated Ed25519)
-  setAppKeypair,
-  getAppKeypair,
-  deleteAppKeypair,
-  // Inbox keypair (X25519)
-  setInboxKeypair,
-  getInboxKeypair,
-  // Transport keypair (X25519)
-  setTransportKeypair,
-  getTransportKeypair,
-  // Link session alias (Paykit Encrypted Links)
+  wipeLegacyRingMaterial,
+  setSessionExport,
+  getSessionExport,
+  deleteSessionExport,
   setLinkSession,
   getLinkSession,
   deleteLinkSession,
-  setPendingRingHandoff,
-  getPendingRingHandoff,
-  getPendingRingHandoffPublicKey,
-  readPendingRingIndex,
-  clearPendingRingHandoff,
   setReceiverNoiseSecret,
   getReceiverNoiseSecret,
   deleteReceiverNoiseSecret,
@@ -1023,8 +800,6 @@ export const KeyStore = {
   unwrapLinkSnapshot,
   deleteLinkSnapshot,
   isWrappedLinkSnapshot,
-  setNoiseSeed,
-  getNoiseSeed,
   setAttachmentSecret,
   getAttachmentSecret,
   deleteAttachmentSecret,
@@ -1032,11 +807,6 @@ export const KeyStore = {
   deleteAttachmentSecrets,
   clearAttachmentSecretsForOwner,
   attachmentKeyService,
-  // AppCert
-  setAppCert,
-  getAppCert,
-  isAppCertValid,
-  // Metadata
   setPubky,
   getPubky,
   clearPubkyIfMatches,

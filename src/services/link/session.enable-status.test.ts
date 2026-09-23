@@ -26,12 +26,21 @@ vi.mock("@/services/StorageService", () => ({
   },
 }));
 
+const sessionExportBox = vi.hoisted(() => ({ value: null as string | null }));
+
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     setPubky: (...args: unknown[]) => setPubky(...args),
     getPubky: (...args: unknown[]) => getPubky(...args),
     getReceiverNoiseSecret: (...args: unknown[]) => getReceiverNoiseSecret(...args),
     clear: vi.fn(async () => undefined),
+    setSessionExport: vi.fn(async (value: string) => {
+      sessionExportBox.value = value;
+    }),
+    getSessionExport: vi.fn(async () => sessionExportBox.value),
+    deleteSessionExport: vi.fn(async () => {
+      sessionExportBox.value = null;
+    }),
   },
 }));
 

@@ -13,13 +13,23 @@ const setPubky = vi.fn(async () => "adopt-a");
 const clear = vi.fn(async () => undefined);
 const clearPubkyIfMatches = vi.fn();
 
+const sessionExportBox = vi.hoisted(() => ({ value: null as string | null }));
+const getPubky = vi.hoisted(() => vi.fn(async () => null as string | null));
+
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     setPubky: () => setPubky(),
-    getPubky: vi.fn(async () => null),
+    getPubky: () => getPubky(),
     getReceiverNoiseSecret: vi.fn(async () => null),
     clear: () => clear(),
     clearPubkyIfMatches: (expected: string, nonce: string) => clearPubkyIfMatches(expected, nonce),
+    setSessionExport: vi.fn(async (value: string) => {
+      sessionExportBox.value = value;
+    }),
+    getSessionExport: vi.fn(async () => sessionExportBox.value),
+    deleteSessionExport: vi.fn(async () => {
+      sessionExportBox.value = null;
+    }),
   },
 }));
 
@@ -31,11 +41,8 @@ vi.mock("@/services/StorageService", () => ({
   },
 }));
 
-vi.mock("@/services/paykitConnectLive", () => ({
-  resetPaykitConnectLive: vi.fn(),
-}));
-
 import {
+  BindingMismatchError,
   adoptApprovedSession,
   resetSessionStateForTests,
   wipeSessionMetadata,
@@ -69,6 +76,9 @@ describe("adoptApprovedSession writer critical section", () => {
     setPubky.mockClear();
     clear.mockClear();
     clearPubkyIfMatches.mockClear();
+    getPubky.mockReset();
+    getPubky.mockResolvedValue(null);
+    signOutSession.mockReset();
     vi.stubGlobal("navigator", {});
   });
 
@@ -108,6 +118,26 @@ describe("adoptApprovedSession writer critical section", () => {
     await expect(adoptApprovedSession(handle as never)).rejects.toThrow("homeserver timeout");
     expect(clear).not.toHaveBeenCalled();
     expect(clearPubkyIfMatches).not.toHaveBeenCalled();
+  });
+
+  it("signs out a mismatched approval and does not replace the persisted owner", async () => {
+    const handle = fakeHandle(
+      OWNER,
+      exportWithCaps("/pub/paykit/:rw", "/pub/hypercolor.app/v1/:rw"),
+    );
+    getPubky.mockResolvedValue("other-owner");
+    await expect(adoptApprovedSession(handle as never)).rejects.toBeInstanceOf(
+      BindingMismatchError,
+    );
+    expect(signOutSession).toHaveBeenCalledWith(handle);
+    expect(setPubky).not.toHaveBeenCalled();
+  });
+
+  it("signs out a grant that does not cover Hypercolor", async () => {
+    const handle = fakeHandle(OWNER, exportWithCaps("/pub/paykit/:rw"));
+    await expect(adoptApprovedSession(handle as never)).rejects.toThrow(/did not grant/);
+    expect(signOutSession).toHaveBeenCalledWith(handle);
+    expect(setPubky).not.toHaveBeenCalled();
   });
 
   it("holds the critical section so a yield request is deferred until exit", async () => {

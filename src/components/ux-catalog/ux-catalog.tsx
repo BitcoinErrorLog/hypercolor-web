@@ -14,7 +14,6 @@ import { EnableMessagingCta } from "@/components/enable-messaging-cta";
 import { EnablePage } from "@/components/enable-page";
 import { ProfilePage } from "@/components/profile-page";
 import { RequestsPage, type RequestsPageFixture } from "@/components/requests-page";
-import { RingCallbackPage, type RingCallbackPhase } from "@/components/ring-callback-page";
 import { SessionBanner } from "@/components/session-banner";
 import { SettingsPage, type SettingsPageFixture } from "@/components/settings-page";
 import { SignOutConfirm } from "@/components/sign-out-confirm";
@@ -433,29 +432,6 @@ function channelsFixture(scene: UxCatalogScene): ChannelsPageFixture {
   };
 }
 
-function ringPhase(state: string): RingCallbackPhase {
-  if (state === "confirm") {
-    return {
-      kind: "confirm",
-      pubky: OWNER,
-      params: { pubky: OWNER, requestId: "00112233", mode: "secure_handoff", homeserver: OWNER },
-      payload: {
-        version: 1,
-        pubky: OWNER,
-        capabilities: [],
-        noise_keypairs: [{ epoch: 1, public_key: "00", secret_key: "00" }],
-        inbox_keypair: { public_key: "00", secret_key: "00" },
-        expires_at: NOW + 300_000,
-      },
-    };
-  }
-  if (state === "done") return { kind: "done", pubky: OWNER };
-  if (state === "error") return { kind: "error", fallback: "Could not complete this Ring handoff.", details: "Fixture failure" };
-  if (state === "relay-forwarded") return { kind: "relay-forwarded" };
-  if (state === "invalid-missing-params") return { kind: "invalid", reason: "Callback is missing pubky, request_id, mode, or homeserver." };
-  return { kind: "reading" };
-}
-
 function settingsFixture(state: string): SettingsPageFixture {
   if (state === "recovery-gate" || state === "recovery-ready") {
     return {
@@ -503,13 +479,12 @@ function CatalogAuthQr({ value, testID }: { value: string; testID: string }) {
 }
 
 function authPanel(testID = "welcomeQr") {
-  const value = "pubkyring://paykit-connect?request_id=vrt&caps=/pub/paykit/:rw";
+  const value =
+    "pubkyauth:///?caps=/pub/paykit/:rw,/pub/hypercolor.app/v1/:rw&secret=vrt&relay=https://httprelay.pubky.app/link/vrt";
   return (
     <div className="space-y-3">
       <CatalogAuthQr value={value} testID={testID} />
-      <p className="break-all font-mono text-xs text-muted-foreground">
-        pubkyring://paykit-connect?request_id=vrt
-      </p>
+      <p className="break-all font-mono text-xs text-muted-foreground">{value}</p>
     </div>
   );
 }
@@ -656,11 +631,6 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
         adopting={false}
         authPanel={scene.state === "qr-populated" ? authPanel("welcomeQr") : null}
         linkLive={scene.state === "qr-populated"}
-        ch={
-          scene.state === "qr-populated"
-            ? "8eOwP5zDIW4PwXitMsHu3RdUDCF60o3DTwI-firPVT8"
-            : ""
-        }
         onGenerateLink={noop}
         onConfirmAdoption={noop}
         onCancelAdoption={noop}
@@ -714,7 +684,6 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
     );
   }
   if (scene.surface === "settings") return <SettingsPage fixture={settingsFixture(scene.state)} />;
-  if (scene.surface === "ring-callback") return <RingCallbackPage fixturePhase={ringPhase(scene.state)} />;
   if (scene.surface === "composer-menu") return <ComposerMenuFixture />;
   if (scene.surface === "composer-emoji") {
     return (
