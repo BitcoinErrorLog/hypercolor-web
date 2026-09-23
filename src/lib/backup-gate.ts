@@ -126,6 +126,12 @@ export function armHistoryTrap(): void {
  * entry. Settings mode stops off `/settings` so a live leave does not yank
  * the user back through history.
  */
+/** Firefox drops a same-task replaceState when history.go runs before the entry is saved. */
+function firefoxDefersHistoryGo(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return /Firefox\//.test(navigator.userAgent);
+}
+
 function stillHasOrphanTrap(): boolean {
   if (typeof history === "undefined") return false;
   return currentEntryHasBackupGate(history.state);
@@ -145,15 +151,43 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
   trapPushed = 0;
   let finished = false;
   let awaitingPop = false;
+  let stepQueued = false;
+  let queued: "go" | "drain" | null = null;
   const finish = () => {
     if (finished) return;
     finished = true;
     awaitingPop = false;
+    stepQueued = false;
+    queued = null;
     consumingTrap = false;
     if (typeof window.removeEventListener === "function") {
       window.removeEventListener("popstate", onPop);
     }
     done();
+  };
+  const queueMacrotask = (kind: "go" | "drain") => {
+    if (finished) return;
+    queued = kind;
+    if (stepQueued) return;
+    stepQueued = true;
+    const wrapped = () => {
+      stepQueued = false;
+      const next = queued;
+      queued = null;
+      if (finished || !next) return;
+      if (next === "go") goBackOne();
+      else drainStep();
+    };
+    // No popstate listener: the sync drain loop must move history in this turn.
+    // Deferring history.go there never clears the trap and the loop never ends.
+    if (
+      typeof window.addEventListener === "function" &&
+      typeof window.setTimeout === "function"
+    ) {
+      window.setTimeout(wrapped, 0);
+      return;
+    }
+    wrapped();
   };
   const goBackOne = () => {
     awaitingPop = true;
@@ -161,13 +195,22 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
   };
   const drainStep = () => {
     if (finished) return;
+    const leaveEntry = () => {
+      // Scrub before leaving so the forward entry does not keep backupGate.
+      // Firefox only persists that replaceState when history.go is a later
+      // task. Other engines go in this task: a deferred go leaves a scrubbed
+      // /settings trap that already looks like the drain finished, so Back
+      // races the in-flight traverse.
+      scrubBackupGateFromCurrentEntry();
+      if (firefoxDefersHistoryGo()) queueMacrotask("go");
+      else goBackOne();
+    };
     if (orphan) {
       if (!stillHasOrphanTrap()) {
         finish();
         return;
       }
-      scrubBackupGateFromCurrentEntry();
-      goBackOne();
+      leaveEntry();
       return;
     }
     if (currentPathname() !== "/settings") {
@@ -180,17 +223,24 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
       finish();
       return;
     }
-    scrubBackupGateFromCurrentEntry();
-    goBackOne();
+    leaveEntry();
   };
   const onPop = () => {
     if (finished) return;
     awaitingPop = false;
-    if (typeof window.setTimeout === "function") {
-      window.setTimeout(drainStep, 0);
-      return;
-    }
-    drainStep();
+    queueMacrotask("drain");
+  };
+  const armIdle = () => {
+    window.setTimeout(() => {
+      if (finished) return;
+      // popstate clears awaitingPop and queues the next scrub. Finishing in
+      // that gap runs Leave-anyway while trap entries are still ahead.
+      if (awaitingPop || stepQueued) {
+        armIdle();
+        return;
+      }
+      finish();
+    }, 250);
   };
   if (typeof window.addEventListener !== "function") {
     consumingTrap = true;
@@ -205,13 +255,10 @@ function consumeHistoryTrapThen(done: () => void, options?: { orphan?: boolean }
   window.addEventListener("popstate", onPop);
   drainStep();
   if (typeof window.setTimeout === "function") {
-    // Finish only when no history.go is in flight. Firefox delivers that
-    // popstate late; calling done()/router.push first lets the pop yank
-    // Settings back over the destination.
-    window.setTimeout(() => {
-      if (finished || awaitingPop) return;
-      finish();
-    }, 250);
+    // Finish only when no history.go is in flight and no scrub is queued.
+    // Firefox delivers that popstate late; calling done()/router.push first
+    // lets the pop yank Settings back over the destination.
+    armIdle();
   }
 }
 

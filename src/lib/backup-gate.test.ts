@@ -127,13 +127,14 @@ function trapEntries(entries: HistoryEntry[]): HistoryEntry[] {
 
 function installFakeHistory(
   initialUrl = "https://hypercolor.app/settings",
-  options: { asyncGo?: boolean } = {},
+  options: { asyncGo?: boolean; deferZero?: boolean; userAgent?: string } = {},
 ) {
   const entries: HistoryEntry[] = [{ state: null, url: initialUrl }];
   let index = 0;
   const popListeners = new Set<() => void>();
   const queuedPops: Array<() => void> = [];
   const delayedTimers: Array<() => void> = [];
+  const zeroTimers: Array<() => void> = [];
   const location = {
     href: initialUrl,
     get pathname() {
@@ -190,6 +191,17 @@ function installFakeHistory(
       location.href = nextUrl;
     },
   };
+  const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  if (options.userAgent !== undefined) {
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { userAgent: options.userAgent },
+    });
+    restoreNavigator = () => {
+      if (previousNavigator) Object.defineProperty(globalThis, "navigator", previousNavigator);
+      else delete (globalThis as { navigator?: unknown }).navigator;
+    };
+  }
   const windowStub = {
     location,
     history: historyStub,
@@ -200,6 +212,10 @@ function installFakeHistory(
       if (type === "popstate") popListeners.delete(listener);
     },
     setTimeout(fn: () => void, ms?: number) {
+      if (options.deferZero && !ms) {
+        zeroTimers.push(fn);
+        return 0;
+      }
       if (!options.asyncGo || !ms) {
         fn();
         return 0;
@@ -224,10 +240,18 @@ function installFakeHistory(
         queuedPops.shift()?.();
       }
     },
+    flushZero() {
+      const batch = zeroTimers.splice(0);
+      for (const fn of batch) fn();
+    },
     flushWatchdog() {
-      while (delayedTimers.length > 0) {
-        delayedTimers.shift()?.();
-      }
+      // One generation. A callback that arms another idle timer must not
+      // re-enter this flush or a still-busy drain loops forever.
+      const batch = delayedTimers.splice(0);
+      for (const fn of batch) fn();
+    },
+    pendingPops() {
+      return queuedPops.length;
     },
     get index() {
       return index;
@@ -235,9 +259,13 @@ function installFakeHistory(
   };
 }
 
+let restoreNavigator: (() => void) | null = null;
+
 function uninstallFakeHistory() {
   delete (globalThis as { window?: unknown }).window;
   delete (globalThis as { history?: unknown }).history;
+  restoreNavigator?.();
+  restoreNavigator = null;
 }
 
 describe("backup-gate history trap", () => {
@@ -289,6 +317,63 @@ describe("backup-gate history trap", () => {
     confirmPendingBackupLeave();
     expect(ran).toBe(true);
     expect(isBackupLeaveBlocked()).toBe(false);
+  });
+
+  it("does not finish the drain in the gap after popstate before the queued scrub", () => {
+    const hist = installFakeHistory("https://hypercolor.app/profile", {
+      asyncGo: true,
+      deferZero: true,
+    });
+    hist.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    let ran = false;
+    requestGuardedNavigation(() => {
+      ran = true;
+      hist.historyStub.pushState({ page: "chats" }, "", "https://hypercolor.app/chats");
+    });
+    confirmPendingBackupLeave();
+    expect(ran).toBe(false);
+    hist.flushPops();
+    hist.flushWatchdog();
+    expect(ran).toBe(false);
+    expect(trapEntries(hist.entries)).not.toHaveLength(0);
+    for (let i = 0; i < 8 && !ran; i += 1) {
+      hist.flushZero();
+      hist.flushPops();
+      hist.flushWatchdog();
+    }
+    expect(ran).toBe(true);
+    expect(trapEntries(hist.entries)).toHaveLength(0);
+    expect((history.state as TrapState)?.backupGate).toBeFalsy();
+  });
+
+  it("defers history.go on Firefox only, after the scrub has been recorded", () => {
+    const firefox = installFakeHistory("https://hypercolor.app/profile", {
+      asyncGo: true,
+      deferZero: true,
+      userAgent: "Mozilla/5.0 Firefox/128.0",
+    });
+    firefox.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    requestGuardedNavigation(() => undefined);
+    confirmPendingBackupLeave();
+    expect(firefox.pendingPops()).toBe(0);
+    expect((history.state as TrapState)?.backupGate).toBeFalsy();
+    firefox.flushZero();
+    expect(firefox.pendingPops()).toBe(1);
+    uninstallFakeHistory();
+
+    const webkit = installFakeHistory("https://hypercolor.app/profile", {
+      asyncGo: true,
+      deferZero: true,
+      userAgent: "Mozilla/5.0 AppleWebKit/605.1.15",
+    });
+    webkit.historyStub.pushState({ page: "settings" }, "", "https://hypercolor.app/settings");
+    setBackupGate({ recoveryCode: "word word word", confirmedSaved: false });
+    requestGuardedNavigation(() => undefined);
+    confirmPendingBackupLeave();
+    expect(webkit.pendingPops()).toBe(1);
+    expect((history.state as TrapState)?.backupGate).toBeFalsy();
   });
 
   it("does not run Leave-anyway intent while a history.go popstate is still in flight", () => {
