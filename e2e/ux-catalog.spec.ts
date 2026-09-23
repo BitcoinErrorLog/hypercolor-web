@@ -34,7 +34,7 @@ for (const scene of UX_CATALOG_SCENES) {
       await expect(marker).toBeVisible();
     }
     const portalSurface = marker.locator(`[data-vrt-portal-root] [data-surface="${scene.expectedSurface}"]`).first();
-    const surface = scene.surface === "sign-out" || scene.surface === "composer-menu" || scene.surface === "composer-emoji" || scene.surface === "composer-gif" || scene.surface === "profile-qr" || scene.surface === "contacts-scan"
+    const surface = scene.surface === "sign-out" || scene.surface === "composer-menu" || scene.surface === "composer-emoji" || scene.surface === "profile-qr" || scene.surface === "contacts-scan"
       ? portalSurface
       : test.info().project.name === "chromium-mobile-pixel" && scene.surface === "nav"
         ? page.locator('[data-surface="site-nav-mobile"]').first()

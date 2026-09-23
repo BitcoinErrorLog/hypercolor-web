@@ -28,50 +28,38 @@ export function GifPicker({
 }) {
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<GifHit[]>(fixtureItems ?? []);
-  const [error, setError] = useState<string | null>(configured ? null : "GIF search not configured");
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function search() {
-    if (!configured) {
-      setError("GIF search not configured");
-      return;
-    }
+    if (!configured) return;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/gif/search?q=${encodeURIComponent(query.trim())}`);
-      if (res.status === 503) {
-        setError("GIF search not configured");
-        setItems([]);
-        return;
-      }
       const json = (await res.json()) as { items?: GifHit[]; error?: string };
       if (!res.ok) {
-        setError(json.error ?? "GIF search failed");
+        setError(res.status === 503 ? "GIF search failed" : (json.error ?? "GIF search failed"));
         setItems([]);
         return;
       }
       setItems(json.items ?? []);
     } catch {
-      setError("GIF search not configured");
+      setError("GIF search failed");
       setItems([]);
     } finally {
       setBusy(false);
     }
   }
 
+  if (!configured) return null;
+
   return (
     <ModalSheet open={open} onClose={onClose} labelledBy="gifPickerLabel" testId="gifPicker" surface="gif-picker">
       <p id="gifPickerLabel" className="text-sm font-medium">
         GIF search
       </p>
-      {!configured || error === "GIF search not configured" ? (
-        <p className="mt-3 text-sm text-muted-foreground" data-testid="gifNotConfigured">
-          GIF search not configured
-        </p>
-      ) : (
-        <>
-          <form
+      <form
             className="mt-3 flex gap-2"
             onSubmit={(event) => {
               event.preventDefault();
@@ -104,8 +92,6 @@ export function GifPicker({
               </li>
             ))}
           </ul>
-        </>
-      )}
     </ModalSheet>
   );
 }

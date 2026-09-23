@@ -740,7 +740,6 @@ function RenderProductionScene({ scene }: { scene: UxCatalogScene }) {
         testIdPrefix="uxCatalogComposer"
         gifConfigured={false}
         onPickGif={noop}
-        initialGifOpen
       />
     );
   }

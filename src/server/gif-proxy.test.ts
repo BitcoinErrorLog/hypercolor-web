@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { ATTACHMENT_MAX_BYTES } from "@/flags/config";
-import { allowedGifUrl, newGifSessionId, parseGifSessionCookie, stripTenorResults } from "./gif-proxy";
+import { allowedGifUrl, gifSearchConfigured, newGifSessionId, parseGifSessionCookie, stripTenorResults } from "./gif-proxy";
+import { GET as configGet } from "../../app/api/gif/config/route";
 import { GET as searchGet } from "../../app/api/gif/search/route";
 import { GET as fetchGet } from "../../app/api/gif/fetch/route";
 
@@ -73,9 +74,23 @@ describe("gif proxy", () => {
   it("returns 503 when Tenor is not configured", async () => {
     delete process.env.TENOR_API_KEY;
     delete process.env.GIF_PROXY_SECRET;
+    expect(gifSearchConfigured()).toBe(false);
     const res = await searchGet(req("/api/gif/search?q=hi", { "x-forwarded-for": "198.51.100.1" }));
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toMatchObject({ code: "not-configured" });
+    const config = await configGet();
+    expect(config.status).toBe(200);
+    expect(config.headers.get("cache-control")).toBe("private, no-store");
+    await expect(config.json()).resolves.toEqual({ configured: false });
+  });
+
+  it("reports GIF search as configured without exposing the key", async () => {
+    expect(gifSearchConfigured()).toBe(true);
+    const config = await configGet();
+    const body = await config.json();
+    expect(body).toEqual({ configured: true });
+    expect(JSON.stringify(body)).not.toContain("test-tenor-key");
+    expect(JSON.stringify(body)).not.toContain("test-gif-secret");
   });
 
   function setCookies(res: Response): string[] {

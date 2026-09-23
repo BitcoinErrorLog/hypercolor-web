@@ -114,6 +114,7 @@ export function Composer({
   const [menuOpen, setMenuOpen] = useState(initialMenuOpen);
   const [emojiOpen, setEmojiOpen] = useState(initialEmojiOpen);
   const [gifOpen, setGifOpen] = useState(initialGifOpen);
+  const showGif = Boolean(onPickGif) && gifConfigured;
   const [caret, setCaret] = useState(0);
   const fieldBlocked = Boolean(disabled) || sending;
   const blocked = fieldBlocked || Boolean(sendBlocked);
@@ -160,7 +161,7 @@ export function Composer({
       >
         ☺
       </Button>
-      {onPickGif ? (
+      {showGif ? (
         <Button
           type="button"
           variant="outline"
@@ -400,11 +401,11 @@ export function Composer({
           }}
         />
       </ModalSheet>
-      {onPickGif ? (
+      {showGif && onPickGif ? (
         <GifPicker
           open={gifOpen}
           onClose={() => setGifOpen(false)}
-          configured={gifConfigured}
+          configured
           onPick={(hit) => {
             setGifOpen(false);
             onPickGif(hit);

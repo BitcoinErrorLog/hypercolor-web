@@ -53,6 +53,11 @@ function gifProxySecret(): string | null {
   return createHmac("sha256", tenor).update("hypercolor-gif-proxy-sid").digest("hex");
 }
 
+/** True only when a Tenor key is present. Does not return the key. */
+export function gifSearchConfigured(): boolean {
+  return Boolean(process.env.TENOR_API_KEY?.trim()) && gifProxySecret() !== null;
+}
+
 function signPayload(payload: string): string {
   const secret = gifProxySecret();
   if (!secret) return "";

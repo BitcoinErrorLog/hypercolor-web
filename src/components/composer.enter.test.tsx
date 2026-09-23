@@ -35,6 +35,54 @@ afterEach(() => {
   host = null;
 });
 
+describe("composer GIF entry", () => {
+  it("omits the GIF button and any not-configured copy when search is off", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => {
+      root!.render(
+        <Composer
+          draft=""
+          sending={false}
+          placeholder="Message"
+          onChangeDraft={() => {}}
+          onSend={() => {}}
+          testIdPrefix="thread"
+          gifConfigured={false}
+          onPickGif={() => {}}
+          initialGifOpen
+        />,
+      );
+    });
+    expect(host.querySelector('[data-testid="threadGif"]')).toBeNull();
+    expect(host.textContent).not.toContain("GIF search not configured");
+    expect(host.textContent).not.toContain("GIF");
+  });
+
+  it("shows the GIF button only when search is configured", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => {
+      root!.render(
+        <Composer
+          draft=""
+          sending={false}
+          placeholder="Message"
+          onChangeDraft={() => {}}
+          onSend={() => {}}
+          testIdPrefix="thread"
+          gifConfigured
+          onPickGif={() => {}}
+        />,
+      );
+    });
+    expect(host.querySelector('[data-testid="threadGif"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Insert GIF"]')?.hasAttribute("disabled")).toBe(false);
+  });
+});
+
 describe("composer Enter-to-send", () => {
   it("submits on Enter and does not submit on Shift+Enter or IME composition", () => {
     const sends: string[] = [];

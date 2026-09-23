@@ -95,7 +95,7 @@ export const UX_CATALOG_SCENES: readonly UxCatalogScene[] = [
   { id: "ring-callback-invalid-missing-params", journey: "connect", surface: "ring-callback", state: "invalid-missing-params", expectedSurface: "ring-callback-page" },
   { id: "composer-menu", journey: "composer", surface: "composer-menu", state: "open", expectedSurface: "attachment-menu" },
   { id: "composer-emoji", journey: "composer", surface: "composer-emoji", state: "open", expectedSurface: "emoji-picker" },
-  { id: "composer-gif-unconfigured", journey: "composer", surface: "composer-gif", state: "unconfigured", expectedSurface: "gif-picker" },
+  { id: "composer-gif-unconfigured", journey: "composer", surface: "composer-gif", state: "unconfigured", expectedSurface: "composer" },
   { id: "composer-quote", journey: "composer", surface: "composer-quote", state: "reply", expectedSurface: "composer" },
   { id: "thread-day-separators", journey: "chats", surface: "thread", state: "day-separators", expectedSurface: "thread-view" },
   { id: "thread-markdown", journey: "chats", surface: "thread", state: "markdown", expectedSurface: "thread-view" },

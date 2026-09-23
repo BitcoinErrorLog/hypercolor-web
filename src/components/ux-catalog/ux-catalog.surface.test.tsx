@@ -171,7 +171,7 @@ describe("UX catalog production surfaces", () => {
       });
       const marker = document.querySelector(`[data-vrt-scene="${scene.id}"]`);
       expect(marker).not.toBeNull();
-      const scope = scene.surface === "sign-out" || scene.surface === "composer-menu" || scene.surface === "composer-emoji" || scene.surface === "composer-gif" || scene.surface === "profile-qr" || scene.surface === "contacts-scan"
+      const scope = scene.surface === "sign-out" || scene.surface === "composer-menu" || scene.surface === "composer-emoji" || scene.surface === "profile-qr" || scene.surface === "contacts-scan"
         ? document
         : marker;
       expect(scope?.querySelector(`[data-surface="${scene.expectedSurface}"]`)).not.toBeNull();
