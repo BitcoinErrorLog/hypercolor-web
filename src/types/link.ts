@@ -39,8 +39,8 @@ export const PAYKIT_MESSAGING_CAPABILITY = '/pub/paykit/:rw';
 export const HYPERCOLOR_WRITE_CAPABILITY = '/pub/hypercolor.app/v1/:rw';
 
 /**
- * One Ring grant for DMs + owner writes. Requested by the `pubkyauth://`
- * ceremony on Welcome and Enable.
+ * One Ring grant for DMs + owner writes. Requested by Enable Messaging
+ * (`startAuthFlow`) and advertised on Welcome `paykit-connect` as `caps=`.
  */
 export const RING_GRANT_CAPABILITIES = `${PAYKIT_MESSAGING_CAPABILITY},${HYPERCOLOR_WRITE_CAPABILITY}`;
 
