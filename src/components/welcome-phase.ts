@@ -19,9 +19,9 @@ export function resolveWelcomePhase(input: {
   if (input.phase) return input.phase;
   if (input.retryPublish) return "retry-publish";
   if (input.isExpired) return "expired";
+  if (input.error) return "failed";
   if (input.pendingPubky) return "ready";
   if (input.finishing) return "finishing";
-  if (input.error) return "failed";
   if (input.linkLive) return "waiting";
   return "idle";
 }

@@ -82,19 +82,14 @@ export function WelcomePageHost() {
         goToChats(live.pubky);
       } catch (err) {
         setFinishing(false);
-        if (err instanceof BindingMismatchError) {
-          pendingSession.current = null;
-          setPendingPubky(null);
-          setError(err.message);
-          emitCoarseError("welcome", err);
-          return;
-        }
         const message = errorText(err);
-        if (/publish|receiver/i.test(message)) {
+        if (!(err instanceof BindingMismatchError) && /publish|receiver/i.test(message)) {
           setRetryPublish(true);
           setError("Could not publish the receiver. Retry publish.");
           return;
         }
+        pendingSession.current = null;
+        setPendingPubky(null);
         setError(message);
         emitCoarseError("welcome", err);
       }

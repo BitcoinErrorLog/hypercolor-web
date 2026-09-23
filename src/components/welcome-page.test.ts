@@ -59,6 +59,17 @@ describe("welcome awaiting states", () => {
     expect(actions).toContain('router.push("/chats")');
   });
 
+  it("shows a scope denial instead of the continue card", () => {
+    expect(
+      resolveWelcomePhase({
+        ...base,
+        pendingPubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
+        error: "Pubky Ring did not grant the scopes Hypercolor asked for.",
+      }),
+    ).toBe("failed");
+    expect(actions).toContain("setPendingPubky(null)");
+  });
+
   it("surfaces a full-width failed state with Try again", () => {
     expect(resolveWelcomePhase({ ...base, error: "network error" })).toBe("failed");
     expect(source).toContain('data-testid="welcomeFailed"');
