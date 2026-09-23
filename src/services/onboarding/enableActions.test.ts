@@ -13,10 +13,8 @@ describe("enable offline retry", () => {
     expect(source).toContain("retrySessionRestore");
     expect(source).toContain("retryBusy");
     expect(source).toContain("offline");
-    expect(source).toContain("tryAdoptPendingHandoffForSession");
-    expect(source).toContain("clearPendingHandoffLocator");
-    expect(source).toMatch(
-      /try \{\s*await tryAdoptPendingHandoffForSession\(session\.pubky\(\)\);\s*\} catch \{[\s\S]*clearPendingHandoffLocator\(\);[\s\S]*\}\s*const result = await provisionReceiver/,
-    );
+    expect(source).not.toContain("tryAdoptPendingHandoffForSession");
+    expect(source).not.toContain("clearPendingHandoffLocator");
+    expect(source).toContain("provisionReceiver");
   });
 });
