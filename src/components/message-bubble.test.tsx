@@ -100,7 +100,27 @@ describe("DmMessageBubble unsend action", () => {
     );
 
     expect(host.textContent).toContain("Message unsent");
+    expect(host.textContent).not.toContain("Message deleted");
     expect(host.textContent).not.toContain("Sent");
     expect(host.querySelector('[data-testid="unsendDialog"]')).toBeNull();
+  });
+
+  it("labels an inbound peer tombstone Message deleted and hides the body", async () => {
+    await render(
+      <DmMessageBubble
+        message={message({
+          senderPubky: PEER,
+          direction: "received",
+          deleted: true,
+          body: "unsend_mob_own",
+        })}
+        mine={false}
+      />,
+    );
+
+    expect(host.textContent).toContain("Message deleted");
+    expect(host.textContent).not.toContain("Message unsent");
+    expect(host.textContent).not.toContain("unsend_mob_own");
+    expect(host.textContent).not.toContain("Unsend");
   });
 });

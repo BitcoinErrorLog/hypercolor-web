@@ -68,7 +68,7 @@ export function DmMessageBubble({
         }}
       >
         {message.deleted ? (
-          <p className="italic opacity-70">Message unsent</p>
+          <p className="italic opacity-70">{mine ? "Message unsent" : "Message deleted"}</p>
         ) : (
           attachmentSlot ?? <MessageBody text={message.body} />
         )}
