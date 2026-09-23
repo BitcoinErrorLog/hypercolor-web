@@ -87,10 +87,7 @@ export interface MeshPeer {
 
 export type AuthStackParamList = {
   Welcome: undefined;
-  /**
-   * Waiting for `hypercolor://ring-callback`.
-   * `ringAuthUrl` is the `pubkyring://paykit-connect…` link shown as QR + copy.
-   */
+  /** Waiting on a `pubkyauth://` approval. `ringAuthUrl` is that URL. */
   AwaitingRingAuth: { ringAuthUrl: string };
 };
 

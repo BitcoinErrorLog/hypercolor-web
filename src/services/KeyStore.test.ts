@@ -1,12 +1,8 @@
 import "fake-indexeddb/auto";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  AppCert,
-  AppKeyPair,
   AttachmentSecretMaterial,
-  InboxKeypair,
   KeyStore,
-  TransportKeypair,
 } from "./KeyStore";
 
 const owner =
@@ -77,117 +73,55 @@ describe("KeyStore", () => {
     await expect(globalThis.crypto.subtle.exportKey("raw", key)).rejects.toThrow();
   });
 
-  it("wraps and unwraps the app keypair", async () => {
+  it("wraps and unwraps the session export", async () => {
     await KeyStore.setPubky(owner);
-    const keypair: AppKeyPair = {
-      publicKey: "apppub",
-      secretKey: "appsec",
-    };
-    await KeyStore.setAppKeypair(keypair);
-    expect(await KeyStore.getAppKeypair()).toEqual(keypair);
-  });
-
-  it("wraps and unwraps the inbox keypair", async () => {
-    await KeyStore.setPubky(owner);
-    const keypair: InboxKeypair = {
-      publicKey: "inpub",
-      secretKey: "insec",
-    };
-    await KeyStore.setInboxKeypair(keypair);
-    expect(await KeyStore.getInboxKeypair()).toEqual(keypair);
-  });
-
-  it("wraps and unwraps the transport keypair", async () => {
-    await KeyStore.setPubky(owner);
-    const keypair: TransportKeypair = {
-      publicKey: "trpub",
-      secretKey: "trsec",
-    };
-    await KeyStore.setTransportKeypair(keypair);
-    expect(await KeyStore.getTransportKeypair()).toEqual(keypair);
-  });
-
-  it("wraps and unwraps the AppCert and reports validity", async () => {
-    await KeyStore.setPubky(owner);
-    const cert: AppCert = {
-      certBodyHex: "body",
-      sigHex: "sig",
-      certIdHex: "id",
-      expiresAt: Math.floor(Date.now() / 1000) + 1000,
-    };
-    await KeyStore.setAppCert(cert);
-    expect(await KeyStore.getAppCert()).toEqual(cert);
-    expect(await KeyStore.isAppCertValid()).toBe(true);
-
-    const expired: AppCert = {
-      certBodyHex: "body",
-      sigHex: "sig",
-      certIdHex: "id2",
-      expiresAt: Math.floor(Date.now() / 1000) - 1,
-    };
-    await KeyStore.setAppCert(expired);
-    expect(await KeyStore.isAppCertValid()).toBe(false);
-  });
-
-  it("wraps and unwraps the pending ring handoff", async () => {
-    await KeyStore.setPubky(owner);
-    const deadline = Date.now() + 60_000;
-    await KeyStore.setPendingRingHandoff("deadbeef", undefined, "ch-one", deadline);
-    expect(await KeyStore.getPendingRingHandoff("ch-one")).toBe("deadbeef");
-    await KeyStore.clearPendingRingHandoff("ch-one");
-    expect(await KeyStore.getPendingRingHandoff("ch-one")).toBeNull();
-  });
-
-  it("wraps pending ring handoff before an owner pubky exists", async () => {
-    const deadline = Date.now() + 60_000;
-    await KeyStore.setPendingRingHandoff("cafebabe", "aa".repeat(32), "ch-pre", deadline);
-    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBe("cafebabe");
-    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-pre")).toBe("aa".repeat(32));
-    await KeyStore.setPubky(owner);
-    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBe("cafebabe");
-    await KeyStore.clearPendingRingHandoff("ch-pre");
-    expect(await KeyStore.getPendingRingHandoff("ch-pre")).toBeNull();
-    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-pre")).toBeNull();
-  });
-
-  it("keeps two pending secrets keyed by channel id", async () => {
-    const deadline = Date.now() + 60_000;
-    await KeyStore.setPendingRingHandoff("secret-a", "aa".repeat(32), "ch-a", deadline);
-    await KeyStore.setPendingRingHandoff("secret-b", "bb".repeat(32), "ch-b", deadline);
-    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBe("secret-a");
-    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
-    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-a")).toBe("aa".repeat(32));
-    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-b")).toBe("bb".repeat(32));
-    await KeyStore.clearPendingRingHandoff("ch-a");
-    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBeNull();
-    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
-  });
-
-  it("expires a pending secret after its deadline", async () => {
-    await KeyStore.setPendingRingHandoff("stale", "cc".repeat(32), "ch-stale", Date.now() - 1);
-    expect(await KeyStore.getPendingRingHandoff("ch-stale")).toBeNull();
-    expect(await KeyStore.getPendingRingHandoffPublicKey("ch-stale")).toBeNull();
-  });
-
-  it("returns null when unwrapping ch-b ciphertext under ch-a AAD", async () => {
-    const deadline = Date.now() + 60_000;
-    await KeyStore.setPendingRingHandoff("secret-a", "aa".repeat(32), "ch-a", deadline);
-    await KeyStore.setPendingRingHandoff("secret-b", "bb".repeat(32), "ch-b", deadline);
+    await KeyStore.setSessionExport("export-blob");
+    expect(await KeyStore.getSessionExport()).toBe("export-blob");
     const db = await openKeyStoreDb();
-    const recordB = await readSecretRecord(db, "pending-ring-handoff:ch-b");
-    expect(recordB).toBeDefined();
-    await writeSecretRecord(db, "pending-ring-handoff:ch-a", recordB!);
-    expect(await KeyStore.getPendingRingHandoff("ch-a")).toBeNull();
-    expect(await KeyStore.getPendingRingHandoff("ch-b")).toBe("secret-b");
+    const record = await readSecretRecord(db, "session-export:current");
+    expect(record?.ciphertext.length).toBeGreaterThan(0);
+    await KeyStore.deleteSessionExport();
+    expect(await KeyStore.getSessionExport()).toBeNull();
   });
 
-  it("sweeps expired pending entries when a new handoff is stored", async () => {
-    await KeyStore.setPendingRingHandoff("old", "aa".repeat(32), "ch-old", Date.now() - 1);
+  it("wipes legacy handoff material and keeps the session export", async () => {
+    await KeyStore.setPubky(owner);
+    await KeyStore.setSessionExport("keep-me");
     const db = await openKeyStoreDb();
-    expect(await readSecretRecord(db, "pending-ring-handoff:ch-old")).toBeDefined();
-    await KeyStore.setPendingRingHandoff("new", "bb".repeat(32), "ch-new", Date.now() + 60_000);
-    expect(await readSecretRecord(db, "pending-ring-handoff:ch-old")).toBeUndefined();
-    expect(await KeyStore.getPendingRingHandoff("ch-new")).toBe("new");
+    await writeSecretRecord(db, "app-key:app-key", {
+      iv: new Uint8Array(12),
+      ciphertext: new Uint8Array([1, 2, 3]),
+      version: 1,
+    });
+    await writeSecretRecord(db, "pending-ring-handoff:ch", {
+      iv: new Uint8Array(12),
+      ciphertext: new Uint8Array([4, 5, 6]),
+      version: 1,
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("metadata", "readwrite");
+      const req = tx.objectStore("metadata").put("{}", "pending-ring-handoff-pk:ch");
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error ?? new Error("meta write failed"));
+    });
+    const memory = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        memory.set(key, value);
+      },
+      removeItem: (key: string) => {
+        memory.delete(key);
+      },
+    };
+    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: storage });
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+    storage.setItem("hc.pendingHandoffLocator", "ch");
+    await KeyStore.wipeLegacyRingMaterial();
+    expect(await readSecretRecord(db, "app-key:app-key")).toBeUndefined();
+    expect(await readSecretRecord(db, "pending-ring-handoff:ch")).toBeUndefined();
+    expect(await KeyStore.getSessionExport()).toBe("keep-me");
+    expect(storage.getItem("hc.pendingHandoffLocator")).toBeNull();
   });
 
   it("wraps Encrypted Link snapshots under purpose link-snapshot", async () => {
@@ -247,47 +181,25 @@ describe("KeyStore", () => {
     expect(await KeyStore.getLinkSession()).toBeNull();
   });
 
-  it("reports hasPersistedSession", async () => {
+  it("reports hasPersistedSession from the pubky alone", async () => {
     expect(await KeyStore.hasPersistedSession()).toBe(false);
     await KeyStore.setPubky(owner);
-    expect(await KeyStore.hasPersistedSession()).toBe(false);
-    await KeyStore.setAppKeypair({ publicKey: "pub", secretKey: "sec" });
     expect(await KeyStore.hasPersistedSession()).toBe(true);
   });
 
-  it("AAD tamper fails closed", async () => {
+  it("AAD tamper fails closed for the session export", async () => {
     await KeyStore.setPubky(owner);
-    const appKey: AppKeyPair = {
-      publicKey: "pub",
-      secretKey: "sec",
-    };
-    await KeyStore.setAppKeypair(appKey);
-
-    // Owner tamper: changing the owner metadata invalidates the AAD binding.
+    await KeyStore.setSessionExport("export-blob");
     await KeyStore.setPubky("otherowner");
-    expect(await KeyStore.getAppKeypair()).toBeNull();
-
-    // Restore owner and verify decryption works again.
+    expect(await KeyStore.getSessionExport()).toBeNull();
     await KeyStore.setPubky(owner);
-    expect(await KeyStore.getAppKeypair()).toEqual(appKey);
-
-    // Purpose tamper: copy ciphertext under a different purpose key.
-    const db = await openKeyStoreDb();
-    const record = await readSecretRecord(db, "app-key:app-key");
-    expect(record).toBeDefined();
-    await writeSecretRecord(db, "inbox:inbox", record!);
-    expect(await KeyStore.getInboxKeypair()).toBeNull();
-
-    // Alias tamper: ciphertext under the correct purpose but wrong alias.
-    await writeSecretRecord(db, "app-key:tampered", record!);
-    // No public API reads alias "tampered"; the legitimate entry remains valid.
-    expect(await KeyStore.getAppKeypair()).toEqual(appKey);
+    expect(await KeyStore.getSessionExport()).toBe("export-blob");
   });
 
   it("clear removes wrapped secrets and metadata", async () => {
     await KeyStore.setPubky(owner);
     await KeyStore.setHomeserver("https://example.com");
-    await KeyStore.setAppKeypair({ publicKey: "pub", secretKey: "sec" });
+    await KeyStore.setSessionExport("export-blob");
     await KeyStore.setAttachmentSecret(owner, "sender1", "event1", {
       key: "k",
       nonce: "n",
@@ -298,7 +210,7 @@ describe("KeyStore", () => {
 
     expect(await KeyStore.getPubky()).toBeNull();
     expect(await KeyStore.getHomeserver()).toBeNull();
-    expect(await KeyStore.getAppKeypair()).toBeNull();
+    expect(await KeyStore.getSessionExport()).toBeNull();
     expect(
       await KeyStore.getAttachmentSecret(owner, "sender1", "event1"),
     ).toBeNull();

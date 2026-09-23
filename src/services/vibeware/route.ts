@@ -10,7 +10,6 @@ export const PRODUCT_ROUTES = [
   "requests",
   "profile",
   "settings",
-  "ring-callback",
 ] as const;
 
 export type ProductRoute = (typeof PRODUCT_ROUTES)[number];
@@ -28,6 +27,5 @@ export function productRouteFromPathname(pathname: string): ProductRoute | null 
   if (pathname === "/requests" || pathname === "/requests/") return "requests";
   if (pathname === "/profile" || pathname === "/profile/") return "profile";
   if (pathname === "/settings" || pathname === "/settings/") return "settings";
-  if (pathname === "/ring-callback" || pathname === "/ring-callback/") return "ring-callback";
   return null;
 }

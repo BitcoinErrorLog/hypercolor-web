@@ -92,16 +92,6 @@ vi.mock("@/services/link/LinkService", () => ({
   },
 }));
 
-vi.mock("@/services/RingConnect", () => ({
-  adoptHandoff: vi.fn(() => Promise.resolve(null)),
-  decryptPendingHandoff: vi.fn(() => Promise.resolve({})),
-  pendingChannelMatches: vi.fn(() => Promise.resolve(false)),
-  publishHandoffParamsToRelay: vi.fn(() => Promise.resolve()),
-  sanitizeHandoffError: (err: unknown) =>
-    err instanceof Error ? err.message : "protocol error",
-  validateHandoffPublicParams: vi.fn(() => null),
-}));
-
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     initKeyStore: vi.fn(() => Promise.resolve()),

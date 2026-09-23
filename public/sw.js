@@ -1,5 +1,5 @@
-// v4: product-route shell, never cache /ring-callback, activate only after Reload.
-const CACHE = "hypercolor-shell-v4";
+// v5: product-route shell, activate only after Reload.
+const CACHE = "hypercolor-shell-v5";
 const SHELL = [
   "/",
   "/chats",
@@ -22,7 +22,6 @@ function shellPath(url) {
 function shouldCache(url) {
   if (url.origin !== self.location.origin) return false;
   const path = shellPath(url);
-  if (path === "/ring-callback" || path.startsWith("/ring-callback")) return false;
   if (path === "/e2e" || path.startsWith("/e2e/")) return false;
   return SHELL.includes(path);
 }

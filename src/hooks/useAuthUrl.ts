@@ -8,11 +8,17 @@ import {
   type SessionHandle,
 } from "@/services/link/PaykitLinkWeb";
 import { adoptApprovedSession } from "@/services/link/session";
+import { parsePubkyauthAuthorizationUrl } from "@/services/pubkyauthUrl";
 
 export const AUTH_FLOW_CANCELED_ERROR_NAME = "AuthFlowCanceled";
 
 export type UseAuthUrlOptions = {
   autoFetch?: boolean;
+  /**
+   * When false, the approved session stays in memory and `onApproved` receives
+   * it before any KeyStore write. Welcome uses that for the confirm step.
+   */
+  adoptOnApproval?: boolean;
   onApproved?: (session: SessionHandle) => Promise<void> | void;
   onError?: (error: unknown) => void;
 };
@@ -23,6 +29,7 @@ export type UseAuthUrlReturn = {
   isExpired: boolean;
   fetchUrl: () => Promise<void>;
   copyAuthUrl: () => Promise<void>;
+  cancel: () => void;
 };
 
 function isAuthFlowExpiredError(error: unknown): boolean {
@@ -31,9 +38,6 @@ function isAuthFlowExpiredError(error: unknown): boolean {
   const message =
     "message" in error ? String((error as { message?: unknown }).message) : "";
   if (name === "TimeoutError" || name === "SESSION_EXPIRED") return true;
-  // Session resume / receiver-publish budgets also say "timed out", but the
-  // pubkyauth flow itself is still valid — regenerating the URL would discard
-  // a grant Ring already approved.
   if (name === "SessionResumeTimeout") return false;
   return /timeout|expired|SESSION_EXPIRED/i.test(`${name} ${message}`);
 }
@@ -48,12 +52,12 @@ function isCanceledError(error: unknown): boolean {
 }
 
 /**
- * Port of pubky-app `useAuthUrl`: auto-fetch, expiry → regenerate,
- * approval survives unmount, starting a new flow cancels the previous one.
+ * Standard scoped `pubkyauth://` ceremony. The flow URL stays in React state.
  * A cancelled flow that later resolves signs the orphan session out.
  */
 export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   const autoFetch = options.autoFetch ?? true;
+  const adoptOnApproval = options.adoptOnApproval ?? true;
   const [url, setUrl] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isExpired, setIsExpired] = useState(false);
@@ -64,17 +68,24 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
   } | null>(null);
   const onApprovedRef = useRef(options.onApproved);
   const onErrorRef = useRef(options.onError);
+  const adoptOnApprovalRef = useRef(adoptOnApproval);
 
   useEffect(() => {
     onApprovedRef.current = options.onApproved;
     onErrorRef.current = options.onError;
-  }, [options.onApproved, options.onError]);
+    adoptOnApprovalRef.current = adoptOnApproval;
+  }, [options.onApproved, options.onError, adoptOnApproval]);
 
   const cancelCurrentFlow = useCallback(() => {
     if (flowRef.current) {
       flowRef.current.canceled = true;
     }
   }, []);
+
+  const cancel = useCallback(() => {
+    cancelCurrentFlow();
+    setUrl("");
+  }, [cancelCurrentFlow]);
 
   const fetchUrl = useCallback(async (): Promise<void> => {
     setIsLoading(true);
@@ -87,6 +98,17 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
       const tracked = { handle: flow, canceled: false };
       flowRef.current = tracked;
       const authorizationUrl = flow.authorizationUrl();
+      try {
+        parsePubkyauthAuthorizationUrl(authorizationUrl);
+      } catch (error) {
+        tracked.canceled = true;
+        try {
+          flow.free();
+        } catch {
+          // already consumed
+        }
+        throw error;
+      }
 
       void PaykitLinkWeb.awaitAuthApproval(flow)
         .then(async (session: SessionHandle) => {
@@ -102,8 +124,10 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
             }
             return;
           }
-          const live = await adoptApprovedSession(session);
-          await onApprovedRef.current?.(live.handle);
+          const live = adoptOnApprovalRef.current
+            ? (await adoptApprovedSession(session)).handle
+            : session;
+          await onApprovedRef.current?.(live);
         })
         .catch((error: unknown) => {
           if (isCanceledError(error) || tracked.canceled) return;
@@ -154,5 +178,6 @@ export function useAuthUrl(options: UseAuthUrlOptions = {}): UseAuthUrlReturn {
     isExpired,
     fetchUrl,
     copyAuthUrl,
+    cancel,
   };
 }

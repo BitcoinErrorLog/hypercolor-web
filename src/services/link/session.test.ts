@@ -27,18 +27,22 @@ vi.mock("@/services/StorageService", () => ({
   },
 }));
 
+const sessionExportBox = vi.hoisted(() => ({ value: null as string | null }));
+
 vi.mock("@/services/KeyStore", () => ({
   KeyStore: {
     setPubky: vi.fn(async () => undefined),
     getPubky: vi.fn(async () => null),
     getReceiverNoiseSecret: vi.fn(async () => null),
     clear: vi.fn(async () => undefined),
+    setSessionExport: vi.fn(async (value: string) => {
+      sessionExportBox.value = value;
+    }),
+    getSessionExport: vi.fn(async () => sessionExportBox.value),
+    deleteSessionExport: vi.fn(async () => {
+      sessionExportBox.value = null;
+    }),
   },
-}));
-
-const resetPaykitConnectLive = vi.fn();
-vi.mock("@/services/paykitConnectLive", () => ({
-  resetPaykitConnectLive: () => resetPaykitConnectLive(),
 }));
 
 import {
@@ -83,7 +87,7 @@ describe("session restore classification", () => {
     removeReceiverMarker.mockReset();
     getReceiverMarker.mockReset();
     noisePublicKeyFromSecret.mockReset();
-    resetPaykitConnectLive.mockReset();
+    sessionExportBox.value = null;
     await persistSessionMetadata({
       pubky: OWNER,
       exported: exportWithCaps("/pub/paykit/:rw"),
@@ -242,9 +246,9 @@ describe("session restore classification", () => {
     expect(resume).toHaveBeenCalledTimes(1);
   });
 
-  it("resets the live paykit-connect channel on sign-out", async () => {
+  it("clears the keystore on sign-out", async () => {
     await signOut();
-    expect(resetPaykitConnectLive).toHaveBeenCalledTimes(1);
+    expect(KeyStore.clear).toHaveBeenCalledTimes(1);
   });
 
   it("sign-out on standby does not delete a foreign marker", async () => {

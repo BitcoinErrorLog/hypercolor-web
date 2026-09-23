@@ -42,7 +42,6 @@ export const EVIDENCE_ROUTES = [
   "requests",
   "profile",
   "settings",
-  "ring-callback",
 ];
 
 export const EVIDENCE_FIELD_VALUES = {
@@ -96,7 +95,6 @@ export const EVIDENCE_FIELD_VALUES = {
       "pwa",
       "groups",
       "contacts",
-      "ring-callback",
     ],
   },
   "app.pwa.installed": {

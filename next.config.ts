@@ -8,22 +8,6 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  ...(!staticExport
-    ? {
-        async headers() {
-          return [
-            {
-              source: "/ring-callback",
-              headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
-            },
-            {
-              source: "/ring-callback/:path*",
-              headers: [{ key: "Referrer-Policy", value: "no-referrer" }],
-            },
-          ];
-        },
-      }
-    : {}),
   webpack: (config, { isServer, webpack }) => {
     config.experiments = {
       ...config.experiments,

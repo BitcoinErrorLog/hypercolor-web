@@ -25,57 +25,54 @@ const base = {
 };
 
 describe("welcome awaiting states", () => {
-  it("hides Connect while a live or expired link is presenting", () => {
+  it("hides Connect while a live or expired authorization is presenting", () => {
     expect(source).toContain("welcomeReloadPage");
     expect(source).toContain("Reload page");
     expect(source).toContain('data-testid="welcomeCancel"');
     expect(source).toContain("onCancelWaiting");
+    expect(source).not.toContain("paykit-connect");
     expect(resolveWelcomePhase({ ...base, linkLive: true })).toBe("waiting");
     expect(resolveWelcomePhase({ ...base, isExpired: true })).toBe("expired");
   });
 
-  it("cancels waiting by aborting the paykit-connect poll", () => {
+  it("cancels waiting without writing the keystore", () => {
     expect(actions).toContain("onCancelWaiting");
-    expect(actions).toContain("connect.cancel()");
+    expect(actions).toContain("auth.cancel()");
+    expect(actions).toContain("adoptOnApproval: false");
   });
 
-  it("removes the QR when relay params arrive and shows finishing", () => {
+  it("removes the QR while finishing sign-in", () => {
     expect(resolveWelcomePhase({ ...base, linkLive: true, finishing: true })).toBe(
       "finishing",
     );
     expect(resolveWelcomePhase({ ...base, finishing: true })).toBe("finishing");
     expect(source).toContain("Finishing sign-in…");
     expect(source).toContain('data-testid="welcomeFinishing"');
-    expect(source).toContain("showQr = phase === \"waiting\"");
+    expect(source).toContain('showQr = phase === "waiting"');
     expect(source).toContain("Show QR again");
     expect(actions).toContain("setFinishing(true)");
-    expect(actions).toContain("finishSingleApproval");
+    expect(actions).toContain("adoptApprovedSession");
     expect(actions).toContain("ensureWriter");
-    expect(actions).not.toContain("setNeedsEnable");
+    expect(actions).not.toContain("finishSingleApproval");
+    expect(actions).not.toContain("finishLegacyChainedGrant");
     expect(actions).not.toContain('router.push("/enable")');
     expect(actions).toContain('router.push("/chats")');
-    expect(actions).toContain("connect.showQrAgain()");
   });
 
   it("surfaces a full-width failed state with Try again", () => {
     expect(resolveWelcomePhase({ ...base, error: "network error" })).toBe("failed");
     expect(source).toContain('data-testid="welcomeFailed"');
     expect(source).toContain('retryLabel="Try again"');
-    expect(actions).toContain("sanitizeHandoffError");
-    expect(actions).toContain("start({ replace: true })");
+    expect(actions).toContain("auth.fetchUrl()");
   });
 
-  it("surfaces legacy recovery copy", () => {
-    expect(resolveWelcomePhase({ ...base, legacyRecovery: true })).toBe("legacy");
-    expect(source).toContain("Update Pubky Ring, or approve once more");
-  });
-
-  it("reaches ready after a successful decrypt", () => {
+  it("reaches ready when a fresh pubky is waiting for confirm", () => {
     expect(
       resolveWelcomePhase({
         ...base,
         pendingPubky: "o1ikfer5cy8obp3bp1kqcyd8n4gx3qzzo1ikfer5cy8obp3bp1kq",
       }),
     ).toBe("ready");
+    expect(source).toContain("Continue as");
   });
 });

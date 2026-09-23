@@ -37,17 +37,13 @@ afterEach(() => {
 });
 
 describe("vercel.json shape", () => {
-  it("sets Referrer-Policy no-referrer on the Ring callback landing", () => {
+  it("does not publish a ring-callback landing", () => {
     const raw = JSON.parse(readFileSync(path.join(REPO_ROOT, "vercel.json"), "utf8"));
-    const sources = ["/ring-callback", "/ring-callback/(.*)"];
-    expect(Array.isArray(raw.headers)).toBe(true);
-    for (const source of sources) {
-      const rule = raw.headers.find((entry) => entry.source === source);
-      expect(rule, `missing headers rule for ${source}`).toBeTruthy();
-      expect(rule.headers).toEqual(
-        expect.arrayContaining([{ key: "Referrer-Policy", value: "no-referrer" }]),
-      );
-    }
+    const headers = Array.isArray(raw.headers) ? raw.headers : [];
+    const sources = headers.map((entry) => entry.source);
+    expect(sources).not.toContain("/ring-callback");
+    expect(sources).not.toContain("/ring-callback/(.*)");
+    expect(existsSync(path.join(REPO_ROOT, "app/ring-callback/page.tsx"))).toBe(false);
   });
 });
 
@@ -125,7 +121,7 @@ describe("static preview rewrites", () => {
     };
     const current = parse(path.join(REPO_ROOT, "public", "sw.js"));
     const v3 = parse(path.join(REPO_ROOT, "e2e", "fixtures", "sw-v3.js"));
-    expect(current).toBe("hypercolor-shell-v4");
+    expect(current).toBe("hypercolor-shell-v5");
     expect(v3).toBe("hypercolor-shell-v3");
     expect(current).not.toBe(v3);
   });

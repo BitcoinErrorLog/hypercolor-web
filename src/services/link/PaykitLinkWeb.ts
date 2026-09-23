@@ -422,25 +422,6 @@ export const PaykitLinkWeb = {
     return pair;
   },
 
-  async sb2VerifySignature(
-    envelope: Uint8Array,
-    ownerPubky: string,
-    canonicalPath: string,
-  ): Promise<boolean> {
-    const wasm = await loadPaykitWasm();
-    return wasm.sb2VerifySignature(envelope, ownerPubky, canonicalPath);
-  },
-
-  async sb2Decrypt(
-    envelope: Uint8Array,
-    recipientSk: Uint8Array,
-    ownerPubky: string,
-    canonicalPath: string,
-  ): Promise<Uint8Array> {
-    const wasm = await loadPaykitWasm();
-    return wasm.sb2Decrypt(envelope, recipientSk, ownerPubky, canonicalPath);
-  },
-
   async setPaymentEndpoint(
     session: SessionHandle,
     receiverPath: string,
