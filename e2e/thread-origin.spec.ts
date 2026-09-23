@@ -42,9 +42,15 @@ test.describe("thread origin in the static chats surface", () => {
       a.setAttribute("href", path);
       a.setAttribute("data-testid", "threadOriginContactHref");
       a.textContent = "Open contact";
+      // Contacts uses an h-svh overflow-hidden shell. A static anchor appended to
+      // body lays out below the viewport (top ~944). WebKit hit-tests that click
+      // as body, so the navigation destination stays /contacts.
+      a.style.cssText = "position:fixed;top:8px;left:8px;z-index:2147483647";
       document.body.appendChild(a);
     }, CONTACT_PATH);
-    await page.getByTestId("threadOriginContactHref").click();
+    const href = page.getByTestId("threadOriginContactHref");
+    await expect(href).toBeVisible();
+    await href.click();
     await expect(page).toHaveURL(new RegExp(`/contacts/${CONTACT}`));
     await expect(page.getByTestId("contactDetail")).toBeVisible({ timeout: 30_000 });
   });
