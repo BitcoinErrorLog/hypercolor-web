@@ -110,4 +110,26 @@ describe("history-path", () => {
       });
     }
   });
+
+  it("notifies via MutationObserver when native pushState bypasses History wrap without Navigation API", async () => {
+    const nativePush = History.prototype.pushState;
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    Object.defineProperty(History.prototype, "pushState", {
+      configurable: true,
+      writable: true,
+      value: nativePush,
+    });
+    nativePush.call(window.history, {}, "", "/contacts/webkit-mutation");
+    const marker = document.createElement("div");
+    document.body.append(marker);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls.at(-1)).toBe("/contacts/webkit-mutation");
+    expect(readWindowPathname()).toBe("/contacts/webkit-mutation");
+    marker.remove();
+    stop();
+  });
 });

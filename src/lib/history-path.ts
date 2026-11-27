@@ -2,10 +2,12 @@
  * Notify React when the URL path changes, including Next.js client navigations.
  *
  * `popstate` only fires for Back/Forward. `history.pushState` / `replaceState`
- * (Next.js `<Link>` and `router.push`) do not. Observe `window.location.pathname`
- * via History method wrapping, Navigation API events, `popstate`, `hashchange`,
- * `visibilitychange`, and same-origin `<a>` clicks so React stays synchronized
- * without background interval polling.
+ * (Next.js `<Link>` and `router.push`) do not. Linux WebKit also ignores
+ * `History.prototype` wraps for native host calls and has no Navigation API.
+ * Observe `window.location.pathname` via History wrapping, Navigation API
+ * events, `popstate`, `hashchange`, `visibilitychange`, same-origin `<a>`
+ * clicks, and a microtask-coalesced `MutationObserver` when Navigation API is
+ * absent, keeping React synchronized without any `setInterval` polling.
  */
 
 type HistoryMethod = "pushState" | "replaceState";
@@ -18,6 +20,8 @@ type NavigationHost = {
 const listeners = new Set<() => void>();
 let patched = false;
 let lastObservedPath = "";
+let mutationObserver: MutationObserver | null = null;
+let mutationCheckScheduled = false;
 const originals: { pushState: History["pushState"] | null; replaceState: History["replaceState"] | null } = {
   pushState: null,
   replaceState: null,
@@ -32,6 +36,15 @@ function notifyIfPathChanged(): void {
   const next = readWindowPathname();
   if (next === lastObservedPath) return;
   notify();
+}
+
+function scheduleMutationCheck(): void {
+  if (mutationCheckScheduled) return;
+  mutationCheckScheduled = true;
+  queueMicrotask(() => {
+    mutationCheckScheduled = false;
+    if (patched) notifyIfPathChanged();
+  });
 }
 
 function onPopState(): void {
@@ -142,13 +155,26 @@ function ensurePatched(): void {
   document.addEventListener("click", onDocumentClick, true);
   document.addEventListener("visibilitychange", onVisibilityChange);
   const nav = navigationHost();
-  nav?.addEventListener("currententrychange", onCurrentEntryChange);
-  nav?.addEventListener("navigate", onCurrentEntryChange);
+  if (nav) {
+    nav.addEventListener("currententrychange", onCurrentEntryChange);
+    nav.addEventListener("navigate", onCurrentEntryChange);
+  } else if (typeof MutationObserver === "function" && document.documentElement) {
+    mutationObserver = new MutationObserver(scheduleMutationCheck);
+    mutationObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+    });
+  }
   patched = true;
 }
 
 function restore(): void {
   if (!patched) return;
+  if (mutationObserver) {
+    mutationObserver.disconnect();
+    mutationObserver = null;
+  }
+  mutationCheckScheduled = false;
   if (originals.pushState) {
     restoreMethod(History.prototype, "pushState", originals.pushState);
     if (typeof history !== "undefined") {
