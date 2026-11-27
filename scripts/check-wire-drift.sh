@@ -2,11 +2,11 @@
 # Compare copied Hypercolor wire files to pin 6185a6a8e6bf3a52831515cb85131a7020704396.
 # The web copies may add a 2-line header (source path + pin); that header is ignored.
 # Default oracle is vendor/hypercolor-wire-pin (committed). Override with
-# HYPERCOLOR_REPO=/Users/johncarvalho/work/hypercolor for a local git checkout.
+# HYPERCOLOR_REPO=/path/to/hypercolor for a local git checkout.
 set -euo pipefail
 
 PIN="6185a6a8e6bf3a52831515cb85131a7020704396"
-LOCAL_DEFAULT="/Users/johncarvalho/work/hypercolor"
+LOCAL_DEFAULT="../hypercolor"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VENDOR_DEFAULT="${ROOT}/vendor/hypercolor-wire-pin"
@@ -95,8 +95,8 @@ resolve_source() {
     return 0
   fi
 
-  if [[ -d "${LOCAL_DEFAULT}/.git" ]]; then
-    resolve_git_candidate "${LOCAL_DEFAULT}"
+  if [[ -d "$(resolve_repo_path "${LOCAL_DEFAULT}")/.git" ]]; then
+    resolve_git_candidate "$(resolve_repo_path "${LOCAL_DEFAULT}")"
     return
   fi
 

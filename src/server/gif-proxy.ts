@@ -2,15 +2,24 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { ATTACHMENT_MAX_BYTES } from "@/flags/config";
 
+export type GifProxyHit = {
+  id: string;
+  preview: { url: string; w: number; h: number };
+  gif: { url: string; w: number; h: number; bytes?: number };
+};
+
 export type GifMedia = {
   id: string;
   previewUrl: string;
   gifUrl: string;
+  previewWidth: number;
+  previewHeight: number;
   width: number;
   height: number;
+  bytes?: number;
 };
 
-type TenorFormat = { url?: unknown; dims?: unknown };
+type TenorFormat = { url?: unknown; dims?: unknown; size?: unknown };
 type TenorResult = { id?: unknown; media_formats?: Record<string, TenorFormat> };
 
 const WINDOW_MS = 60_000;
@@ -18,9 +27,10 @@ const SEARCH_LIMIT = 30;
 const FETCH_LIMIT = 30;
 const PREVIEW_LIMIT = 120;
 const SID_TTL_SEC = 86_400;
-const ALLOW_TTL_MS = 10 * 60_000;
-const ALLOW_MAX = 256;
+const TOKEN_TTL_SEC = 10 * 60;
 const UPSTREAM_TIMEOUT_MS = 8_000;
+const DEFAULT_APP_ORIGIN = "https://hypercolor.app";
+const FETCH_TOKEN_DOMAIN = "hypercolor-gif-fetch-v1";
 const TENOR_MEDIA_HOSTS = new Set([
   "media.tenor.com",
   "media1.tenor.com",
@@ -35,15 +45,14 @@ const TENOR_MEDIA_HOSTS = new Set([
   "media3.giphy.com",
   "media4.giphy.com",
 ]);
-const ALLOWED_GIF_TYPES = new Set(["image/gif", "image/webp", "video/mp4"]);
+const ALLOWED_GIF_TYPES = new Set(["image/gif"]);
+const GIF_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
 type Bucket = { at: number; count: number };
-type AllowRow = { gifUrl: string; previewUrl: string; expires: number };
 
 const searchHits = new Map<string, Bucket>();
 const fetchHits = new Map<string, Bucket>();
 const previewHits = new Map<string, Bucket>();
-const allow = new Map<string, AllowRow>();
 
 function gifProxySecret(): string | null {
   const dedicated = process.env.GIF_PROXY_SECRET?.trim();
@@ -65,11 +74,82 @@ function signPayload(payload: string): string {
 }
 
 function verifyMac(payload: string, mac: string): boolean {
+  if (!/^[0-9a-f]{64}$/i.test(mac)) return false;
   const expected = signPayload(payload);
   if (!expected) return false;
   const a = Buffer.from(expected, "hex");
   const b = Buffer.from(mac.toLowerCase(), "hex");
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+export function resolveGifProxyOrigin(requestOrigin?: string | null): string {
+  const configured = process.env.NEXT_PUBLIC_APP_ORIGIN?.trim();
+  for (const candidate of [configured, requestOrigin]) {
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+        return parsed.origin;
+      }
+    } catch {
+      // Try next fallback.
+    }
+  }
+  return DEFAULT_APP_ORIGIN;
+}
+
+export function mintGifFetchToken(
+  params: {
+    id: string;
+    kind: "gif" | "preview";
+    url: string;
+    ttlSec?: number;
+  },
+): string | null {
+  if (!GIF_ID_RE.test(params.id) || !isTenorMediaUrl(params.url)) return null;
+  const ttlSec = params.ttlSec ?? TOKEN_TTL_SEC;
+  const exp = Math.floor(Date.now() / 1000) + ttlSec;
+  const payloadJson = JSON.stringify({
+    v: 1,
+    id: params.id,
+    kind: params.kind,
+    url: params.url,
+    exp,
+  });
+  const encoded = Buffer.from(payloadJson, "utf8").toString("base64url");
+  const mac = signPayload(`${FETCH_TOKEN_DOMAIN}:${encoded}`);
+  if (!mac) return null;
+  return `${encoded}.${mac}`;
+}
+
+export function verifyGifFetchToken(
+  token: string,
+  expectedId: string,
+  expectedKind: "gif" | "preview",
+): string | null {
+  if (!token || token.length > 2048) return null;
+  const dot = token.indexOf(".");
+  if (dot <= 0 || dot !== token.lastIndexOf(".")) return null;
+  const encoded = token.slice(0, dot);
+  const mac = token.slice(dot + 1);
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) return null;
+  if (!verifyMac(`${FETCH_TOKEN_DOMAIN}:${encoded}`, mac)) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const row = parsed as Record<string, unknown>;
+  if (row.v !== 1) return null;
+  if (row.id !== expectedId || !GIF_ID_RE.test(expectedId)) return null;
+  if (row.kind !== expectedKind) return null;
+  if (typeof row.exp !== "number" || !Number.isInteger(row.exp)) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (row.exp < nowSec || row.exp > nowSec + TOKEN_TTL_SEC + 60) return null;
+  if (typeof row.url !== "string" || !isTenorMediaUrl(row.url)) return null;
+  return row.url;
 }
 
 export type GifSessionParse = {
@@ -183,22 +263,6 @@ function sweepHits(map: Map<string, Bucket>): void {
   }
 }
 
-function sweepAllow(): void {
-  const now = Date.now();
-  for (const [key, row] of allow) {
-    if (row.expires < now) allow.delete(key);
-  }
-  if (allow.size <= ALLOW_MAX) return;
-  const ranked = [...allow.entries()].sort((a, b) => a[1].expires - b[1].expires);
-  for (let i = 0; i < ranked.length - ALLOW_MAX; i += 1) {
-    allow.delete(ranked[i][0]);
-  }
-}
-
-function allowKey(sessionId: string, id: string): string {
-  return `${sessionId}:${id}`;
-}
-
 export function isTenorMediaUrl(raw: string): boolean {
   try {
     const url = new URL(raw);
@@ -214,78 +278,129 @@ function dim(value: unknown): { width: number; height: number } {
   if (!Array.isArray(value) || value.length < 2) return { width: 0, height: 0 };
   const width = Number(value[0]);
   const height = Number(value[1]);
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return { width: 0, height: 0 };
-  return { width, height };
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: 0, height: 0 };
+  }
+  return { width: Math.floor(width), height: Math.floor(height) };
 }
 
-export function stripTenorResults(payload: unknown, sessionId = ""): GifMedia[] {
-  sweepAllow();
+function positiveBytes(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.floor(value);
+}
+
+export function stripTenorResults(payload: unknown): GifMedia[] {
   const results = (payload as { results?: unknown })?.results;
   if (!Array.isArray(results)) return [];
   const out: GifMedia[] = [];
   for (const row of results as TenorResult[]) {
-    if (typeof row.id !== "string" || row.id.length === 0 || row.id.length > 64) continue;
+    if (typeof row.id !== "string" || !GIF_ID_RE.test(row.id)) continue;
     const formats = row.media_formats ?? {};
     const preview = formats.tinygif ?? formats.nanogif ?? formats.gif;
     const gif = formats.gif ?? formats.tinygif;
     const previewUrl = typeof preview?.url === "string" ? preview.url : "";
     const gifUrl = typeof gif?.url === "string" ? gif.url : "";
     if (!isTenorMediaUrl(previewUrl) || !isTenorMediaUrl(gifUrl)) continue;
-    const size = dim(gif?.dims ?? preview?.dims);
+    const bytes = positiveBytes(gif?.size);
+    if (bytes !== undefined && bytes > ATTACHMENT_MAX_BYTES) continue;
+    const gifSize = dim(gif?.dims ?? preview?.dims);
+    const previewSize = dim(preview?.dims ?? gif?.dims);
+    if (gifSize.width <= 0 || gifSize.height <= 0 || previewSize.width <= 0 || previewSize.height <= 0) {
+      continue;
+    }
     out.push({
       id: row.id,
       previewUrl,
       gifUrl,
-      width: size.width,
-      height: size.height,
+      previewWidth: previewSize.width,
+      previewHeight: previewSize.height,
+      width: gifSize.width,
+      height: gifSize.height,
+      ...(bytes !== undefined ? { bytes } : {}),
     });
-    if (sessionId) {
-      allow.set(allowKey(sessionId, row.id), {
-        gifUrl,
-        previewUrl,
-        expires: Date.now() + ALLOW_TTL_MS,
-      });
-    }
   }
-  sweepAllow();
   return out.slice(0, 24);
 }
 
-export function allowedGifUrl(
-  sessionId: string,
-  id: string,
-  kind: "gif" | "preview" = "gif",
-): string | null {
-  const row = allow.get(allowKey(sessionId, id));
-  if (!row) return null;
-  if (row.expires < Date.now()) {
-    allow.delete(allowKey(sessionId, id));
-    return null;
-  }
-  return kind === "preview" ? row.previewUrl : row.gifUrl;
+function buildSignedProxyHit(media: GifMedia, origin: string): GifProxyHit | null {
+  const previewToken = mintGifFetchToken({
+    id: media.id,
+    kind: "preview",
+    url: media.previewUrl,
+  });
+  const gifToken = mintGifFetchToken({
+    id: media.id,
+    kind: "gif",
+    url: media.gifUrl,
+  });
+  if (!previewToken || !gifToken) return null;
+  const previewProxyUrl = `${origin}/api/gif/fetch?id=${encodeURIComponent(media.id)}&kind=preview&token=${encodeURIComponent(previewToken)}`;
+  const gifProxyUrl = `${origin}/api/gif/fetch?id=${encodeURIComponent(media.id)}&kind=gif&token=${encodeURIComponent(gifToken)}`;
+  return {
+    id: media.id,
+    preview: {
+      url: previewProxyUrl,
+      w: media.previewWidth,
+      h: media.previewHeight,
+    },
+    gif: {
+      url: gifProxyUrl,
+      w: media.width,
+      h: media.height,
+      ...(media.bytes !== undefined ? { bytes: media.bytes } : {}),
+    },
+  };
 }
 
-async function fetchPinnedMedia(url: string): Promise<Response | null> {
-  if (!isTenorMediaUrl(url)) return null;
+function isGifMagic(buffer: Uint8Array): boolean {
+  if (buffer.byteLength < 6) return false;
+  if (buffer[0] !== 0x47 || buffer[1] !== 0x49 || buffer[2] !== 0x46 || buffer[3] !== 0x38) {
+    return false;
+  }
+  return (buffer[4] === 0x37 || buffer[4] === 0x39) && buffer[5] === 0x61;
+}
+
+type PinnedFetchResult =
+  | { ok: true; response: Response }
+  | { ok: false; status: 404 | 413 | 429 | 502 };
+
+async function fetchPinnedMedia(url: string): Promise<PinnedFetchResult> {
+  if (!isTenorMediaUrl(url)) return { ok: false, status: 404 };
   const signal = AbortSignal.timeout(UPSTREAM_TIMEOUT_MS);
-  const res = await fetch(url, { cache: "no-store", redirect: "manual", signal });
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: "no-store", redirect: "manual", signal });
+  } catch {
+    return { ok: false, status: 502 };
+  }
   if (res.status >= 300 && res.status < 400) {
     const location = res.headers.get("location");
-    if (!location) return null;
+    if (!location) return { ok: false, status: 404 };
     let next: URL;
     try {
       next = new URL(location, url);
     } catch {
-      return null;
+      return { ok: false, status: 404 };
     }
-    if (!isTenorMediaUrl(next.href)) return null;
-    const hop = await fetch(next, { cache: "no-store", redirect: "manual", signal });
-    if (hop.status >= 300 && hop.status < 400) return null;
-    if (!hop.ok) return null;
-    return hop;
+    if (!isTenorMediaUrl(next.href)) return { ok: false, status: 404 };
+    let hop: Response;
+    try {
+      hop = await fetch(next, { cache: "no-store", redirect: "manual", signal });
+    } catch {
+      return { ok: false, status: 502 };
+    }
+    if (hop.status >= 300 && hop.status < 400) return { ok: false, status: 404 };
+    if (hop.status === 413) return { ok: false, status: 413 };
+    if (hop.status === 429) return { ok: false, status: 429 };
+    if (hop.status === 404) return { ok: false, status: 404 };
+    if (!hop.ok) return { ok: false, status: 502 };
+    return { ok: true, response: hop };
   }
-  if (!res.ok) return null;
-  return res;
+  if (res.status === 413) return { ok: false, status: 413 };
+  if (res.status === 429) return { ok: false, status: 429 };
+  if (res.status === 404) return { ok: false, status: 404 };
+  if (!res.ok) return { ok: false, status: 502 };
+  return { ok: true, response: res };
 }
 
 async function readCappedBody(res: Response): Promise<Uint8Array | null> {
@@ -321,13 +436,15 @@ export async function searchTenor(
   query: string,
   sessionId: string,
   clientIp = "unknown",
+  options: { limit?: number; origin?: string | null } = {},
 ): Promise<
-  | { status: 200; body: { items: Array<{ id: string; width: number; height: number }> } }
-  | { status: 429; body: { error: string } }
-  | { status: 503; body: { error: string; code: "not-configured" } }
+  | { status: 200; body: { results: GifProxyHit[] } }
   | { status: 400; body: { error: string } }
+  | { status: 429; body: { error: string } }
+  | { status: 502; body: { error: string } }
+  | { status: 503; body: { error: string; code: "not-configured" } }
 > {
-  const key = process.env.TENOR_API_KEY;
+  const key = process.env.TENOR_API_KEY?.trim();
   if (!key || !gifProxySecret()) {
     return { status: 503, body: { error: "GIF search not configured", code: "not-configured" } };
   }
@@ -337,24 +454,45 @@ export async function searchTenor(
   }
   const q = query.trim().slice(0, 64);
   if (!q) return { status: 400, body: { error: "Enter a search." } };
+  const rawLimit = options.limit ?? 20;
+  const limit = Number.isFinite(rawLimit) ? Math.min(24, Math.max(1, Math.floor(rawLimit))) : 20;
   const url = new URL("https://tenor.googleapis.com/v2/search");
   url.searchParams.set("q", q);
   url.searchParams.set("key", key);
-  url.searchParams.set("limit", "20");
+  url.searchParams.set("limit", String(limit));
   url.searchParams.set("media_filter", "gif,tinygif,nanogif");
   url.searchParams.set("client_key", "hypercolor-web");
-  const res = await fetch(url, {
-    headers: { Accept: "application/json" },
-    cache: "no-store",
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-  });
-  if (!res.ok) {
-    return { status: 503, body: { error: "GIF search not configured", code: "not-configured" } };
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+  } catch {
+    return { status: 502, body: { error: "GIF search temporarily unavailable." } };
   }
-  const json: unknown = await res.json();
+  if (res.status === 429) {
+    return { status: 429, body: { error: "GIF search rate limited. Try again shortly." } };
+  }
+  if (!res.ok) {
+    return { status: 502, body: { error: "GIF search temporarily unavailable." } };
+  }
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    return { status: 502, body: { error: "GIF search returned an invalid response." } };
+  }
+  const origin = resolveGifProxyOrigin(options.origin);
+  const hits: GifProxyHit[] = [];
+  for (const media of stripTenorResults(json).slice(0, limit)) {
+    const signed = buildSignedProxyHit(media, origin);
+    if (signed) hits.push(signed);
+  }
   return {
     status: 200,
-    body: { items: stripTenorResults(json, sessionId).map(({ id, width, height }) => ({ id, width, height })) },
+    body: { results: hits },
   };
 }
 
@@ -363,39 +501,65 @@ export async function fetchTenorGif(
   sessionId: string,
   kind: "gif" | "preview" = "gif",
   clientIp = "unknown",
+  token = "",
 ): Promise<
-  | { status: 200; bytes: Uint8Array; contentType: string }
+  | { status: 200; bytes: Uint8Array; contentType: "image/gif" }
+  | { status: 403; body: { error: string } }
   | { status: 404; body: { error: string } }
+  | { status: 413; body: { error: string } }
   | { status: 429; body: { error: string } }
+  | { status: 502; body: { error: string } }
   | { status: 503; body: { error: string; code: "not-configured" } }
 > {
-  if (!process.env.TENOR_API_KEY || !gifProxySecret()) {
+  if (!process.env.TENOR_API_KEY?.trim() || !gifProxySecret()) {
     return { status: 503, body: { error: "GIF search not configured", code: "not-configured" } };
   }
   const hits = kind === "preview" ? previewHits : fetchHits;
   const limit = kind === "preview" ? PREVIEW_LIMIT : FETCH_LIMIT;
   sweepHits(hits);
-  if (!take(hits, `ip:${clientIp}`, limit) || !take(hits, `sid:${sessionId}`, limit)) {
+  if (!take(hits, `ip:${clientIp}`, limit) || (sessionId && !take(hits, `sid:${sessionId}`, limit))) {
     return { status: 429, body: { error: "Too many GIF downloads. Try again in a minute." } };
   }
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) {
+  if (!GIF_ID_RE.test(id)) {
     return { status: 404, body: { error: "Unknown GIF." } };
   }
-  const gifUrl = allowedGifUrl(sessionId, id, kind);
-  if (!gifUrl || !isTenorMediaUrl(gifUrl)) return { status: 404, body: { error: "Unknown GIF." } };
-  const res = await fetchPinnedMedia(gifUrl);
-  if (!res) return { status: 404, body: { error: "Unknown GIF." } };
-  const type = res.headers.get("content-type")?.split(";")[0]?.trim() ?? "";
+  const gifUrl = verifyGifFetchToken(token, id, kind);
+  if (!gifUrl) {
+    return { status: 403, body: { error: "Invalid or expired GIF token." } };
+  }
+  const upstream = await fetchPinnedMedia(gifUrl);
+  if (!upstream.ok) {
+    if (upstream.status === 413) {
+      return { status: 413, body: { error: "GIF is larger than 8 MiB." } };
+    }
+    if (upstream.status === 429) {
+      return { status: 429, body: { error: "GIF downloads rate limited. Try again shortly." } };
+    }
+    if (upstream.status === 502) {
+      return { status: 502, body: { error: "GIF upstream unavailable." } };
+    }
+    return { status: 404, body: { error: "Unknown GIF." } };
+  }
+  const res = upstream.response;
+  const type = res.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
   if (!ALLOWED_GIF_TYPES.has(type)) {
-    return { status: 404, body: { error: "GIF is not an image." } };
+    return { status: 502, body: { error: "Upstream response is not a GIF." } };
   }
   const length = Number(res.headers.get("content-length") ?? "NaN");
   if (Number.isFinite(length) && length > ATTACHMENT_MAX_BYTES) {
-    return { status: 404, body: { error: "GIF is larger than 8 MiB." } };
+    return { status: 413, body: { error: "GIF is larger than 8 MiB." } };
   }
-  const buf = await readCappedBody(res);
+  let buf: Uint8Array | null;
+  try {
+    buf = await readCappedBody(res);
+  } catch {
+    return { status: 502, body: { error: "GIF upstream failed during download." } };
+  }
   if (!buf) {
-    return { status: 404, body: { error: "GIF is larger than 8 MiB." } };
+    return { status: 413, body: { error: "GIF is larger than 8 MiB." } };
   }
-  return { status: 200, bytes: buf, contentType: type };
+  if (!isGifMagic(buf)) {
+    return { status: 502, body: { error: "Upstream response is not a GIF." } };
+  }
+  return { status: 200, bytes: buf, contentType: "image/gif" };
 }

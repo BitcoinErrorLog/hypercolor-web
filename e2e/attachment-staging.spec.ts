@@ -3,15 +3,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const GENERATE =
-  process.env.STAGING_INVITE_SCRIPT ??
-  "/Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh";
+const GENERATE = process.env.STAGING_INVITE_SCRIPT?.trim() ?? "";
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000";
 
 // Secrets travel as evaluate args; never write them into Playwright traces.
 test.use({ trace: "off", video: "off" });
 
 async function mintToken(): Promise<string> {
+  if (!GENERATE) throw new Error("STAGING_INVITE_SCRIPT is not set");
   const { stdout } = await execFileAsync("bash", [GENERATE], {
     timeout: 20_000,
   });

@@ -9,7 +9,7 @@
 # Graph utilisation review (original)
 
 **Date**: 2026-08-31
-**Tree**: `/Volumes/vibedrive/vibes-dev/hypercolor-web-graph` at `origin/main` (`93f0ea1`) plus this document
+**Tree**: `BitcoinErrorLog/hypercolor-web` (`hypercolor-web-graph`) at `origin/main` (`93f0ea1`) plus this document
 **Scope**: How Hypercolor uses — or fails to use — the shared Pubky graph (pubky-app-specs, Nexus, tags, curation), and whether chat should be a view over that graph rather than a parallel domain.
 
 This is analysis and design. No protocol or product code was changed.

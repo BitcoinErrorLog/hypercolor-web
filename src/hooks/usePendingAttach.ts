@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { attachValidationMessage, validateAttachFile } from "@/lib/attach-file";
 import { ATTACHMENT_MAX_BYTES } from "@/flags/config";
-import type { GifHit } from "@/components/gif-picker";
+import { toSameOriginGifFetchPath, type GifHit } from "@/components/gif-picker";
 
 export function usePendingAttach(sendFile: (file: File) => Promise<void>) {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -40,8 +40,12 @@ export function usePendingAttach(sendFile: (file: File) => Promise<void>) {
 }
 
 export async function fetchGifAsFile(hit: GifHit): Promise<File> {
-  const res = await fetch(`/api/gif/fetch?id=${encodeURIComponent(hit.id)}`);
+  const fetchPath = toSameOriginGifFetchPath(hit.gif.url);
+  if (!fetchPath) throw new Error("Could not download that GIF.");
+  const res = await fetch(fetchPath);
   if (res.status === 503) throw new Error("GIF search not configured");
+  if (res.status === 413) throw new Error("This file is larger than 8 MiB.");
+  if (res.status === 429) throw new Error("Too many GIF downloads. Try again shortly.");
   if (!res.ok) throw new Error("Could not download that GIF.");
   const buf = await res.arrayBuffer();
   if (buf.byteLength > ATTACHMENT_MAX_BYTES) throw new Error("This file is larger than 8 MiB.");

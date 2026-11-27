@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   subscribeHistoryPath,
   readWindowPathname,
@@ -88,6 +88,48 @@ describe("history-path", () => {
     expect(calls.at(-1)).toBe("/contacts/native");
     expect(readWindowPathname()).toBe("/contacts/native");
     anchor.remove();
+    stop();
+  });
+
+  it("does not install any setInterval polling timer even in non-jsdom browsers", () => {
+    const originalUa = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15",
+    });
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    try {
+      const stop = subscribeHistoryPath(() => undefined);
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      setIntervalSpy.mockRestore();
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        value: originalUa,
+      });
+    }
+  });
+
+  it("notifies via MutationObserver when native pushState bypasses History wrap without Navigation API", async () => {
+    const nativePush = History.prototype.pushState;
+    const calls: string[] = [];
+    const stop = subscribeHistoryPath(() => {
+      calls.push(readWindowPathname());
+    });
+    Object.defineProperty(History.prototype, "pushState", {
+      configurable: true,
+      writable: true,
+      value: nativePush,
+    });
+    nativePush.call(window.history, {}, "", "/contacts/webkit-mutation");
+    const marker = document.createElement("div");
+    document.body.append(marker);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(calls.at(-1)).toBe("/contacts/webkit-mutation");
+    expect(readWindowPathname()).toBe("/contacts/webkit-mutation");
+    marker.remove();
     stop();
   });
 });

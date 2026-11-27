@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { Composer, type ComposerQuote } from "@/components/composer";
+import type { GifHit } from "@/components/gif-picker";
 import { StandbyReceiveButton } from "@/components/standby-takeover-dialog";
 import { Button } from "@/components/ui/button";
 import { DetailBackLink } from "@/components/detail-back";
@@ -179,7 +180,7 @@ export function ThreadView({
   onConfirmPending?: () => void;
   onCancelPending?: () => void;
   gifConfigured?: boolean;
-  onPickGif?: (hit: { id: string; width: number; height: number }) => void;
+  onPickGif?: (hit: GifHit) => void;
   onOfferAttach?: (file: File) => void;
   tagsByTarget?: Map<string, ChatTagAggregate[]>;
   onToggleTag?: (message: LinkMessage, label: string, mine: boolean) => void;

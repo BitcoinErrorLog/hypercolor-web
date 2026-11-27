@@ -7,11 +7,21 @@ import { ModalSheet } from "@/components/ui/sheet";
 
 export type GifHit = {
   id: string;
-  width: number;
-  height: number;
-  previewUrl?: string;
-  gifUrl?: string;
+  preview: { url: string; w: number; h: number };
+  gif: { url: string; w: number; h: number; bytes?: number };
 };
+
+export function toSameOriginGifFetchPath(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl, typeof window !== "undefined" ? window.location.origin : "https://hypercolor.app");
+    if (parsed.pathname === "/api/gif/fetch") {
+      return `${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    // Reject non-proxy URLs below.
+  }
+  return "";
+}
 
 export function GifPicker({
   open,
@@ -37,13 +47,13 @@ export function GifPicker({
     setError(null);
     try {
       const res = await fetch(`/api/gif/search?q=${encodeURIComponent(query.trim())}`);
-      const json = (await res.json()) as { items?: GifHit[]; error?: string };
+      const json = (await res.json()) as { results?: GifHit[]; error?: string };
       if (!res.ok) {
-        setError(res.status === 503 ? "GIF search failed" : (json.error ?? "GIF search failed"));
+        setError(res.status === 503 ? "GIF search not configured" : (json.error ?? "GIF search failed"));
         setItems([]);
         return;
       }
-      setItems(json.items ?? []);
+      setItems(Array.isArray(json.results) ? json.results : []);
     } catch {
       setError("GIF search failed");
       setItems([]);
@@ -60,38 +70,41 @@ export function GifPicker({
         GIF search
       </p>
       <form
-            className="mt-3 flex gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void search();
-            }}
-          >
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search GIFs"
-              data-testid="gifSearchInput"
-            />
-            <Button type="submit" size="sm" disabled={busy}>
-              {busy ? "Searching…" : "Search"}
-            </Button>
-          </form>
-          {error ? <p className="mt-2 text-sm hc-danger-text">{error}</p> : null}
-          <ul className="mt-3 grid grid-cols-2 gap-2">
-            {items.map((item) => (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className="block w-full overflow-hidden rounded"
-                  onClick={() => onPick(item)}
-                  data-testid="gifResult"
-                >
-                  {/* preview is a Tenor CDN thumbnail chosen via our proxy search; bytes are fetched separately */}
-                  <img src={`/api/gif/fetch?id=${encodeURIComponent(item.id)}&kind=preview`} alt="" width={item.width || 120} height={item.height || 80} />
-                </button>
-              </li>
-            ))}
-          </ul>
+        className="mt-3 flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void search();
+        }}
+      >
+        <Input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search GIFs"
+          data-testid="gifSearchInput"
+        />
+        <Button type="submit" size="sm" disabled={busy}>
+          {busy ? "Searching…" : "Search"}
+        </Button>
+      </form>
+      {error ? <p className="mt-2 text-sm hc-danger-text">{error}</p> : null}
+      <ul className="mt-3 grid grid-cols-2 gap-2">
+        {items.map((item) => {
+          const previewSrc = toSameOriginGifFetchPath(item.preview.url);
+          if (!previewSrc) return null;
+          return (
+            <li key={item.id}>
+              <button
+                type="button"
+                className="block w-full overflow-hidden rounded"
+                onClick={() => onPick(item)}
+                data-testid="gifResult"
+              >
+                <img src={previewSrc} alt="" width={item.preview.w || 120} height={item.preview.h || 80} />
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </ModalSheet>
   );
 }

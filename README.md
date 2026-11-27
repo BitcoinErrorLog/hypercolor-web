@@ -28,7 +28,7 @@ The Pubky homeserver remains the message backend.
 ### Staging owner-document proof
 
 ```bash
-bash /Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh
+bash "${STAGING_INVITE_SCRIPT}"
 STAGING_SIGNUP_TOKEN=<token> npm run test:e2e -- e2e/owner-roundtrip.spec.ts
 ```
 
@@ -163,7 +163,7 @@ except a 2-line header naming the source path and pin.
 
 `bash scripts/check-wire-drift.sh` diffs that list (header ignored) against
 the committed oracle `vendor/hypercolor-wire-pin` (same pin). Override with
-`HYPERCOLOR_REPO=/Users/johncarvalho/work/hypercolor` to compare a local
+`HYPERCOLOR_REPO=/path/to/hypercolor` to compare a local
 git checkout (`HEAD` at the pin, otherwise `git show <pin>:path`). CI does
 not clone `BitcoinErrorLog/hypercolor`.
 
