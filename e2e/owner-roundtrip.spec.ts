@@ -3,13 +3,13 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
-const GENERATE =
-  "/Users/johncarvalho/.cursor/skills/pubky-staging-invite/scripts/generate.sh";
+const GENERATE = process.env.STAGING_INVITE_SCRIPT?.trim() ?? "";
 
 async function resolveSignupToken(): Promise<string | null> {
   const fromEnv = process.env.STAGING_SIGNUP_TOKEN?.trim();
   if (fromEnv) return fromEnv;
   if (process.env.RUN_STAGING_OWNER_ROUNDTRIP !== "1") return null;
+  if (!GENERATE) throw new Error("STAGING_INVITE_SCRIPT is not set");
   const { stdout } = await execFileAsync("bash", [GENERATE], {
     timeout: 20_000,
   });

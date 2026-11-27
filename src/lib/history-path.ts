@@ -2,16 +2,10 @@
  * Notify React when the URL path changes, including Next.js client navigations.
  *
  * `popstate` only fires for Back/Forward. `history.pushState` / `replaceState`
- * (Next.js `<Link>` and `router.push`) do not. Linux WebKit also drops
- * untrusted synthetic `PopStateEvent`s, and its native History methods are
- * host objects: wrapping `History.prototype` is a no-op for the engine's own
- * calls. Observe `window.location.pathname` itself: wrap when the engine
- * honours it, Navigation API, and same-origin `<a>` clicks so React still
- * follows native `pushState`. When the prototype looks wrapped but the
- * engine still calls the host method (Linux WebKit), a short path poll
- * reads `window.location.pathname`. The poll is skipped in jsdom, where
- * the wrap is live. Static-export rewrites leave
- * `window.location.pathname` as the real URL.
+ * (Next.js `<Link>` and `router.push`) do not. Observe `window.location.pathname`
+ * via History method wrapping, Navigation API events, `popstate`, `hashchange`,
+ * `visibilitychange`, and same-origin `<a>` clicks so React stays synchronized
+ * without background interval polling.
  */
 
 type HistoryMethod = "pushState" | "replaceState";
@@ -24,7 +18,6 @@ type NavigationHost = {
 const listeners = new Set<() => void>();
 let patched = false;
 let lastObservedPath = "";
-let pathWatchTimer: ReturnType<typeof setInterval> | 0 = 0;
 const originals: { pushState: History["pushState"] | null; replaceState: History["replaceState"] | null } = {
   pushState: null,
   replaceState: null,
@@ -47,6 +40,12 @@ function onPopState(): void {
 
 function onCurrentEntryChange(): void {
   notifyIfPathChanged();
+}
+
+function onVisibilityChange(): void {
+  if (typeof document !== "undefined" && document.visibilityState === "visible") {
+    notifyIfPathChanged();
+  }
 }
 
 function isSameOriginAppLink(anchor: HTMLAnchorElement): boolean {
@@ -81,20 +80,6 @@ function navigationHost(): NavigationHost | null {
   const nav = (window as Window & { navigation?: NavigationHost }).navigation;
   if (!nav || typeof nav.addEventListener !== "function") return null;
   return nav;
-}
-
-function isJsdom(): boolean {
-  return typeof navigator !== "undefined" && /jsdom/i.test(navigator.userAgent);
-}
-
-function armPathWatch(): void {
-  if (pathWatchTimer || isJsdom()) return;
-  pathWatchTimer = setInterval(notifyIfPathChanged, 50);
-}
-
-function disarmPathWatch(): void {
-  if (pathWatchTimer) clearInterval(pathWatchTimer);
-  pathWatchTimer = 0;
 }
 
 function installMethod(
@@ -153,17 +138,17 @@ function ensurePatched(): void {
   wrap("pushState");
   wrap("replaceState");
   window.addEventListener("popstate", onPopState);
+  window.addEventListener("hashchange", onCurrentEntryChange);
   document.addEventListener("click", onDocumentClick, true);
+  document.addEventListener("visibilitychange", onVisibilityChange);
   const nav = navigationHost();
   nav?.addEventListener("currententrychange", onCurrentEntryChange);
   nav?.addEventListener("navigate", onCurrentEntryChange);
-  armPathWatch();
   patched = true;
 }
 
 function restore(): void {
   if (!patched) return;
-  disarmPathWatch();
   if (originals.pushState) {
     restoreMethod(History.prototype, "pushState", originals.pushState);
     if (typeof history !== "undefined") {
@@ -179,7 +164,9 @@ function restore(): void {
   originals.pushState = null;
   originals.replaceState = null;
   window.removeEventListener("popstate", onPopState);
+  window.removeEventListener("hashchange", onCurrentEntryChange);
   document.removeEventListener("click", onDocumentClick, true);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
   const nav = navigationHost();
   nav?.removeEventListener("currententrychange", onCurrentEntryChange);
   nav?.removeEventListener("navigate", onCurrentEntryChange);

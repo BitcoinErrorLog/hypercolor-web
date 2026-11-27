@@ -919,6 +919,7 @@ export const LinkService = {
 export function startLinkRetryDrain(intervalMs = LINK_RETRY_DRAIN_INTERVAL_MS): () => void {
   stopLinkRetryDrain();
   drainTimer = setInterval(() => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
     void LinkService.drainRetries().catch((err) => {
       console.warn("[LinkService] drainRetries failed:", errorMessage(err));
     });
@@ -934,31 +935,34 @@ export function stopLinkRetryDrain(): void {
 }
 
 /**
- * Visibility + interval drain. Full UI poll is P6; this keeps the nonce-safe
- * queue moving while the tab is visible.
+ * Visibility + interval drain. Keeps the nonce-safe retry queue moving only
+ * while the tab is visible and pauses the interval whenever hidden.
  */
 export function startLinkRetryDrainOnVisibility(
   intervalMs = LINK_RETRY_DRAIN_INTERVAL_MS,
 ): () => void {
-  const stopInterval = startLinkRetryDrain(intervalMs);
-  const onVis = () => {
-    if (typeof document !== "undefined" && document.visibilityState === "visible") {
-      void LinkService.recoverPendingSends().catch((err) => {
-        console.warn("[LinkService] recoverPendingSends failed:", errorMessage(err));
-      });
-      void LinkService.drainRetries().catch((err) => {
-        console.warn("[LinkService] drainRetries failed:", errorMessage(err));
-      });
+  const syncVisibility = () => {
+    const visible = typeof document === "undefined" || document.visibilityState === "visible";
+    if (!visible) {
+      stopLinkRetryDrain();
+      return;
     }
+    if (!drainTimer) startLinkRetryDrain(intervalMs);
+    void LinkService.recoverPendingSends().catch((err) => {
+      console.warn("[LinkService] recoverPendingSends failed:", errorMessage(err));
+    });
+    void LinkService.drainRetries().catch((err) => {
+      console.warn("[LinkService] drainRetries failed:", errorMessage(err));
+    });
   };
   if (typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", onVis);
+    document.addEventListener("visibilitychange", syncVisibility);
   }
-  onVis();
+  syncVisibility();
   return () => {
-    stopInterval();
+    stopLinkRetryDrain();
     if (typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", onVis);
+      document.removeEventListener("visibilitychange", syncVisibility);
     }
   };
 }

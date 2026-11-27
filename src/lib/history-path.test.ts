@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   subscribeHistoryPath,
   readWindowPathname,
@@ -89,5 +89,25 @@ describe("history-path", () => {
     expect(readWindowPathname()).toBe("/contacts/native");
     anchor.remove();
     stop();
+  });
+
+  it("does not install any setInterval polling timer even in non-jsdom browsers", () => {
+    const originalUa = navigator.userAgent;
+    Object.defineProperty(navigator, "userAgent", {
+      configurable: true,
+      value: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15",
+    });
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    try {
+      const stop = subscribeHistoryPath(() => undefined);
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      setIntervalSpy.mockRestore();
+      Object.defineProperty(navigator, "userAgent", {
+        configurable: true,
+        value: originalUa,
+      });
+    }
   });
 });
