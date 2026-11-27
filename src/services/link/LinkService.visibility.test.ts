@@ -1,6 +1,15 @@
 /** @vitest-environment jsdom */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/db", () => ({
+  getDatabase: vi.fn(),
+}));
+
+vi.mock("@/services/StorageService", () => ({
+  StorageService: {},
+}));
+
 import {
   LinkService,
   startLinkRetryDrainOnVisibility,
