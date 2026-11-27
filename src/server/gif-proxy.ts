@@ -362,7 +362,7 @@ function isGifMagic(buffer: Uint8Array): boolean {
 
 type PinnedFetchResult =
   | { ok: true; response: Response }
-  | { ok: false; status: 404 | 429 | 502 };
+  | { ok: false; status: 404 | 413 | 429 | 502 };
 
 async function fetchPinnedMedia(url: string): Promise<PinnedFetchResult> {
   if (!isTenorMediaUrl(url)) return { ok: false, status: 404 };
@@ -390,11 +390,13 @@ async function fetchPinnedMedia(url: string): Promise<PinnedFetchResult> {
       return { ok: false, status: 502 };
     }
     if (hop.status >= 300 && hop.status < 400) return { ok: false, status: 404 };
+    if (hop.status === 413) return { ok: false, status: 413 };
     if (hop.status === 429) return { ok: false, status: 429 };
     if (hop.status === 404) return { ok: false, status: 404 };
     if (!hop.ok) return { ok: false, status: 502 };
     return { ok: true, response: hop };
   }
+  if (res.status === 413) return { ok: false, status: 413 };
   if (res.status === 429) return { ok: false, status: 429 };
   if (res.status === 404) return { ok: false, status: 404 };
   if (!res.ok) return { ok: false, status: 502 };
@@ -527,6 +529,9 @@ export async function fetchTenorGif(
   }
   const upstream = await fetchPinnedMedia(gifUrl);
   if (!upstream.ok) {
+    if (upstream.status === 413) {
+      return { status: 413, body: { error: "GIF is larger than 8 MiB." } };
+    }
     if (upstream.status === 429) {
       return { status: 429, body: { error: "GIF downloads rate limited. Try again shortly." } };
     }

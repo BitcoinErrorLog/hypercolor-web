@@ -407,4 +407,42 @@ describe("gif proxy", () => {
     expect(fetched.status).toBe(413);
     expect(bodyRead).toBe(false);
   });
+
+  it("preserves upstream 413 on direct and redirected media fetches", async () => {
+    const token = mintGifFetchToken({
+      id: "abc",
+      kind: "gif",
+      url: "https://media.tenor.com/x.gif",
+    })!;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("too large", { status: 413 })),
+    );
+    const direct = await fetchGet(
+      req(`/api/gif/fetch?id=abc&kind=gif&token=${encodeURIComponent(token)}`, {
+        "x-real-ip": "198.51.100.44",
+      }),
+    );
+    expect(direct.status).toBe(413);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "https://media.tenor.com/x.gif") {
+          return new Response(null, {
+            status: 302,
+            headers: { location: "https://media1.tenor.com/x-big.gif" },
+          });
+        }
+        return new Response("too large", { status: 413 });
+      }),
+    );
+    const redirected = await fetchGet(
+      req(`/api/gif/fetch?id=abc&kind=gif&token=${encodeURIComponent(token)}`, {
+        "x-real-ip": "198.51.100.45",
+      }),
+    );
+    expect(redirected.status).toBe(413);
+  });
 });
